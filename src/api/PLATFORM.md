@@ -64,13 +64,14 @@ export function onTick(view: View, cmd: Commands): void {
 - **墙钟**：单次调用超过 2 秒 bot 停止运行。正常代码碰不到，只有对巨大数组排序、拼超长字符串这类不计燃料的内置操作才会。
 - 没有 `Date`（调用会抛错，时间用 `view.tick`）、没有网络、文件、定时器。
 - `Math.random()` 是固定种子的随机数：同样的两个 bot、同样的种子，重跑结果完全一样。
-- `console.log` 写进回放：每次调用最多 20 行、每行 300 字，整局 5000 行。在网页播放器里可以对着画面看。
+- `console.log` 写进回放：每次调用最多 20 行、每行 300 字，整局 5000 行。在网页播放器里可以对着画面看。打印大对象会先完整转成 JSON 再截断，很慢而且不计燃料，别打印整个 `view`。
+- 每次调用最多发 2000 条命令，多出的丢弃。
 - 抛出的错误带行号，就是你源文件里的行号。错误会写进回放，下次调用时也会出现在 `view.events`。
 
 ## 本地调试
 
 ```bash
-npm run arena -- check <规则包> my-bot.ts                       # 类型检查 + 试运行一次
+npm run arena -- check <规则包> my-bot.ts                       # 类型检查 + 每个位置试打 300 tick
 npm run arena -- run <规则包> my-bot.ts bots/<规则包>/rush.ts     # 打一局，写回放
 npm run arena -- run <规则包> my-bot.ts bots/<规则包>/rush.ts --games 10   # 打 10 局看胜率（每个种子换边各打一次）
 npm run viewer                                                   # 网页播放器看回放

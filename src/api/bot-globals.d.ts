@@ -8,6 +8,8 @@ declare const console: {
   log(...args: unknown[]): void
   warn(...args: unknown[]): void
   error(...args: unknown[]): void
+  info(...args: unknown[]): void
+  debug(...args: unknown[]): void
 }
 
 /** 曼哈顿距离 |dx|+|dy|。传实体时按占地最近的格子算（贴着 = 1） */

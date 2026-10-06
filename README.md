@@ -18,7 +18,7 @@ npm run arena -- init annihilation my-bot   # 建工作目录：PROMPT.md、aren
 把 `my-bot/PROMPT.md` 发给大模型（或自己读），改 `my-bot/bot.ts`，然后：
 
 ```bash
-npm run arena -- check annihilation my-bot/bot.ts                                    # 类型检查 + 试运行
+npm run arena -- check annihilation my-bot/bot.ts                                    # 类型检查 + 每个位置试打 300 tick
 npm run arena -- run annihilation my-bot/bot.ts bots/annihilation/rush.ts            # 打一局
 npm run arena -- run annihilation my-bot/bot.ts bots/annihilation/rush.ts --games 10 # 打 10 局看胜率
 ```

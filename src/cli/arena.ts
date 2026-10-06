@@ -6,8 +6,6 @@ import { checkLimits } from "../core/limits.ts"
 import { runMatch, type MatchBot } from "../core/match.ts"
 import { mixSeed } from "../core/rng.ts"
 import type { Replay, Ruleset } from "../core/types.ts"
-import { buildView } from "../core/view.ts"
-import { World } from "../core/world.ts"
 import { compileBot, createBot } from "../sandbox/quickjs.ts"
 import { botTsconfig, buildDts, buildPrompt, rulesetDir, typecheck } from "./docgen.ts"
 
@@ -17,7 +15,7 @@ const HELP = `用法：npm run arena -- <命令> [参数]
   list                                  列出规则包
   docs  <规则包> [--out 目录]            生成 arena.d.ts 和 PROMPT.md（默认 out/<规则包>/）
   init  <规则包> <目录>                  建一个 bot 工作目录：arena.d.ts、PROMPT.md、tsconfig.json、bot.ts 模板
-  check <规则包> <bot.ts>...             类型检查 + 在沙箱里试运行一次 onTick
+  check <规则包> <bot.ts>...             类型检查 + 在每个位置上和不动的对手试打 300 tick
   run   <规则包> <bot.ts>... [选项]      打一局（或多局），写回放
         --seed N      种子（默认随机）
         --games N     连打 N 局，最后报胜率；两人局每个种子换边各打一次
@@ -37,11 +35,14 @@ function parseArgs(argv: string[]): { pos: string[]; opt: Record<string, string 
     const a = argv[i]
     if (a.startsWith("--")) {
       const key = a.slice(2)
+      if (key === "no-check") {
+        opt[key] = true
+        continue
+      }
       const next = argv[i + 1]
-      if (next !== undefined && !next.startsWith("--") && key !== "no-check") {
-        opt[key] = next
-        i++
-      } else opt[key] = true
+      if (next === undefined || next.startsWith("--")) fail(`--${key} 后面要跟一个值`)
+      opt[key] = next
+      i++
     } else pos.push(a)
   }
   return { pos, opt }
@@ -174,29 +175,34 @@ async function cmdCheck(rules: Ruleset, files: string[]): Promise<void> {
       console.log(`${file}：${compiled.error}`)
       continue
     }
-    // 用真实开局试跑：加载 + onStart + 一次 onTick（玩家 0）
-    const names = Array.from({ length: rules.players.min }, (_, i) => `P${i}`)
-    const w = new World(rules, names, 1)
-    rules.setup(w)
-    w.computeVisibility()
-    const bot = await createBot(compiled.code, 1, { fuel: rules.fuel })
-    const s = bot.start(JSON.stringify(w.gameInfo(0)))
-    const problem = s.fatal ?? s.error
-    if (problem) {
-      ok = false
-      console.log(`${file}：加载失败：${problem}`)
-    } else {
-      const t = bot.tick(JSON.stringify(buildView(w, 0)))
-      if (t.fatal || t.error) {
+    // 在每个位置上和不动的对手试打 300 tick，抓开局阶段的运行错误
+    const n = rules.players.min
+    for (let seat = 0; seat < n; seat++) {
+      const bots: MatchBot[] = []
+      for (let p = 0; p < n; p++) {
+        const code = p === seat ? compiled.code : IDLE_CODE
+        bots.push({ name: p === seat ? botName(file) : "idle", file, runner: await createBot(code, mixSeed(1, "bot", p), { fuel: rules.fuel }) })
+      }
+      const replay = runMatch({ ruleset: { ...rules, maxTicks: Math.min(rules.maxTicks, CHECK_TICKS) }, bots, seed: 1 })
+      const st = replay.bots[seat]
+      const errs = replay.frames.flatMap((f) => (f.errs ?? []).filter((e) => e.p === seat).map((e) => `第 ${f.t} tick：${e.msg}`))
+      const where = `${file}（位置 P${seat}）`
+      if (st.status === "dead" || st.errors > 0 || st.fuelOuts > 0) {
         ok = false
-        console.log(`${file}：第一次 onTick 出错：${t.fatal ?? t.error}`)
-      } else console.log(`${file}：试运行通过（加载燃料 ${s.fuel}，第一次 onTick 燃料 ${t.fuel}，发出 ${t.commands.length} 条命令）`)
-      for (const line of [...s.logs, ...t.logs]) console.log(`  日志：${line}`)
+        console.log(`${where}：试打 ${replay.result.tick} tick 出了问题${st.deadReason ? `，bot 停止运行：${st.deadReason}` : ""}`)
+      } else {
+        console.log(`${where}：试打 ${replay.result.tick} tick 通过（调用 ${st.calls} 次，燃料最高 ${st.fuelMax}，被拒命令 ${st.rejected}）`)
+      }
+      for (const line of errs.slice(0, 5)) console.log(`  ${line.split("\n").slice(0, 3).join(" | ")}`)
+      if (errs.length > 5) console.log(`  另有 ${errs.length - 5} 条，见 run 的回放`)
     }
-    bot.dispose()
   }
   if (!ok) process.exit(1)
 }
+
+/** check 试打的长度 */
+const CHECK_TICKS = 300
+const IDLE_CODE = "export function onTick() {}"
 
 const BOT_TEMPLATE = `// 一个最简单的 bot：工人采最近的金矿，主基地造工人。从这里改起。
 

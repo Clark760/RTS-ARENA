@@ -1,12 +1,13 @@
 // 沙箱里先于 bot 代码执行的脚本：命令对象、console、确定性随机数、禁用 Date 等。
 // 用到的内置函数在这里先存一份引用，bot 改全局对象也影响不到这里。
-export const PRELUDE = String.raw`
+export function preludeSource(maxCommands: number): string {
+  return String.raw`
 (function () {
   "use strict";
   var G = globalThis;
   var stringify = JSON.stringify, parse = JSON.parse, imul = Math.imul;
-  var MAX_LINES = 20, MAX_LINE = 300;
-  var logs = [], cmds = [], dropped = 0;
+  var MAX_LINES = 20, MAX_LINE = 300, MAX_CMDS = ${maxCommands};
+  var logs = [], cmds = [], dropped = 0, overflow = 0;
 
   // 确定性随机数（mulberry32），种子由宿主在 init 时给
   var s = 0;
@@ -37,15 +38,22 @@ export const PRELUDE = String.raw`
   }
   G.console = { log: log, warn: log, error: log, info: log, debug: log };
 
-  function idOf(u) { return u !== null && typeof u === "object" ? u.id : u; }
+  // 命令参数在这里就转成数字或字符串（非法的变 null，由宿主拒绝），flush 时序列化就不会再执行 bot 的代码
+  function num(v) { return typeof v === "number" ? v : null; }
+  function idOf(u) {
+    if (typeof u === "number") return u;
+    if (u !== null && typeof u === "object") { var id = u.id; return typeof id === "number" ? id : null; }
+    return null;
+  }
+  function push(c) { if (cmds.length < MAX_CMDS) cmds.push(c); else overflow++; }
   var cmd = Object.freeze({
-    move: function (u, x, y) { cmds.push({ kind: "move", unit: idOf(u), x: x, y: y }); },
-    attack: function (u, t) { cmds.push({ kind: "attack", unit: idOf(u), target: idOf(t) }); },
-    attackMove: function (u, x, y) { cmds.push({ kind: "attackMove", unit: idOf(u), x: x, y: y }); },
-    gather: function (u, t) { cmds.push({ kind: "gather", unit: idOf(u), target: idOf(t) }); },
-    stop: function (u) { cmds.push({ kind: "stop", unit: idOf(u) }); },
-    produce: function (b, type) { cmds.push({ kind: "produce", building: idOf(b), type: type }); },
-    cancel: function (b) { cmds.push({ kind: "cancel", building: idOf(b) }); }
+    move: function (u, x, y) { push({ kind: "move", unit: idOf(u), x: num(x), y: num(y) }); },
+    attack: function (u, t) { push({ kind: "attack", unit: idOf(u), target: idOf(t) }); },
+    attackMove: function (u, x, y) { push({ kind: "attackMove", unit: idOf(u), x: num(x), y: num(y) }); },
+    gather: function (u, t) { push({ kind: "gather", unit: idOf(u), target: idOf(t) }); },
+    stop: function (u) { push({ kind: "stop", unit: idOf(u) }); },
+    produce: function (b, type) { push({ kind: "produce", building: idOf(b), type: typeof type === "string" ? type : null }); },
+    cancel: function (b) { push({ kind: "cancel", building: idOf(b) }); }
   });
 
   G.dist = function (a, b) {
@@ -56,9 +64,9 @@ export const PRELUDE = String.raw`
   };
 
   function flush(err) {
-    var out = { c: cmds, l: logs, d: dropped };
+    var out = { c: cmds, l: logs, d: dropped, o: overflow };
     if (err !== undefined) { out.e = err; out.c = []; }
-    cmds = []; logs = []; dropped = 0;
+    cmds = []; logs = []; dropped = 0; overflow = 0;
     return stringify(out);
   }
   function errText(e) {
@@ -94,3 +102,4 @@ export const PRELUDE = String.raw`
   };
 })();
 `
+}

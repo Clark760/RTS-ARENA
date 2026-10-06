@@ -15,8 +15,9 @@ import {
   type QuickJSHandle,
   type QuickJSRuntime,
 } from "quickjs-emscripten"
+import { MAX_COMMANDS } from "../core/commands.ts"
 import type { BotCall, BotRunner } from "../core/types.ts"
-import { PRELUDE } from "./prelude.ts"
+import { preludeSource } from "./prelude.ts"
 
 const PAGE = 65536
 
@@ -124,7 +125,7 @@ export class QuickJSBot implements BotRunner {
     this.vm = this.rt.newContext()
     this.budget = Number.MAX_SAFE_INTEGER
     this.deadline = Number.POSITIVE_INFINITY
-    this.vm.unwrapResult(this.vm.evalCode(PRELUDE, "prelude.js")).dispose()
+    this.vm.unwrapResult(this.vm.evalCode(preludeSource(MAX_COMMANDS), "prelude.js")).dispose()
     // 先拿到宿主要调的函数，bot 之后改 __arena 也没用
     const arena = this.vm.getProp(this.vm.global, "__arena")
     this.fns = {
@@ -156,6 +157,10 @@ export class QuickJSBot implements BotRunner {
     return { commands: [], logs: [], fuel: this.used, ms: performance.now() - t0, fatal: reason }
   }
 
+  private wallText(phase: string): string {
+    return `${phase}墙钟超时（超过 ${this.hardMs} 毫秒，多半是大数组排序、超长字符串、console.log 大对象之类不计燃料的内置操作）`
+  }
+
   /** 调用出错（含燃料耗尽）后的统一处理 */
   private failed(errHandle: QuickJSHandle, t0: number, phase: string): BotCall {
     let text: string
@@ -167,7 +172,7 @@ export class QuickJSBot implements BotRunner {
     }
     if (/out of memory/i.test(text))
       return this.fatal(t0, `${phase}内存超限（上限 ${Math.round(this.maxBytes / 1048576)} MB）`)
-    if (this.wallOut) return this.fatal(t0, `${phase}墙钟超时（超过 ${this.hardMs} 毫秒，多半是大数组排序或超长字符串之类不计燃料的内置操作）`)
+    if (this.wallOut) return this.fatal(t0, this.wallText(phase))
     const fuel = this.used
     const budget = this.budget
     const fuelOut = this.fuelOut
@@ -193,7 +198,7 @@ export class QuickJSBot implements BotRunner {
   private parseOut(h: QuickJSHandle, t0: number, phase: string): BotCall {
     const fuel = this.used
     const ms = performance.now() - t0
-    let out: { c: unknown[]; l: string[]; d: number; e?: string }
+    let out: { c: unknown[]; l: string[]; d: number; o: number; e?: string }
     try {
       out = JSON.parse(this.vm.getString(h))
     } catch {
@@ -203,6 +208,7 @@ export class QuickJSBot implements BotRunner {
     }
     const logs = Array.isArray(out.l) ? out.l.map(String) : []
     if (out.d > 0) logs.push(`（本次另有 ${out.d} 行日志超出每次 20 行的上限，已丢弃）`)
+    if (out.o > 0) logs.push(`（本次另有 ${out.o} 条命令超出每次 ${MAX_COMMANDS} 条的上限，已丢弃）`)
     const commands = Array.isArray(out.c) ? out.c : []
     if (typeof out.e === "string") {
       // 内存耗尽在沙箱里是可以被 try/catch 接住的，也要判停止
@@ -212,11 +218,16 @@ export class QuickJSBot implements BotRunner {
     return { commands, logs, fuel, ms }
   }
 
-  /** 宿主侧异常（wasm 崩溃）兜底 */
-  private guard(t0: number, phase: string, fn: () => BotCall): BotCall {
+  /**
+   * 宿主侧兜底：wasm 崩溃；以及调用结束后才发现超过墙钟（不计燃料的内置操作执行期间不会触发中断回调，
+   * 只能事后判）。墙钟超时不可复现，所以只用来处理极端情况。
+   */
+  private guard(t0: number, phase: string, limitMs: number, fn: () => BotCall): BotCall {
     if (this.broken) return this.fatal(t0, `${phase}沙箱已损坏`)
     try {
-      return fn()
+      const r = fn()
+      if (!r.fatal && performance.now() - t0 > limitMs) return { ...this.fatal(t0, this.wallText(phase)), logs: r.logs }
+      return r
     } catch (e) {
       const msg = this.nearMemoryCap() ? `内存超限（上限 ${Math.round(this.maxBytes / 1048576)} MB）` : `沙箱崩溃：${(e as Error).message}`
       return this.fatal(t0, phase + msg)
@@ -225,7 +236,7 @@ export class QuickJSBot implements BotRunner {
 
   start(gameJson: string): BotCall {
     const t0 = this.begin(this.startFuel, this.hardMs * 5)
-    return this.guard(t0, "加载：", () => {
+    return this.guard(t0, "加载：", this.hardMs * 5, () => {
       const g = this.vm.newString(gameJson)
       const seed = this.vm.newNumber(this.seed)
       const ri = this.vm.callFunction(this.fns.init, this.vm.undefined, g, seed)
@@ -264,7 +275,7 @@ export class QuickJSBot implements BotRunner {
 
   tick(viewJson: string): BotCall {
     const t0 = this.begin(this.fuelLimit, this.hardMs)
-    return this.guard(t0, "", () => {
+    return this.guard(t0, "", this.hardMs, () => {
       const v = this.vm.newString(viewJson)
       const r = this.vm.callFunction(this.fns.tick, this.vm.undefined, v)
       v.dispose()

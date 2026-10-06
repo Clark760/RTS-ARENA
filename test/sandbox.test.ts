@@ -150,3 +150,28 @@ test("bot 改不了宿主拿到的函数", async () => {
   assert.deepEqual(b.tick(VIEW(0)).commands, [{ kind: "stop", unit: 3 }])
   b.dispose()
 })
+
+test("不计燃料的内置操作超过墙钟：调用结束后判停止", async () => {
+  const c = compileBot(`export function onTick() { const a: number[] = []; for (let i = 0; i < 2e6; i++) a.push((i * 7919) % 1000003); a.sort(); a.sort(); a.sort() }`)
+  if ("error" in c) throw new Error(c.error)
+  const b = await createBot(c.code, 1, { fuel: 1e6, hardMs: 30 })
+  b.start(GAME)
+  assert.match(b.tick(VIEW(0)).fatal ?? "", /墙钟超时/)
+  b.dispose()
+})
+
+test("命令参数里的 toJSON、getter 不会在序列化时执行；命令最多 2000 条", async () => {
+  const b = await bot(`
+    export function onTick(view: View, cmd: Commands) {
+      cmd.move(1, { toJSON() { for (;;) {} } } as any, 0)
+      if (view.tick === 1) for (let i = 0; i < 2500; i++) cmd.stop(1)
+    }`)
+  b.start(GAME)
+  const r = b.tick(VIEW(0))
+  assert.equal(r.error, undefined)
+  assert.deepEqual(r.commands, [{ kind: "move", unit: 1, x: null, y: 0 }])
+  const r2 = b.tick(VIEW(1))
+  assert.equal(r2.commands.length, 2000)
+  assert.match(r2.logs.join("\n"), /另有 501 条命令/)
+  b.dispose()
+})
