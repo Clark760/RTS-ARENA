@@ -26,8 +26,8 @@ sh(["init", "annihilation", "my-bot2"], TMP)
 sh(["new-rules", "gold"], TMP)
 sh(["init", "./gold", "my-gold"], TMP)
 mkdirSync(join(TMP, "my-bot", "v2"))
-cpSync(join(ROOT, "bots", "annihilation", "rush.ts"), join(TMP, "my-bot", "v2", "bot.ts"))
-cpSync(join(ROOT, "bots", "annihilation", "boom.ts"), join(TMP, "my-bot2", "boom.ts"))
+cpSync(join(ROOT, "rulesets", "annihilation", "bots", "rush.ts"), join(TMP, "my-bot", "v2", "bot.ts"))
+cpSync(join(ROOT, "rulesets", "annihilation", "bots", "boom.ts"), join(TMP, "my-bot2", "boom.ts"))
 writeFileSync(join(TMP, "my-bot", "helper.ts"), "export const notABot = 1\n")
 
 test("找 bot：本目录和子文件夹、旁边的 bot 目录；不是 bot 的 .ts 不算；标上各自的规则包", () => {

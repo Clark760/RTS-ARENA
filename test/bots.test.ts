@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { test } from "node:test"
-import { rulesetDir, typecheck } from "../src/cli/docgen.ts"
+import { referenceBots } from "../src/cli/catalog.ts"
+import { buildDts, buildPrompt, rulesetDir, typecheck } from "../src/cli/docgen.ts"
 import { runMatch } from "../src/core/match.ts"
 import type { Ruleset } from "../src/core/types.ts"
 import { compileBot, createBot } from "../src/sandbox/quickjs.ts"
@@ -22,16 +23,36 @@ const load = async (rules: Ruleset, file: string, p: number) => {
 
 for (const rules of [annihilation, koth, harvest, melee, frontier] as Ruleset[]) {
   test(`示例 bot 能通过「${rules.name}」生成的 arena.d.ts 类型检查`, () => {
-    const dir = join(ROOT, "bots", rules.id)
+    const dir = join(ROOT, "rulesets", rules.id, "bots")
     const files = [join(ROOT, "bots", "idle.ts"), ...readdirSync(dir).map((f) => join(dir, f))]
     assert.equal(typecheck(rules, rulesetDir(rules.id), files), "")
   })
+
+  test(`「${rules.name}」的参考 bot 和规则包放在一起，每个都写了打法、列进 PROMPT.md，至少有 3 种打法`, () => {
+    const bots = referenceBots(rulesetDir(rules.id))
+    const own = bots.filter((b) => b.name !== "idle")
+    assert.ok(own.length >= 3, own.map((b) => b.name).join("、"))
+    assert.equal(own[0].name, "baseline")
+    const prompt = buildPrompt(rules, rulesetDir(rules.id), buildDts(rules, rulesetDir(rules.id)))
+    for (const b of bots) {
+      assert.ok(b.file.startsWith(b.name === "idle" ? join(ROOT, "bots") : join(ROOT, "rulesets", rules.id, "bots")), b.file)
+      assert.ok(b.about.length >= 10, `${b.name} 第一行没写打法`)
+      assert.ok(prompt.includes(`| \`${b.name}\` | ${b.about} |`), `PROMPT.md 里没有 ${b.name}`)
+    }
+  })
+
+  for (const b of referenceBots(rulesetDir(rules.id)).filter((x) => x.name !== "idle" && x.name !== "baseline"))
+    test(`「${rules.name}」的参考 bot ${b.name} 打不动的对手：能赢，不报错、不被拒命令`, async () => {
+      const replay = runMatch({ ruleset: rules, seed: 2, bots: [await load(rules, join(ROOT, "bots", "idle.ts"), 0), await load(rules, b.file, 1)] })
+      assert.equal(replay.result.winner, 1, replay.result.reason)
+      assert.equal(replay.bots[1].errors + replay.bots[1].fuelOuts + replay.bots[1].rejected, 0)
+    })
 
   test(`「${rules.name}」的基准 bot 在沙箱里能打赢不动的对手`, async () => {
     const replay = runMatch({
       ruleset: rules,
       seed: 1,
-      bots: [await load(rules, join(ROOT, "bots", rules.id, "baseline.ts"), 0), await load(rules, join(ROOT, "bots", "idle.ts"), 1)],
+      bots: [await load(rules, join(ROOT, "rulesets", rules.id, "bots", "baseline.ts"), 0), await load(rules, join(ROOT, "bots", "idle.ts"), 1)],
     })
     assert.equal(replay.result.winner, 0, replay.result.reason)
     assert.equal(replay.bots[0].errors + replay.bots[0].fuelOuts + replay.bots[0].rejected, 0)
@@ -42,7 +63,7 @@ test("拓荒：基准 bot 自己建兵营、箭塔、仓库，打赢速攻", asy
   const replay = runMatch({
     ruleset: frontier,
     seed: 1,
-    bots: [await load(frontier, join(ROOT, "bots", "frontier", "baseline.ts"), 0), await load(frontier, join(ROOT, "bots", "frontier", "rush.ts"), 1)],
+    bots: [await load(frontier, join(ROOT, "rulesets", "frontier", "bots", "baseline.ts"), 0), await load(frontier, join(ROOT, "rulesets", "frontier", "bots", "rush.ts"), 1)],
   })
   assert.equal(replay.result.winner, 0, replay.result.reason)
   assert.equal(replay.bots[0].errors + replay.bots[0].fuelOuts + replay.bots[0].rejected, 0)
@@ -70,7 +91,7 @@ test("混战：三家里基准 bot 把两个不动的对手打出局，名次按
   const replay = runMatch({
     ruleset: melee,
     seed: 2,
-    bots: [await load(melee, idle, 0), await load(melee, join(ROOT, "bots", "melee", "baseline.ts"), 1), await load(melee, idle, 2)],
+    bots: [await load(melee, idle, 0), await load(melee, join(ROOT, "rulesets", "melee", "bots", "baseline.ts"), 1), await load(melee, idle, 2)],
   })
   const r = replay.result
   assert.equal(r.winner, 1, r.reason)
@@ -92,7 +113,7 @@ test("混战：三家里基准 bot 把两个不动的对手打出局，名次按
 
 test("混战 2v2：按队伍判胜负，什么都不做的队友也算赢", async () => {
   const idle = join(ROOT, "bots", "idle.ts")
-  const base = join(ROOT, "bots", "melee", "baseline.ts")
+  const base = join(ROOT, "rulesets", "melee", "bots", "baseline.ts")
   const replay = runMatch({
     ruleset: melee,
     seed: 3,

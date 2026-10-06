@@ -9,7 +9,7 @@ my-rules/
   index.ts        默认导出规则包对象（必需）
   objectives.ts   导出 Objectives 类型：view.objectives 的结构，会原样进 bot 作者拿到的 arena.d.ts（必需）
   RULES.md        给 bot 作者看的玩法说明，会进 PROMPT.md（必需）
-  bots/           这个规则包的现成 bot，baseline.ts 是基准 bot（可选，建议写）；arena.d.ts 是 bot 用的接口（new-rules 生成）
+  bots/           参考 bot（陪练对手），和规则包一起发布：baseline.ts 是基准 bot，再写几个不同打法的（见「写好之后」）；arena.d.ts 是 bot 用的接口（new-rules 生成）
   api/            平台接口的只读副本（new-rules 生成）：ruleset.ts、standard.ts、bot-api.ts，查字段和函数签名看这里；globals.d.ts 是沙箱里的全局（console）
   tsconfig.json   给编辑器用（new-rules 生成）
 ```
@@ -109,6 +109,11 @@ export default ruleset
 
 ## 写好之后
 
-- 写一个 `bots/baseline.ts` 基准 bot：bot 作者拿它当标准对手（`rts-arena run` 不写对手就打 baseline）。
+- 在 `bots/` 里写参考 bot（陪练对手），和规则包一起发布：
+  - `baseline.ts` 是基准 bot：均衡的标准对手（`rts-arena run` 不写对手就打它）。
+  - **再写几个不同打法的**，至少凑够 3 个：比如速攻、先发展后进攻、守家、骚扰工人，或者专打你玩法里某个机制的。只有一个基准 bot 时，写 bot 的人（尤其是大模型）只会对着它反复调，调出来的 bot 换个对手就不行；有几种打法当陪练，联赛的排名才说明问题。new-rules 的模板带了 baseline、rush（速攻）、greedy（只采不打）三个，改了玩法后照着改。
+  - 每个 bot 文件的**第一行**写一句打法说明（`// 速攻：……`）。PROMPT.md 会列出所有参考 bot 的名字和这句话，所有写 bot 的人拿到的信息一样，不会有人自己翻目录找到了陪练、别人却不知道。`rts-arena list ./my-rules` 也会列出来。
+  - 参考 bot 也是检验玩法的工具：`rts-arena league ./my-rules` 让它们循环对打，某种打法全胜或全败，往往说明玩法本身有问题（比如模板里 greedy 全胜，说明"采金赛"纯拼经济、出兵不划算）。
+  - `rts-arena check` 在参考 bot 少于 3 个、或者有 bot 第一行没写打法时会提醒。
 - `rts-arena check ./my-rules` 全部通过（它会让 baseline 在第一个、最后一个座位各打一整局不动的对手，再自己打自己一局），`rts-arena run ./my-rules baseline baseline --games 4` 看看胜负是否两边都有、能不能在时间内分出结果，再用 `rts-arena view` 看回放。
 - 把整个目录发给别人；对方用 `rts-arena init <目录> <bot 目录>` 就能开始写 bot。别人用你的规则包 run、league 时也会做一次规则包的类型检查，没通过只提醒、不拦比赛。

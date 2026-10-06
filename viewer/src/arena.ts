@@ -7,6 +7,8 @@ interface RulesetInfo {
   players: { min: number; max: number }
   teams: boolean
   bots: string[]
+  /** 现成 bot 的打法（文件第一行注释） */
+  botAbout?: Record<string, string>
   /** 不是平台自带的、自己写的规则包；id 是 arena.json 里写的路径 */
   external?: boolean
 }
@@ -257,7 +259,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     const r = current()!
     const found = files(r)
     const isKnown = found.some((b) => b.path === value) || r.bots.includes(value)
-    const opt = (v: string, label = v) => `<option value="${esc(v)}"${v === value ? " selected" : ""}>${esc(label)}</option>`
+    const opt = (v: string, label = v, title?: string) => `<option value="${esc(v)}"${v === value ? " selected" : ""}${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</option>`
     const groups = [...new Set(found.map((b) => b.group))]
       .map((g) => `<optgroup label="${esc(g)}">${found.filter((b) => b.group === g).map((b) => opt(b.path, b.label ?? b.path)).join("")}</optgroup>`)
       .join("")
@@ -266,7 +268,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       <span class="swatch" style="background:${hex(playerColor(i))}"></span><span class="seat-no">${i + 1}</span>
       <select class="ar-bot">
         ${groups}
-        <optgroup label="现成">${r.bots.map((b) => opt(b)).join("")}</optgroup>
+        <optgroup label="现成">${r.bots.map((b) => opt(b, b, r.botAbout?.[b])).join("")}</optgroup>
         <optgroup label="别的位置">
           <option value="${UPLOAD}">从电脑选文件…</option>
           <option value="${PATH}"${isKnown ? "" : " selected"}>填路径…</option>

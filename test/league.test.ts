@@ -79,7 +79,7 @@ test("命令行 league：两两循环、换边，写汇总和每局回放；bot 
     // bot 目录：自己的 bot + 所有现成 bot（不含 idle）
     sh(["init", "koth", "me"], dir)
     const mine = sh(["league", "--per-pair", "1", "--no-check"], join(dir, "me"))
-    assert.match(mine, /3 个 bot（me、baseline、hold）/)
+    assert.match(mine, /6 个 bot（me、baseline、boom、hold、rush、sneak）/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -206,7 +206,7 @@ test("联赛分桌：两人局全部两两组合；多人局组合少就全打�
 test("命令行 league：多人局（混战每局 3 人），座位轮换一圈，输出平均名次", () => {
   const dir = mkdtempSync(join(tmpdir(), "rts-arena-league-ffa-"))
   try {
-    const r = spawnSync(process.execPath, [CLI, "league", "melee", "baseline", "idle", join(ROOT, "bots", "annihilation", "rush.ts"), "--size", "3", "--seed", "4", "--out", "lg", "--no-check"], { cwd: dir, encoding: "utf8" })
+    const r = spawnSync(process.execPath, [CLI, "league", "melee", "baseline", "idle", join(ROOT, "rulesets", "annihilation", "bots", "rush.ts"), "--size", "3", "--seed", "4", "--out", "lg", "--no-check"], { cwd: dir, encoding: "utf8" })
     assert.equal(r.status, 0, r.stdout + r.stderr)
     assert.match(r.stdout, /每局 3 人，所有组合 1 桌，每桌 3 局（轮换座位），共 3 局/)
     assert.match(r.stdout, /名次 baseline > /)

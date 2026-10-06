@@ -14,5 +14,5 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src", "rulesets", "test", "viewer"],
-  "exclude": ["src/api/bot-globals.d.ts", "viewer/dist", "test/fixtures"]
+  "exclude": ["src/api/bot-globals.d.ts", "viewer/dist", "test/fixtures", "rulesets/*/bots"]
 }

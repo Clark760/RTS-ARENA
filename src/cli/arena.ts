@@ -13,6 +13,7 @@ import {
   findRuleset,
   knownBotFile,
   knownBots,
+  referenceBots,
   listRulesets,
   loadRulesetRef,
   looksLikePath,
@@ -45,7 +46,7 @@ const HELP = `用法：rts-arena <命令> [参数]
                                         事件太多时会省略中间的，--full 全部列出）
 
 在任何目录：
-  list                                  列出规则包和现成的 bot
+  list [规则包]                         列出规则包和现成的 bot（写了规则包就列出它的参考 bot 和打法）
   docs  <规则包> [--out 目录]            生成 arena.d.ts 和 PROMPT.md（默认 ./out/<规则包>/）
   check <规则包> <bot>... [--ticks N]    检查指定的 bot
   run   <规则包> <bot>... [选项]         指定所有参赛 bot 打一局（或多局）
@@ -849,6 +850,13 @@ async function cmdCheckRules(src: RulesetRef, opt: Record<string, string | true>
   const tc = typecheck(rules, src.dir, botFiles)
   if (tc) bad(`现成 bot 的类型检查没通过：\n${tc}`)
   else console.log(`现成 bot 类型检查通过：${knownBots(src).join("、")}`)
+  // 参考 bot：鼓励几个不同打法的陪练，只有一个基准 bot 时写 bot 的人容易只对着它过拟合
+  const refs = referenceBots(src.dir).filter((b) => b.name !== "idle")
+  for (const b of refs) if (!b.about) console.log(`提醒：bots/${b.name}.ts 第一行没写打法说明（// 开头的一句话，会列进 PROMPT.md 的参考 bot 表）`)
+  if (refs.length < 3)
+    console.log(
+      `提醒：参考 bot 只有 ${refs.length} 个（${refs.map((b) => b.name).join("、") || "无"}）。建议在 bots/ 里再写几个不同打法的陪练（速攻、先发展、守家、骚扰……），和 baseline 一起发布：只有一个基准 bot 时，写 bot 的人容易只对着它调、过拟合`,
+    )
 
   const baseline = knownBotFile(src, "baseline")
   /** baselineSeats：哪些座位坐 baseline（没有 baseline 就都不动） */
@@ -960,11 +968,18 @@ async function main(): Promise<void> {
   const { pos, opt } = parseArgs(command, rest)
   switch (command) {
     case "list": {
+      // list <规则包>：这个规则包的参考 bot 和打法
+      if (pos[0]) {
+        const { rules: r, src } = await loadRuleset(pos[0])
+        console.log(`「${r.name}」（${r.id}）的参考 bot（命令里写名字就能和它打；rts-arena league 不写对手就和它们全部循环对打）：`)
+        for (const b of referenceBots(src.dir)) console.log(`  ${b.name.padEnd(10)} ${b.about || "（没写打法说明）"}`)
+        return
+      }
       for (const id of listRulesets()) {
         const { rules: r, src } = await loadRuleset(id)
         console.log(`${id}\t${r.name}\t${r.players.min}~${r.players.max} 人\t现成 bot：${knownBots(src).join("、")}`)
       }
-      console.log("（自己写的规则包用目录路径，比如 rts-arena run ./my-rules a.ts b.ts；rts-arena new-rules <目录> 建一个）")
+      console.log("（rts-arena list <规则包> 看每个参考 bot 的打法；自己写的规则包用目录路径，比如 rts-arena run ./my-rules a.ts b.ts；rts-arena new-rules <目录> 建一个）")
       return
     }
     case "docs": {
@@ -999,8 +1014,12 @@ async function main(): Promise<void> {
     case "run": {
       const t = await target(pos, "run")
       // bot 目录里不写对手：打基准 bot，人数不够就都补基准
-      if (t.mine && t.bots.length === 1) while (t.bots.length < t.rules.players.min) t.bots.push("baseline")
+      const onlyBaseline = t.mine && t.bots.length === 1
+      if (onlyBaseline) while (t.bots.length < t.rules.players.min) t.bots.push("baseline")
       await cmdRun(t.rules, t.src, t.bots, opt)
+      const others = knownBots(t.src).filter((b) => b !== "baseline" && b !== "idle")
+      if (onlyBaseline && others.length)
+        say(`（这次只打了 baseline。还有别的打法的参考 bot：${others.join("、")}——rts-arena league 和它们全部打一遍，免得只对 baseline 过拟合）`)
       return
     }
     case "report": {

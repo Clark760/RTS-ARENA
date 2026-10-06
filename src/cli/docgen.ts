@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path"
 import { resolveType, World } from "../core/world.ts"
 import type { EntityState, Ruleset } from "../core/types.ts"
 import { PKG_ROOT } from "../paths.ts"
+import { referenceBots } from "./catalog.ts"
 
 /** 平台自带规则包的目录（RULES.md、objectives.ts 在这里）；别的规则包的目录由调用方给 */
 export function rulesetDir(id: string): string {
@@ -200,6 +201,25 @@ function resourceGroups(resources: readonly EntityState[], ents: readonly Entity
   return out
 }
 
+/** 参考 bot：和规则包一起发布，每个写 bot 的人拿到的都一样，名字和打法都列出来 */
+function botsSection(dir: string): string {
+  const bots = referenceBots(dir)
+  const rows = bots.map((b) => `| \`${b.name}\` | ${(b.about || "（没写打法说明）").replace(/\|/g, "/")} |`)
+  return [
+    "## 参考 bot（陪练对手）",
+    "",
+    "这些 bot 和规则包一起发布，每个写 bot 的人拿到的都一样。命令里直接写名字就能和它打，比如 `rts-arena run " + (bots.find((b) => b.name !== "baseline" && b.name !== "idle")?.name ?? "baseline") + "`；`rts-arena league` 不写对手就和下面所有的（不含 idle）循环对打。",
+    "",
+    "| 名字 | 打法 |",
+    "|---|---|",
+    ...rows,
+    "",
+    "- `baseline` 是基准：经济、防守、集火都做全了的标准对手，先打赢它。但只对着一个对手调出来的 bot 容易过拟合（专门克制它的打法，换个对手就输），每改一版都用 `rts-arena league` 和所有参考 bot 打一遍，看总的得分率，别只看对 baseline 的胜率。",
+    "- 想要别的打法当陪练，可以自己再写几个（比如照着你担心的打法写），和参考 bot 一起放进联赛。",
+    "- 参考 bot 的源码随规则包发布，在规则包目录的 `bots/` 里（平台自带的规则包在 rts-arena 安装目录的 `rulesets/<规则包>/bots/`）。",
+  ].join("\n")
+}
+
 export function buildPrompt(rules: Ruleset, dir: string, dts: string): string {
   const rulesMd = readFileSync(join(dir, "RULES.md"), "utf8").trim()
   const platform = readFileSync(join(PKG_ROOT, "src", "api", "PLATFORM.md"), "utf8").trim()
@@ -235,6 +255,8 @@ export function buildPrompt(rules: Ruleset, dir: string, dts: string): string {
     unitTable(rules),
     "",
     mapSection(rules),
+    "",
+    botsSection(dir),
     "",
     "# 平台通用说明",
     "",

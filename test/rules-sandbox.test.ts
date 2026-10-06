@@ -35,7 +35,7 @@ for (const id of ["annihilation", "koth", "harvest", "melee", "frontier"]) {
     const native = await importRuleset(id)
     const boxed = await loadSandboxedRuleset(join(ROOT, "rulesets", id))
     const play = async (rules: Ruleset) => {
-      const bots = [await sandboxBot(join(ROOT, "bots", id, "baseline.ts"), 0, rules), await sandboxBot(join(ROOT, "bots", id, "baseline.ts"), 1, rules)]
+      const bots = [await sandboxBot(join(ROOT, "rulesets", id, "bots", "baseline.ts"), 0, rules), await sandboxBot(join(ROOT, "rulesets", id, "bots", "baseline.ts"), 1, rules)]
       return runMatch({ ruleset: { ...rules, maxTicks: 1200 }, seed: 7, bots })
     }
     assert.equal(stable(await play(boxed)), stable(await play(native)))
@@ -49,7 +49,7 @@ test("混战三家放进沙箱：出局、清掉出局者的实体、名次都�
     runMatch({
       ruleset: rules,
       seed: 2,
-      bots: [{ name: "a", file: "", runner: idle() }, await sandboxBot(join(ROOT, "bots", "melee", "baseline.ts"), 1, rules), { name: "c", file: "", runner: idle() }],
+      bots: [{ name: "a", file: "", runner: idle() }, await sandboxBot(join(ROOT, "rulesets", "melee", "bots", "baseline.ts"), 1, rules), { name: "c", file: "", runner: idle() }],
     })
   const a = await play(native)
   assert.equal(a.result.winner, 1)

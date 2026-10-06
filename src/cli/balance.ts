@@ -7,7 +7,7 @@ import type { Ruleset, TypeSpec } from "../core/types.ts"
 import { compileBot, createBot } from "../sandbox/quickjs.ts"
 import annihilation from "../../rulesets/annihilation/index.ts"
 
-const base = readFileSync(join(import.meta.dirname, "..", "..", "bots", "annihilation", "baseline.ts"), "utf8")
+const base = readFileSync(join(import.meta.dirname, "..", "..", "rulesets", "annihilation", "bots", "baseline.ts"), "utf8")
 const PLAN_RE = /const PLAN: TypeName\[\] = \[[^\]]*\]/
 if (!PLAN_RE.test(base)) throw new Error("基准 bot 里找不到 PLAN 那一行")
 const plan = (p: string[]) => base.replace(PLAN_RE, `const PLAN: TypeName[] = ${JSON.stringify(p)}`)

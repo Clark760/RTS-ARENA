@@ -116,7 +116,86 @@ const RULES = `两人对战，比谁先采够金子。双方各有一个主基�
 - \`enemyBases\`：对手主基地开局时的左上角坐标。
 `
 
-const BASELINE = `// 「采金赛」的基准 bot：工人补到 8 个，每个金矿最多 3 人；兵营出战士守家，攒够 6 个去拆对方主基地。
+// 参考 bot：基准 + 两个不同打法的陪练（第一行注释是打法说明，会列进 PROMPT.md）
+const RUSH = `// 速攻：只留 3 个工人采矿，兵营一直出战士，凑够 4 个就去拆对方主基地（拆掉直接赢），之后新出的兵直接跟上。
+
+let attacking = false
+
+function nearest<T extends Pos>(from: Pos, list: T[]): T | undefined {
+  let best: T | undefined
+  let bestD = Infinity
+  for (const e of list) {
+    const d = dist(from, e)
+    if (d < bestD) {
+      best = e
+      bestD = d
+    }
+  }
+  return best
+}
+
+export function onTick(view: View, cmd: Commands): void {
+  const mine = view.entities.filter((e) => e.owner === view.me)
+  const base = mine.find((e) => e.type === "base")
+  if (!base) return
+  const barracks = mine.find((e) => e.type === "barracks")
+  const workers = mine.filter((e) => e.type === "worker")
+  const soldiers = mine.filter((e) => e.type === "soldier")
+  const mines = view.entities.filter((e) => e.type === "goldmine")
+  for (const w of workers) if (w.order?.kind !== "gather") {
+    const m = nearest(base, mines)
+    if (m) cmd.gather(w, m)
+  }
+  if (barracks && (barracks.queue?.length ?? 0) < 2 && view.resources.gold >= 75) cmd.produce(barracks, "soldier")
+
+  if (soldiers.length >= 4) attacking = true
+  const eb = view.objectives.enemyBases[0]
+  const enemyBase = view.entities.find((e) => e.type === "base" && e.owner >= 0 && e.owner !== view.me)
+  for (const s of soldiers) {
+    if (!attacking) continue
+    if (enemyBase && dist(s, enemyBase) <= 6) {
+      if (s.order?.kind !== "attack") cmd.attack(s, enemyBase)
+    } else if (s.order?.kind === "idle") cmd.attackMove(s, eb.x + 1, eb.y + 1)
+  }
+}
+`
+
+const GREEDY = `// 只采不打：主基地一直补工人到 10 个，每个金矿最多 3 人，全力抢着交够金子；一个兵都不出。
+
+function nearest<T extends Pos>(from: Pos, list: T[]): T | undefined {
+  let best: T | undefined
+  let bestD = Infinity
+  for (const e of list) {
+    const d = dist(from, e)
+    if (d < bestD) {
+      best = e
+      bestD = d
+    }
+  }
+  return best
+}
+
+export function onTick(view: View, cmd: Commands): void {
+  const mine = view.entities.filter((e) => e.owner === view.me)
+  const base = mine.find((e) => e.type === "base")
+  if (!base) return
+  const workers = mine.filter((e) => e.type === "worker")
+  const mines = view.entities.filter((e) => e.type === "goldmine")
+  if ((base.queue?.length ?? 0) === 0 && workers.length < 10 && view.resources.gold >= 50) cmd.produce(base, "worker")
+  const load = new Map<number, number>()
+  for (const w of workers) if (w.order?.kind === "gather") load.set(w.order.target, (load.get(w.order.target) ?? 0) + 1)
+  for (const w of workers) {
+    if (w.order?.kind === "gather") continue
+    const open = mines.filter((m) => (load.get(m.id) ?? 0) < 3)
+    const m = nearest(base, open.length ? open : mines)
+    if (!m) continue
+    cmd.gather(w, m)
+    load.set(m.id, (load.get(m.id) ?? 0) + 1)
+  }
+}
+`
+
+const BASELINE = `// 基准（均衡）：工人补到 8 个，每个金矿最多 3 人；兵营出战士守家，攒够 6 个去拆对方主基地。
 
 function nearest<T extends Pos>(from: Pos, list: T[]): T | undefined {
   let best: T | undefined
@@ -228,11 +307,14 @@ export async function writeRulesTemplate(dir: string, builtin: string[]): Promis
   writeFileSync(join(dir, "objectives.ts"), OBJECTIVES)
   writeFileSync(join(dir, "RULES.md"), RULES)
   writeFileSync(join(dir, "bots", "baseline.ts"), BASELINE)
+  writeFileSync(join(dir, "bots", "rush.ts"), RUSH)
+  writeFileSync(join(dir, "bots", "greedy.ts"), GREEDY)
   writeFileSync(join(dir, ".gitignore"), "replays/\n")
   await writePlatformFiles(dir)
   console.log(`已在 ${dir} 建好示例规则包「采金赛」（id：${id}）。先读 RULESET.md，改 index.ts、objectives.ts、RULES.md，然后：`)
   console.log(`  rts-arena check ${dir}                       检查规则包`)
   console.log(`  rts-arena run ${dir} baseline baseline       用基准 bot 打一局`)
+  console.log(`  rts-arena league ${dir} baseline rush greedy  参考 bot 循环对打（bots/ 里的都会列进 PROMPT.md，改玩法后照着写几个不同打法的）`)
   console.log(`  rts-arena init ${dir} <bot 目录>             给它建一个 bot 目录`)
   console.log(`接口的字段和函数签名在 ${dir}/api/ 里（ruleset.ts、standard.ts）。平台升级后对这个目录再运行一次 new-rules 刷新它们`)
 }

@@ -64,15 +64,47 @@ export async function loadRulesetRef(r: RulesetRef): Promise<Ruleset> {
   return rules
 }
 
-/** 现成 bot 所在的目录：规则包自己的 bots/，再加平台通用的 bots/（idle 等） */
+/** 现成 bot 所在的目录：规则包目录里的 bots/（自带的规则包也一样，和规则包一起发布），再加平台通用的 bots/（idle） */
 function botDirs(r: RulesetRef): string[] {
-  return [r.builtin ? join(PKG_ROOT, "bots", r.ref) : join(r.dir, "bots"), join(PKG_ROOT, "bots")]
+  return [join(r.dir, "bots"), join(PKG_ROOT, "bots")]
+}
+
+/** 参考 bot（现成 bot）：名字、文件、打法（文件第一行 // 注释） */
+export interface ReferenceBot {
+  name: string
+  file: string
+  about: string
+}
+
+/** bot 文件开头第一行 // 注释：这个 bot 的打法，列进 PROMPT.md 和 list；没写返回空字符串 */
+export function botAbout(file: string): string {
+  const line = readFileSync(file, "utf8")
+    .split(/\r?\n/)
+    .find((l) => l.trim() !== "")
+  return line?.trim().startsWith("//") ? line.trim().replace(/^\/\/\s*/, "") : ""
+}
+
+/** 规则包目录 dir 的参考 bot：规则包 bots/ 里的（baseline 排第一），再加平台通用的 idle */
+export function referenceBots(dir: string): ReferenceBot[] {
+  const out: ReferenceBot[] = []
+  for (const d of [join(dir, "bots"), join(PKG_ROOT, "bots")]) {
+    if (!existsSync(d)) continue
+    const names = readdirSync(d)
+      .filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
+      .map((f) => f.slice(0, -3))
+      .sort((a, b) => Number(b === "baseline") - Number(a === "baseline") || a.localeCompare(b))
+    for (const name of names) {
+      if (out.some((b) => b.name === name)) continue
+      const file = join(d, `${name}.ts`)
+      out.push({ name, file, about: botAbout(file) })
+    }
+  }
+  return out
 }
 
 /** 规则包能用的现成 bot 的名字 */
 export function knownBots(r: RulesetRef): string[] {
-  const list = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts")).map((f) => f.slice(0, -3)) : [])
-  return [...new Set(botDirs(r).flatMap(list))]
+  return referenceBots(r.dir).map((b) => b.name)
 }
 
 /** 现成 bot 的文件路径；不是现成 bot 返回 null */

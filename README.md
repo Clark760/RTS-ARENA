@@ -56,7 +56,7 @@ rts-arena view                     # 网页播放器：看 ./replays 里的回�
 - `arena.json` 记着这个目录用哪个规则包、bot 是哪个文件；`check`、`run` 会自动带上你的 bot。
 - 平台升级后在目录里跑一次 `rts-arena init`，只更新说明书和接口，不动 `bot.ts`。
 - 回放和日志写在 `./replays`：每局一个 JSON 回放，外加每个 bot 一份只含它自己信息的日志（`<回放>.P<座位>-<bot 名>.log`），几个 agent 同时跑也分得清。
-- 现成的对手：`baseline` 是每个规则包的基准 bot（多数对局能打赢该规则包的其他示例 bot，是衡量新 bot 的标准对手），`idle` 什么都不做；`rts-arena list` 列出全部。
+- 现成的对手（参考 bot）：每个规则包带几个不同打法的，放在规则包目录的 `bots/` 里、和规则包一起发布，PROMPT.md 列出了名字和打法（`rts-arena list <规则包>` 也能看）。`baseline` 是均衡的基准 bot，但不一定最强，别只对着它调；`idle` 什么都不做。
 - 联赛：`rts-arena league 对手1.ts 对手2.ts --per-pair 4`（不写对手就和所有现成的 bot 打，不含 idle），任意目录里写成 `rts-arena league koth a.ts b.ts c.ts`。默认两两对打、同一对用同一个种子换边。多人局用 `--size K`（比如混战 `rts-arena league melee a.ts b.ts c.ts d.ts e.ts --size 4`）：按 K 人组合分桌（组合超过 20 桌就抽桌，每个 bot 大约上场 6 桌，`--tables M` 可以改），每桌用同一个种子轮换座位打 `--per-table` 局（默认 K 局，正好轮一圈）。名次分：第一名 1 分、最后一名 0 分、中间平分（两人局就是胜 1、平 0.5）；等级分（1500 起）把每局的名次拆成两两比较、按全部对局一起算，和打的先后顺序无关。最后打印排行榜和对阵表，记在回放目录的 `*.series.json` 里。同一个 bot 可以写好几次（名字带 #编号）：同一个 bot 的两份副本之间差多少，就能看出排行榜的误差有多大。
 - 分队联赛（规则包要支持分队，比如混战）：`rts-arena league melee a.ts b.ts c.ts d.ts --teams 2v2`。默认轮换搭档：每桌挑够人数的 bot，所有分组方式都打、两队换位置，每个 bot 拿所在队的名次分，额外出一张搭档表（两个 bot 同队时打了几局、赢了几局），看谁最会配合；`--partners same` 是每队都由同一个 bot 组成（bot 不够一局的人数时自动用这种）。
 - 联赛最后还有统计：相邻名次之间的把握度（直接对阵的结果推出"上面的确实更强"有多大把握）、得分率的 95% 区间、每个 bot 每局平均的时长（含胜局时长）、采集、造单位、损失、击杀、拆建筑、燃料，以及报错 / 燃料耗尽 / 被拒 / 停止的总数，各座位的得分率（看地图偏不偏），结束原因的分布。
@@ -80,7 +80,7 @@ rts-arena run ./my-rules baseline baseline --games 4
 rts-arena init ./my-rules my-bot                   # 给它建 bot 目录，之后在 my-bot 里照常 check / run / view
 ```
 
-- 目录里要有 `index.ts`（默认导出规则包对象）、`objectives.ts`（导出 `Objectives` 类型）、`RULES.md`（玩法说明），现成 bot 放 `bots/`（`baseline.ts` 是基准 bot）。
+- 目录里要有 `index.ts`（默认导出规则包对象）、`objectives.ts`（导出 `Objectives` 类型）、`RULES.md`（玩法说明），参考 bot 放 `bots/`：`baseline.ts` 是基准 bot，再写几个不同打法的陪练（至少 3 个），每个文件第一行写一句打法说明，会列进 PROMPT.md。
 - 能用平台的类型（`import type { Ruleset } from "rts-arena/ruleset"`）和共用代码（`"rts-arena/standard"`：标准单位、对称地图工具），不能 import 别的。燃料、墙钟、内存、地图和实体数都有上限，超了这一局作废并说明原因。
 - 平台自带的规则包在仓库的 `rulesets/<id>/`，用名字引用，和自己写的一样在沙箱里跑；想加进平台就照着 `rulesets/koth/` 写。建议上限见 [doc/设计.md](doc/设计.md#7-建议上限)。
 

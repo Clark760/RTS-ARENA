@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import { basename, join, relative, resolve, sep } from "node:path"
 import { BOT_EXPORT, discoverBots, uploadNameProblem } from "./bot-finder.ts"
 import { leagueTables, teamSplits } from "./league.ts"
-import { findRuleset, knownBots, listRulesets, loadRulesetRef, localBots, readWorkspaceIn, type RulesetRef } from "./catalog.ts"
+import { findRuleset, knownBots, listRulesets, loadRulesetRef, localBots, readWorkspaceIn, referenceBots, type RulesetRef } from "./catalog.ts"
 
 export interface ArenaApiOptions {
   /** 回放和日志目录 */
@@ -123,7 +123,8 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
       const broken: string[] = []
       for (const src of refs) {
         try {
-          rulesets.push({ id: src.ref, ...(await rulesetMeta(src)), bots: knownBots(src), external: !src.builtin })
+          const about = Object.fromEntries(referenceBots(src.dir).map((b) => [b.name, b.about]))
+          rulesets.push({ id: src.ref, ...(await rulesetMeta(src)), bots: knownBots(src), botAbout: about, external: !src.builtin })
         } catch (e) {
           broken.push(`${src.ref}：${(e as Error).message}`)
         }

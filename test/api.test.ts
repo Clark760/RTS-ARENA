@@ -83,7 +83,7 @@ test("对战接口：bot 目录用自己写的规则包，列表里有它，也�
     const info = (await (await fetch(base + "/api/arena")).json()) as { rulesets: { id: string; name: string; external?: boolean; bots: string[] }[] }
     const mine = info.rulesets.find((r) => r.id === "../gold")
     assert.ok(mine?.external, JSON.stringify(info.rulesets.map((r) => r.id)))
-    assert.deepEqual(mine.bots, ["baseline", "idle"])
+    assert.deepEqual(mine.bots, ["baseline", "greedy", "rush", "idle"])
     // 不是自带的、也不是 arena.json 里写的规则包路径，不给跑
     const post = (body: unknown) => fetch(base + "/api/arena/run", { method: "POST", headers: { "Content-Type": "application/json", "X-Arena": "1" }, body: JSON.stringify(body) })
     assert.equal((await post({ ruleset: "../../somewhere", bots: ["bot.ts", "baseline"], games: 1 })).status, 400)

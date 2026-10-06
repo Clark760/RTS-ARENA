@@ -11,5 +11,5 @@
     "declaration": false
   },
   "include": ["src", "rulesets"],
-  "exclude": ["src/api/bot-globals.d.ts", "src/cli/bench.ts", "src/cli/balance.ts"]
+  "exclude": ["src/api/bot-globals.d.ts", "src/cli/bench.ts", "src/cli/balance.ts", "rulesets/*/bots"]
 }

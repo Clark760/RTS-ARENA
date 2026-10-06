@@ -16,7 +16,7 @@ const ROOT = join(import.meta.dirname, "..")
 async function frontierGame(): Promise<Replay> {
   const rules = await importRuleset("frontier")
   const bot = async (name: string, seed: number) => {
-    const c = compileBot(readFileSync(join(ROOT, "bots", "frontier", `${name}.ts`), "utf8"))
+    const c = compileBot(readFileSync(join(ROOT, "rulesets", "frontier", "bots", `${name}.ts`), "utf8"))
     if ("error" in c) throw new Error(c.error)
     return { name, file: name, runner: await createBot(c.code, seed, { fuel: rules.fuel }) }
   }
