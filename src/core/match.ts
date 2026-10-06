@@ -170,7 +170,7 @@ export function runMatch(opts: MatchOptions): Replay {
 
   const types: Replay["types"] = {}
   for (const [name, def] of Object.entries(w.types))
-    types[name] = { kind: def.kind, w: def.w, h: def.h, maxHp: def.maxHp, moveTicks: def.moveTicks, look: rules.types[name].look }
+    types[name] = { kind: def.kind, w: def.w, h: def.h, maxHp: def.maxHp, moveTicks: def.moveTicks, sight: def.sight, look: rules.types[name].look }
   const colors: Record<string, string> = {}
   for (const [ch, t] of Object.entries(rules.terrain)) colors[ch] = t.color
 
@@ -184,6 +184,7 @@ export function runMatch(opts: MatchOptions): Replay {
     players: opts.bots.map((b, i) => ({ name: b.name, bot: b.file, team: w.teams[i] })),
     map: { width: w.width, height: w.height, terrain: w.terrain, colors },
     types,
+    fog: rules.fog,
     initial: rec.initial,
     frames: rec.frames,
     result: w.ended,

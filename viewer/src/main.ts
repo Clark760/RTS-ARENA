@@ -9,6 +9,7 @@ const select = $<HTMLSelectElement>("replay-select")
 const slider = $<HTMLInputElement>("slider")
 const playBtn = $<HTMLButtonElement>("play")
 const speedSel = $<HTMLSelectElement>("speed")
+const povSel = $<HTMLSelectElement>("pov")
 
 const renderer = new Renderer()
 let model: ReplayModel | null = null
@@ -17,6 +18,8 @@ let state: State | null = null
 let now = 0
 let playing = false
 let logFilter: number | null = null
+/** 按哪一队的视野看；null 是全图 */
+let pov: number | null = null
 let lastLogDraw = 0
 
 /** 回放文件可能是别人给的，拼进 HTML 的值一律转义 */
@@ -88,6 +91,7 @@ function load(replay: Replay): void {
   renderer.load(replay, state)
   slider.max = String(model.lastTick)
   $("empty").hidden = true
+  drawPov()
   const r = replay
   $("match-title").textContent = `${r.ruleset.name}（${r.ruleset.id}）· 种子 ${r.seed} · ${r.players.map((p) => p.name).join(" vs ")}`
   drawFilter()
@@ -136,10 +140,14 @@ function updateUI(force = false): void {
   const teamed = new Set(r.players.map((p) => p.team)).size < r.players.length
   const rows = r.players.map((p, i) => {
     const ps = state!.players[i]
-    const res = Object.entries(ps.resources)
-      .map(([k, v]) => `${k} ${v}`)
-      .join("，")
-    const units = [...state!.ents.values()].filter((e) => e.owner === i && r.types[e.type]?.kind === "unit").length
+    // 按视野看时，对手的资源和单位数 bot 是不知道的
+    const hidden = pov !== null && (typeof p.team === "number" ? p.team : i) !== pov
+    const res = hidden
+      ? "资源 ？"
+      : Object.entries(ps.resources)
+          .map(([k, v]) => `${k} ${v}`)
+          .join("，")
+    const units = hidden ? "？" : [...state!.ents.values()].filter((e) => e.owner === i && r.types[e.type]?.kind === "unit").length
     // 分队时在名字后面标队伍（老回放没有 team 字段）
     const team = teamed && typeof p.team === "number" ? ` [队${p.team + 1}]` : ""
     return html`<tr><td><span class="swatch" style="background:${hex(playerColor(i))}"></span><span class="${ps.alive ? "" : "out"}">P${i} ${p.name}${team}</span></td>
@@ -152,6 +160,7 @@ function updateUI(force = false): void {
   else {
     const e = state.ents.get(sel)
     if (!e) $("selected").innerHTML = html`<span class="muted">#${sel} 已经不在了</span>`.s
+    else if (!renderer.shown(sel)) $("selected").innerHTML = html`<span class="muted">#${sel} 现在在视野外</span>`.s
     else {
       const info = r.types[e.type]
       const owner = e.owner < 0 ? "中立" : `P${e.owner} ${r.players[e.owner]?.name}`
@@ -183,6 +192,45 @@ function updateUI(force = false): void {
     drawLogs()
   }
 }
+
+/** 视角下拉框：全图，或者按队伍（不分队时每人一队） */
+function drawPov(): void {
+  if (!model) return
+  const r = model.replay
+  const teams = new Map<number, number[]>()
+  r.players.forEach((p, i) => {
+    const t = typeof p.team === "number" ? p.team : i
+    teams.set(t, [...(teams.get(t) ?? []), i])
+  })
+  const label = (ps: number[]) => ps.map((i) => `P${i} ${r.players[i].name}`).join("、")
+  const opts = [html`<option value="">视角：全图</option>`]
+  for (const [t, ps] of teams) opts.push(html`<option value="${t}">视角：${ps.length > 1 ? `队${t + 1}（${label(ps)}）` : label(ps)}</option>`)
+  povSel.innerHTML = html`${opts}`.s
+  povSel.disabled = !renderer.canPerspective
+  if (!renderer.canPerspective) povSel.title = "这份回放是老版本生成的，没有视野信息"
+  const want = new URLSearchParams(location.search).get("pov")
+  setPov(want !== null && want !== "" && teams.has(Number(want)) && renderer.canPerspective ? Number(want) : null)
+}
+
+function setPov(team: number | null): void {
+  pov = team
+  povSel.value = team === null ? "" : String(team)
+  renderer.setPerspective(team)
+  // 只有一个人的视角：日志也只看他的
+  const members = model!.replay.players.map((p, i) => ((typeof p.team === "number" ? p.team : i) === team ? i : -1)).filter((i) => i >= 0)
+  logFilter = members.length === 1 ? members[0] : null
+  const url = new URL(location.href)
+  if (team === null) url.searchParams.delete("pov")
+  else url.searchParams.set("pov", String(team))
+  history.replaceState(null, "", url)
+}
+
+povSel.addEventListener("change", () => {
+  if (!model) return
+  setPov(povSel.value === "" ? null : Number(povSel.value))
+  drawFilter()
+  updateUI(true)
+})
 
 function drawFilter(): void {
   if (!model) return

@@ -2,6 +2,7 @@
 import type { Game, GameEvent, PlayerInfo, TypeDef } from "../api/bot-api.ts"
 import { FlowCache } from "./nav.ts"
 import { PathFinder } from "./path.ts"
+import { markSight, rectSeen } from "./vision.ts"
 import { Mulberry32, mixSeed } from "./rng.ts"
 import type {
   EntityState,
@@ -355,22 +356,8 @@ export class World implements SetupContext, RuleContext {
 
   computeVisibility(): void {
     if (!this.rules.fog) return
-    const W = this.width
     for (const v of new Set(this.vis)) v.fill(0)
-    for (const e of this.ents.values()) {
-      if (e.owner < 0) continue
-      const v = this.vis[e.owner]
-      const s = e.def.sight
-      const y0 = Math.max(0, e.y - s)
-      const y1 = Math.min(this.height - 1, e.y + e.h - 1 + s)
-      for (let y = y0; y <= y1; y++) {
-        const dy = Math.max(0, e.y - y, y - (e.y + e.h - 1))
-        const rem = s - dy
-        const x0 = Math.max(0, e.x - rem)
-        const x1 = Math.min(W - 1, e.x + e.w - 1 + rem)
-        v.fill(1, y * W + x0, y * W + x1 + 1)
-      }
-    }
+    for (const e of this.ents.values()) if (e.owner >= 0) markSight(this.vis[e.owner], this.width, this.height, e, e.def.sight)
   }
 
   isAlly(a: number, b: number): boolean {
@@ -380,10 +367,7 @@ export class World implements SetupContext, RuleContext {
   /** 资源点和地形一样始终可见（位置、储量都公开）；盟友的实体总是看得见，盟友看得见的你也看得见 */
   visibleTo(player: number, e: EntityState): boolean {
     if (!this.rules.fog || this.isAlly(e.owner, player) || e.def.kind === "resource") return true
-    const v = this.vis[player]
-    for (let y = e.y; y < e.y + e.h; y++)
-      for (let x = e.x; x < e.x + e.w; x++) if (v[y * this.width + x]) return true
-    return false
+    return rectSeen(this.vis[player], this.width, e)
   }
 
   // ---------- 给 bot 的静态信息 ----------

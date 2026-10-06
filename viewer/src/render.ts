@@ -1,7 +1,8 @@
-// PixiJS 画面：地形、实体、攻击线、叠加层；拖动平移、滚轮缩放、点击选中
-import { Application, Container, Graphics, Text } from "pixi.js"
+// PixiJS 画面：地形、实体、攻击线、叠加层；拖动平移、滚轮缩放、点击选中；可以按某一队的视野看（迷雾）
+import { Application, CanvasSource, Container, Graphics, Sprite, Text, Texture } from "pixi.js"
 import type { EntSnap, Look, Marker, Replay } from "../../src/core/types.ts"
 import type { Delta, State } from "./model.ts"
+import { Vision } from "./vision.ts"
 
 export const TILE = 16
 export const PLAYER_COLORS = [0x4ea1ff, 0xff5d5d, 0x5ee08a, 0xf5c542, 0xc77dff, 0x4dd4d4]
@@ -37,6 +38,12 @@ export class Renderer {
   readonly app = new Application()
   private camera = new Container()
   private terrainLayer = new Graphics()
+  /** 迷雾：每格一个像素的画布，放大成格子 */
+  private fogLayer = new Container()
+  private fog: { canvas: HTMLCanvasElement; image: ImageData; texture: Texture } | null = null
+  private vision: Vision | null = null
+  /** 按哪一队的视野看；null 是全图 */
+  private team: number | null = null
   private markerLayer = new Container()
   private entLayer = new Container()
   private shotLayer = new Graphics()
@@ -48,14 +55,14 @@ export class Renderer {
   private shots: number[] = []
   private shotTick = 0
   /** 已死目标最后的位置，攻击线还要画到那里 */
-  private ghosts = new Map<number, { x: number; y: number }>()
+  private ghosts = new Map<number, { x: number; y: number; seen: boolean }>()
   selected: number | null = null
   onSelect: (id: number | null) => void = () => {}
 
   async init(host: HTMLElement): Promise<void> {
     await this.app.init({ resizeTo: host, background: 0x15181c, antialias: true, autoDensity: true, resolution: window.devicePixelRatio || 1 })
     host.appendChild(this.app.canvas)
-    this.camera.addChild(this.terrainLayer, this.markerLayer, this.entLayer, this.shotLayer, this.selLayer)
+    this.camera.addChild(this.terrainLayer, this.fogLayer, this.markerLayer, this.entLayer, this.shotLayer, this.selLayer)
     this.app.stage.addChild(this.camera)
     this.setupInput(host)
   }
@@ -76,8 +83,68 @@ export class Renderer {
     for (let x = 0; x <= width; x++) g.moveTo(x * TILE, 0).lineTo(x * TILE, height * TILE)
     for (let y = 0; y <= height; y++) g.moveTo(0, y * TILE).lineTo(width * TILE, y * TILE)
     g.stroke({ width: 1, color: 0x000000, alpha: 0.18 })
+    this.setupFog(replay)
     this.fit()
     this.jump(state)
+  }
+
+  private setupFog(replay: Replay): void {
+    for (const c of this.fogLayer.removeChildren()) c.destroy()
+    this.fog?.texture.destroy(true)
+    this.fog = null
+    this.team = null
+    this.vision = Vision.supported(replay) ? new Vision(replay) : null
+    if (!this.vision || !replay.fog) return
+    const { width, height } = replay.map
+    const canvas = document.createElement("canvas")
+    canvas.width = width
+    canvas.height = height
+    const image = new ImageData(width, height)
+    const texture = new Texture({ source: new CanvasSource({ resource: canvas, scaleMode: "nearest", resolution: 1 }) })
+    const sprite = new Sprite(texture)
+    sprite.scale.set(TILE)
+    this.fogLayer.addChild(sprite)
+    this.fogLayer.visible = false
+    this.fog = { canvas, image, texture }
+  }
+
+  /** 能不能按视野看（老回放没有视野信息） */
+  get canPerspective(): boolean {
+    return this.vision !== null
+  }
+
+  /** 按 team 这一队的视野看；null 回到全图 */
+  setPerspective(team: number | null): void {
+    this.team = this.vision ? team : null
+    this.refreshVision()
+  }
+
+  /** 这个实体现在画不画（按视野看时看不见的敌人不画） */
+  shown(id: number): boolean {
+    return this.views.get(id)?.root.visible ?? false
+  }
+
+  /** 局面变了以后重算视野：隐藏看不见的实体、更新迷雾 */
+  private refreshVision(): void {
+    const team = this.team
+    const vision = this.vision
+    if (team === null || !vision) {
+      for (const v of this.views.values()) v.root.visible = true
+      this.fogLayer.visible = false
+      return
+    }
+    vision.compute(this.state, team)
+    for (const [id, v] of this.views) {
+      const e = this.state.ents.get(id)
+      v.root.visible = e ? vision.visible(e, team) : false
+    }
+    if (!this.fog) return
+    const { image, canvas, texture } = this.fog
+    const px = image.data
+    for (let i = 0; i < vision.vis.length; i++) px[i * 4 + 3] = vision.vis[i] ? 0 : 150
+    canvas.getContext("2d")!.putImageData(image, 0, 0)
+    texture.source.update()
+    this.fogLayer.visible = true
   }
 
   fit(): void {
@@ -98,6 +165,7 @@ export class Renderer {
     for (const e of state.ents.values()) this.addView(e, state.tick)
     this.shots = []
     this.drawMarkers(state.markers)
+    this.refreshVision()
   }
 
   /** 应用了一帧之后更新画面 */
@@ -107,7 +175,7 @@ export class Renderer {
     for (const e of d.died) {
       const v = this.views.get(e.id)
       if (v) {
-        this.ghosts.set(e.id, { x: v.x, y: v.y })
+        this.ghosts.set(e.id, { x: v.x, y: v.y, seen: v.root.visible })
         v.root.destroy({ children: true })
         this.views.delete(e.id)
       }
@@ -129,6 +197,7 @@ export class Renderer {
       this.shotTick = t
     }
     if (this.replay.frames[t - 1]?.markers) this.drawMarkers(state.markers)
+    this.refreshVision()
   }
 
   private addView(e: EntSnap, t: number): void {
@@ -236,17 +305,18 @@ export class Renderer {
     const sel = this.selLayer.clear()
     if (this.selected !== null) {
       const v = this.views.get(this.selected)
-      if (v) {
+      if (v?.root.visible) {
         sel.rect(v.root.x - 2, v.root.y - 2, v.w * TILE + 4, v.h * TILE + 4).stroke({ width: 2, color: 0xffffff })
       }
     }
   }
 
+  /** 攻击线的端点；按视野看时看不见的一端不画（不然会暴露迷雾里的攻击者） */
   private centerOf(id: number): { x: number; y: number } | null {
     const v = this.views.get(id)
-    if (v) return { x: v.root.x + (v.w * TILE) / 2, y: v.root.y + (v.h * TILE) / 2 }
+    if (v) return v.root.visible ? { x: v.root.x + (v.w * TILE) / 2, y: v.root.y + (v.h * TILE) / 2 } : null
     const g = this.ghosts.get(id)
-    return g ? { x: (g.x + 0.5) * TILE, y: (g.y + 0.5) * TILE } : null
+    return g?.seen ? { x: (g.x + 0.5) * TILE, y: (g.y + 0.5) * TILE } : null
   }
 
   private drawBar(v: EntView, e: EntSnap): void {
@@ -304,6 +374,7 @@ export class Renderer {
     const wy = (ev.clientY - rect.top - this.camera.y) / this.camera.scale.y / TILE
     let hit: number | null = null
     for (const [id, v] of this.views) {
+      if (!v.root.visible) continue
       const x = v.root.x / TILE
       const y = v.root.y / TILE
       if (wx >= x && wx < x + v.w && wy >= y && wy < y + v.h) {

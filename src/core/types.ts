@@ -311,7 +311,10 @@ export interface Replay {
   maxTicks: number
   players: { name: string; bot: string; team: number }[]
   map: { width: number; height: number; terrain: string[]; colors: Record<string, string> }
-  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; look: Look }>
+  /** sight 是视野半径（老回放没有），按某一方的视野看回放时用 */
+  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; look: Look }>
+  /** 有没有战争迷雾（老回放没有） */
+  fog?: boolean
   initial: Snapshot
   frames: Frame[]
   result: MatchResult & { tick: number }
