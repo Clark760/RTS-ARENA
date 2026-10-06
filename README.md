@@ -30,7 +30,9 @@ npm install -g .     # 注册全局命令 rts-arena（指向这份克隆，git p
 注意：不要用 `npm install -g git+https://…` 直接装，npm 从 git 全局安装带构建步骤的包有已知问题，会构建失败。没有仓库权限的人，可以由有权限的人在克隆目录里 `npm pack` 打出 `rts-arena-<版本>.tgz` 发过去，对方 `npm install -g rts-arena-<版本>.tgz`。
 
 ```bash
-rts-arena list        # 规则包：annihilation 歼灭、koth 夺点、harvest 采集竞速、melee 混战（2～4 人，可分队）、frontier 拓荒（工人自己建兵营、箭塔、仓库）
+rts-arena list        # 规则包：annihilation 歼灭、koth 夺点、harvest 采集竞速、melee 混战（2～4 人，可分队）、frontier 拓荒（工人自己建兵营、箭塔、仓库）、
+                      # beacons 烽火台（清野怪、抢台址建烽火台计分）、wild-herd 牧野争牛（驯服游荡的野牛赶回牧栏，2～4 人可分队）、
+                      # caravan-raid 劫镖（劫过境的商队押回家交货，2～4 人可分队）
 ```
 
 ## 写一个 bot
