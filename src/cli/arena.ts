@@ -1,5 +1,5 @@
 // 命令行入口：npm run arena -- <命令> ...
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { checkLimits } from "../core/limits.ts"
@@ -15,7 +15,7 @@ const HELP = `用法：npm run arena -- <命令> [参数]
   list                                  列出规则包
   docs  <规则包> [--out 目录]            生成 arena.d.ts 和 PROMPT.md（默认 out/<规则包>/）
   init  <规则包> <目录>                  建一个 bot 工作目录：arena.d.ts、PROMPT.md、tsconfig.json、bot.ts 模板
-  check <规则包> <bot.ts>...             类型检查 + 在每个位置上和不动的对手试打 300 tick
+  check <规则包> <bot.ts>... [--ticks N] 类型检查 + 在每个位置上和不动的对手试打 N tick（默认 300）
   run   <规则包> <bot.ts>... [选项]      打一局（或多局），写回放
         --seed N      种子（默认随机）
         --games N     连打 N 局，最后报胜率；两人局每个种子换边各打一次
@@ -28,14 +28,26 @@ function fail(msg: string): never {
   process.exit(1)
 }
 
-function parseArgs(argv: string[]): { pos: string[]; opt: Record<string, string | true> } {
+/** 各命令接受的选项；值为 true 的是开关，不带值 */
+const OPTIONS: Record<string, Record<string, boolean>> = {
+  docs: { out: false },
+  run: { seed: false, games: false, out: false, "no-check": true },
+  check: { ticks: false },
+}
+
+function parseArgs(command: string | undefined, argv: string[]): { pos: string[]; opt: Record<string, string | true> } {
   const pos: string[] = []
   const opt: Record<string, string | true> = {}
+  const allowed = OPTIONS[command ?? ""] ?? {}
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a.startsWith("--")) {
       const key = a.slice(2)
-      if (key === "no-check") {
+      if (!(key in allowed)) {
+        const names = Object.keys(allowed).map((k) => "--" + k)
+        fail(`${command ?? ""} 不认识选项 ${a}${names.length ? `（可用：${names.join("、")}；值用空格隔开，不要写等号）` : ""}`)
+      }
+      if (allowed[key]) {
         opt[key] = true
         continue
       }
@@ -70,8 +82,10 @@ function writeDocs(rules: Ruleset, dir: string): void {
   writeFileSync(join(dir, "PROMPT.md"), buildPrompt(rules, dts))
 }
 
+/** 显示名：文件名去掉 .ts；init 建出来的都叫 bot.ts，改用所在目录名 */
 function botName(file: string): string {
-  return basename(file).replace(/\.ts$/, "")
+  const name = basename(file).replace(/\.ts$/, "")
+  return name === "bot" ? basename(dirname(resolve(file))) : name
 }
 
 function stamp(): string {
@@ -102,19 +116,22 @@ function printResult(replay: Replay): void {
       `  P${b.player} ${replay.players[b.player].name}: 调用 ${b.calls} 次，燃料 平均 ${avg} 最高 ${b.fuelMax}，报错 ${b.errors}，燃料耗尽 ${b.fuelOuts}，被拒命令 ${b.rejected}${dead}`,
     )
   }
-  // 每个玩家列出前几条不同的报错，方便直接改
+  // 每个玩家按种类汇总报错和被拒原因（数字归一后算同一种），列出最多的几种和第一次出现的位置
   for (let p = 0; p < replay.players.length; p++) {
-    const seen = new Set<string>()
+    const kinds = new Map<string, { n: number; t: number; msg: string }>()
     for (const f of replay.frames) {
       for (const e of f.errs ?? []) {
         if (e.p !== p) continue
-        const key = e.msg.split("\n")[0].replace(/#\d+/g, "#").replace(/\d+/g, "N")
-        if (seen.has(key)) continue
-        seen.add(key)
-        if (seen.size <= 3) console.log(`    P${p} 第 ${f.t} tick：${e.msg.split("\n").slice(0, 3).join(" | ")}`)
+        const head = e.msg.split("\n")[0].replace(/\s+\{.*$/, "")
+        const key = head.replace(/#\d+/g, "#").replace(/\d+/g, "N")
+        const k = kinds.get(key)
+        if (k) k.n++
+        else kinds.set(key, { n: 1, t: f.t, msg: e.msg.split("\n").slice(0, 3).join(" | ") })
       }
     }
-    if (seen.size > 3) console.log(`    P${p} 另有 ${seen.size - 3} 种报错，见回放`)
+    const top = [...kinds.values()].sort((a, b) => b.n - a.n)
+    for (const k of top.slice(0, 4)) console.log(`    P${p} ×${k.n}（首次第 ${k.t} tick）${k.msg}`)
+    if (top.length > 4) console.log(`    P${p} 另有 ${top.length - 4} 种，见回放`)
   }
 }
 
@@ -129,6 +146,7 @@ async function cmdRun(rules: Ruleset, files: string[], opt: Record<string, strin
   for (const w of checkLimits(rules)) console.warn(`提醒：${w}`)
   const games = opt.games ? Number(opt.games) : 1
   if (!Number.isInteger(games) || games < 1) fail("--games 要是正整数")
+  if (files.length === 2 && games > 1 && games % 2 === 1) console.warn(`提醒：--games ${games} 是奇数，最后一个种子只打了一边`)
   const baseSeed = typeof opt.seed === "string" ? Number(opt.seed) : Math.floor(Math.random() * 1e9)
   if (!Number.isInteger(baseSeed)) fail("--seed 要是整数")
   const outOpt = typeof opt.out === "string" ? opt.out : undefined
@@ -145,8 +163,8 @@ async function cmdRun(rules: Ruleset, files: string[], opt: Record<string, strin
     const ms = performance.now() - t0
     for (const w of checkLimits(rules, replay)) console.warn(`提醒：${w}`)
     let file: string
-    if (games === 1 && outOpt) file = outOpt
-    else file = join(outOpt ?? join(ROOT, "replays"), `${rules.id}-${stamp()}-s${seed}.json`)
+    if (games === 1 && outOpt && !(existsSync(outOpt) && statSync(outOpt).isDirectory())) file = outOpt
+    else file = join(outOpt ?? join(ROOT, "replays"), `${rules.id}-${stamp()}-s${seed}${games > 1 ? `-g${g + 1}` : ""}.json`)
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, JSON.stringify(replay))
     console.log(`第 ${g + 1} 局  种子 ${seed}  ${order.map((f, p) => `P${p}=${botName(f)}`).join("  ")}  用时 ${(ms / 1000).toFixed(1)} 秒`)
@@ -161,7 +179,10 @@ async function cmdRun(rules: Ruleset, files: string[], opt: Record<string, strin
   }
 }
 
-async function cmdCheck(rules: Ruleset, files: string[]): Promise<void> {
+async function cmdCheck(rules: Ruleset, files: string[], opt: Record<string, string | true>): Promise<void> {
+  const checkTicks = typeof opt.ticks === "string" ? Number(opt.ticks) : CHECK_TICKS
+  if (!Number.isInteger(checkTicks) || checkTicks < 1) fail("--ticks 要是正整数")
+  for (const f of files) if (!existsSync(f)) fail(`找不到 bot 文件 ${f}`)
   let ok = true
   const out = typecheck(rules, files)
   if (out) {
@@ -175,7 +196,7 @@ async function cmdCheck(rules: Ruleset, files: string[]): Promise<void> {
       console.log(`${file}：${compiled.error}`)
       continue
     }
-    // 在每个位置上和不动的对手试打 300 tick，抓开局阶段的运行错误
+    // 在每个位置上和不动的对手试打（默认 300 tick），抓开局阶段的运行错误
     const n = rules.players.min
     for (let seat = 0; seat < n; seat++) {
       const bots: MatchBot[] = []
@@ -183,7 +204,7 @@ async function cmdCheck(rules: Ruleset, files: string[]): Promise<void> {
         const code = p === seat ? compiled.code : IDLE_CODE
         bots.push({ name: p === seat ? botName(file) : "idle", file, runner: await createBot(code, mixSeed(1, "bot", p), { fuel: rules.fuel }) })
       }
-      const replay = runMatch({ ruleset: { ...rules, maxTicks: Math.min(rules.maxTicks, CHECK_TICKS) }, bots, seed: 1 })
+      const replay = runMatch({ ruleset: { ...rules, maxTicks: Math.min(rules.maxTicks, checkTicks) }, bots, seed: 1 })
       const st = replay.bots[seat]
       const errs = replay.frames.flatMap((f) => (f.errs ?? []).filter((e) => e.p === seat).map((e) => `第 ${f.t} tick：${e.msg}`))
       const where = `${file}（位置 P${seat}）`
@@ -204,24 +225,22 @@ async function cmdCheck(rules: Ruleset, files: string[]): Promise<void> {
 const CHECK_TICKS = 300
 const IDLE_CODE = "export function onTick() {}"
 
-const BOT_TEMPLATE = `// 一个最简单的 bot：工人采最近的金矿，主基地造工人。从这里改起。
+const BOT_TEMPLATE = `// 一个最简单的 bot：闲着的采集单位去采最近的资源点。从这里改起（还不会生产，也不会打仗）。
 
 export function onTick(view: View, cmd: Commands): void {
   const mine = view.entities.filter((e) => e.owner === view.me)
-  const resources = view.entities.filter((e) => e.amount !== undefined)
+  const resources = view.entities.filter((e) => game.types[e.type].kind === "resource")
   for (const u of mine) {
-    if (u.order?.kind !== "idle") continue
-    if (game.types[u.type].gather && resources.length > 0) {
-      const target = resources.reduce((a, b) => (dist(u, a) <= dist(u, b) ? a : b))
-      cmd.gather(u, target)
-    }
+    if (u.order?.kind !== "idle" || !game.types[u.type].gather || resources.length === 0) continue
+    const target = resources.reduce((a, b) => (dist(u, a) <= dist(u, b) ? a : b))
+    cmd.gather(u, target)
   }
 }
 `
 
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2)
-  const { pos, opt } = parseArgs(rest)
+  const { pos, opt } = parseArgs(command, rest)
   switch (command) {
     case "list": {
       for (const id of listRulesets()) {
@@ -249,7 +268,7 @@ async function main(): Promise<void> {
     case "check": {
       const rules = await loadRuleset(pos[0])
       if (pos.length < 2) fail("缺少 bot 文件")
-      await cmdCheck(rules, pos.slice(1))
+      await cmdCheck(rules, pos.slice(1), opt)
       return
     }
     case "run": {

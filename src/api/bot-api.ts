@@ -66,6 +66,7 @@ export interface Entity {
   y: number
   w: number
   h: number
+  /** 资源点的 hp、maxHp 都是 0，剩余量看 amount */
   hp: number
   maxHp: number
   /** 资源点剩余量（只有资源点有） */
@@ -86,7 +87,7 @@ export interface PlayerInfo {
   name: string
   /** false 表示已出局 */
   alive: boolean
-  /** 当前分数，含义见规则说明 */
+  /** 当前分数，含义由规则包定（见规则说明里的「分数」） */
   score: number
 }
 
@@ -108,7 +109,7 @@ export type GameEvent =
   | { kind: "created"; tick: number; id: number; type: TypeName }
   /** 你的实体、或你看得到的实体死了（资源点采完也算） */
   | { kind: "died"; tick: number; id: number; type: TypeName; owner: number; x: number; y: number }
-  /** 你的实体挨打了 */
+  /** 你的实体挨打了；by 是攻击者 id，攻击者不一定在你视野里 */
   | { kind: "damaged"; tick: number; id: number; by: number; damage: number }
   /** 你上次的 onTick 抛错或燃料耗尽，那一次的命令全部作废 */
   | { kind: "botError"; tick: number; message: string }
@@ -121,7 +122,7 @@ export interface View {
   /** 你拥有的资源 */
   resources: Record<ResourceName, number>
   players: PlayerInfo[]
-  /** 你看得到的全部实体（含自己的），按 id 升序 */
+  /** 你看得到的全部实体（含自己的；资源点不受迷雾影响，一直都在），按 id 升序 */
   entities: Entity[]
   /** 规则包给的目标信息 */
   objectives: Objectives
@@ -154,7 +155,7 @@ export interface Game {
 
 /** onTick 里用来下命令的对象。unit、building、target 可以传实体或 id */
 export interface Commands {
-  /** 走到 (x, y)，途中不还手。到不了就走到最近处后停下 */
+  /** 走到 (x, y)，途中不还手。目标格在障碍里就走到最近的能站的格后停下 */
   move(unit: Entity | number, x: number, y: number): void
   /** 追着打 target，直到它死掉或你看不见它 */
   attack(unit: Entity | number, target: Entity | number): void
@@ -164,7 +165,7 @@ export interface Commands {
   gather(unit: Entity | number, resource: Entity | number): void
   /** 停下。停着的单位会打射程内的敌人，但不追 */
   stop(unit: Entity | number): void
-  /** 排进生产队列，立即扣钱；队列最多 5 个 */
+  /** 排进生产队列，立即扣钱（同一次调用里按顺序扣，钱不够的被拒）；队列最多 5 个 */
   produce(building: Entity | number, type: TypeName): void
   /** 取消队列里最后一个，全额退款 */
   cancel(building: Entity | number): void

@@ -13,7 +13,11 @@ function isInt(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v)
 }
 
+/** 换命令；和当前命令完全相同时什么都不做（重复下命令不会打断进度或重新规划路线） */
 function resetOrder(e: EntityState, order: EntityState["order"]): void {
+  const cur = e.order as Record<string, unknown>
+  const next = order as Record<string, unknown>
+  if (Object.keys(next).every((k) => k === "returning" || cur[k] === next[k]) && cur.kind === next.kind) return
   e.order = order
   e.path.length = 0
   e.pathKey = ""
@@ -81,7 +85,6 @@ function applyOne(w: World, p: number, c: unknown): string | null {
       const t = w.ents.get(cmd.target)
       if (!t || !w.visibleTo(p, t)) return `看不到资源点 #${cmd.target}`
       if (t.def.kind !== "resource") return `#${t.id}（${t.type}）不是资源点`
-      if (e.order.kind === "gather" && e.order.target === t.id) return null // 已经在采，保持当前进度
       resetOrder(e, { kind: "gather", target: t.id, returning: false })
       return null
     }

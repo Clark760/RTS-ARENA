@@ -1,8 +1,11 @@
 // QuickJS 沙箱里的 bot 运行器。
 // - 隔离：每个 bot 一个独立的 WebAssembly 实例和内存，一个 bot 出事不影响别的 bot。
 // - 内存：用 WebAssembly.Memory 的 maximum 做硬上限（QuickJS 自带的 setMemoryLimit 在这个构建里不生效）。
+// - 栈：QuickJS 栈上限要远低于宿主的原生栈，让深递归在沙箱里抛出能接住的错误，而不是撑爆宿主。
 // - 燃料：QuickJS 中断回调被调用的次数（约每 1 万次跳转 / 函数调用一次），同一局重跑结果一致。
-// - 墙钟：只用来兜底不计燃料的内置函数（大数组排序、超长字符串等），触发即判 bot 停止运行。
+// - 墙钟：不计燃料的内置函数（大数组排序、超长字符串等）执行期间不会触发中断回调，所以单次超时和整局累计超时
+//   都在调用结束后判，触发即判 bot 停止运行。墙钟不可复现，只用来处理极端情况。
+// - 输出：prelude 里的上限可以被 bot 改原型绕过，宿主收到结果后按同样的上限再强制一遍。
 import { readFileSync } from "node:fs"
 import { stripTypeScriptTypes } from "node:module"
 import { dirname, join } from "node:path"
@@ -20,6 +23,12 @@ import type { BotCall, BotRunner } from "../core/types.ts"
 import { preludeSource } from "./prelude.ts"
 
 const PAGE = 65536
+/** 每次调用最多记几行日志、每行最多几个字 */
+export const LOG_LINES = 20
+export const LOG_LINE = 300
+/** 沙箱一次返回的 JSON 最长多少字（正常情况：2000 条命令 + 20 行日志也不到 20 万字） */
+const MAX_OUTPUT_CHARS = 2_000_000
+const MAX_ERROR_CHARS = 4000
 
 export interface SandboxLimits {
   /** 每次 onTick 的燃料 */
@@ -28,10 +37,12 @@ export interface SandboxLimits {
   startFuel?: number
   /** WebAssembly 内存上限，默认 128 MB（QuickJS 自身约占 1~2 MB） */
   memoryBytes?: number
-  /** 默认 1 MB */
+  /** QuickJS 栈上限，默认 256 KB（约 1000 层递归）；设到 512 KB 会先撑爆宿主的栈 */
   stackBytes?: number
   /** 单次调用墙钟上限，默认 2000 毫秒；加载时为 5 倍 */
   hardMs?: number
+  /** 整局累计墙钟上限，默认 120000 毫秒 */
+  matchMs?: number
 }
 
 export const DEFAULT_MEMORY_BYTES = 128 * 1024 * 1024
@@ -48,19 +59,16 @@ function wasmModule(): Promise<WebAssembly.Module> {
 
 /** 把 bot 的 TypeScript 变成能在沙箱里按 ES 模块加载的 JavaScript。只擦掉类型（行列号不变，报错行号就是源文件行号） */
 export function compileBot(source: string): { code: string } | { error: string } {
-  let js: string
   const emit = process.emitWarning
   try {
     // 屏蔽 stripTypeScriptTypes 的"实验功能"警告
     process.emitWarning = (() => {}) as typeof process.emitWarning
-    js = stripTypeScriptTypes(source, { mode: "strip" })
+    return { code: stripTypeScriptTypes(source, { mode: "strip" }) }
   } catch (e) {
     return { error: `TypeScript 语法错误，或用了不能直接擦除的语法（enum、namespace、构造函数参数属性）：${(e as Error).message}` }
   } finally {
     process.emitWarning = emit
   }
-  if (/^\s*import\s/m.test(js)) return { error: "bot 只能是单个文件，不能 import（import type 可以）" }
-  return { code: js }
 }
 
 /** 建一个 bot：独立的 WebAssembly 实例 + 内存 */
@@ -71,13 +79,24 @@ export async function createBot(code: string, seed: number, limits: SandboxLimit
   return new QuickJSBot(qjs.newRuntime(), memory, maxBytes, code, seed, limits)
 }
 
+function clip(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n) + "…" : s
+}
+
 function errorText(dumped: unknown): string {
   if (dumped && typeof dumped === "object") {
-    const d = dumped as { name?: string; message?: string; stack?: string }
-    const head = `${d.name ?? "Error"}: ${d.message ?? ""}`
-    return d.stack ? `${head}\n${d.stack}` : head
+    const d = dumped as { name?: unknown; message?: unknown; stack?: unknown }
+    const head = `${String(d.name ?? "Error")}: ${String(d.message ?? "")}`
+    return clip(d.stack ? `${head}\n${String(d.stack)}` : head, MAX_ERROR_CHARS)
   }
-  return String(dumped)
+  return clip(String(dumped), MAX_ERROR_CHARS)
+}
+
+/** 沙箱返回的结果，已按上限清洗 */
+interface Out {
+  commands: unknown[]
+  logs: string[]
+  error?: string
 }
 
 export class QuickJSBot implements BotRunner {
@@ -91,6 +110,8 @@ export class QuickJSBot implements BotRunner {
   private fuelLimit: number
   private startFuel: number
   private hardMs: number
+  private matchMs: number
+  private totalMs = 0
   private used = 0
   private budget = 0
   private deadline = 0
@@ -109,7 +130,10 @@ export class QuickJSBot implements BotRunner {
     this.fuelLimit = limits.fuel
     this.startFuel = limits.startFuel ?? limits.fuel * 20
     this.hardMs = limits.hardMs ?? 2000
-    this.rt.setMaxStackSize(limits.stackBytes ?? 1024 * 1024)
+    this.matchMs = limits.matchMs ?? 120_000
+    this.rt.setMaxStackSize(limits.stackBytes ?? 256 * 1024)
+    // bot 只能是单个文件：任何 import 都在加载时报错
+    this.rt.setModuleLoader((name) => ({ error: new Error(`bot 只能是单个文件，不能 import "${name}"（import type 可以）`) }))
     this.rt.setInterruptHandler(() => {
       this.used++
       if (this.used > this.budget) {
@@ -125,7 +149,7 @@ export class QuickJSBot implements BotRunner {
     this.vm = this.rt.newContext()
     this.budget = Number.MAX_SAFE_INTEGER
     this.deadline = Number.POSITIVE_INFINITY
-    this.vm.unwrapResult(this.vm.evalCode(preludeSource(MAX_COMMANDS), "prelude.js")).dispose()
+    this.vm.unwrapResult(this.vm.evalCode(preludeSource(MAX_COMMANDS, LOG_LINES, LOG_LINE), "prelude.js")).dispose()
     // 先拿到宿主要调的函数，bot 之后改 __arena 也没用
     const arena = this.vm.getProp(this.vm.global, "__arena")
     this.fns = {
@@ -152,13 +176,49 @@ export class QuickJSBot implements BotRunner {
     return this.memory.buffer.byteLength >= this.maxBytes - 4 * PAGE
   }
 
-  private fatal(t0: number, reason: string): BotCall {
-    this.broken = true
-    return { commands: [], logs: [], fuel: this.used, ms: performance.now() - t0, fatal: reason }
+  private memText(phase: string): string {
+    return `${phase}内存超限（上限 ${Math.round(this.maxBytes / 1048576)} MB）`
   }
 
   private wallText(phase: string): string {
     return `${phase}墙钟超时（超过 ${this.hardMs} 毫秒，多半是大数组排序、超长字符串、console.log 大对象之类不计燃料的内置操作）`
+  }
+
+  private fatal(t0: number, reason: string, logs: string[] = []): BotCall {
+    this.broken = true
+    return { commands: [], logs, fuel: this.used, ms: performance.now() - t0, fatal: reason }
+  }
+
+  /**
+   * 读 prelude 返回的 JSON（{ c: 命令, l: 日志, d: 丢弃行数, o: 丢弃命令数, e?: 错误 }）并按上限清洗。
+   * bot 改了原型就可能返回任何东西，这里不能信任它的结构和大小。
+   */
+  private readOut(h: QuickJSHandle): Out {
+    let raw: string
+    try {
+      raw = this.vm.getString(h)
+    } finally {
+      h.dispose()
+    }
+    if (raw.length > MAX_OUTPUT_CHARS) return { commands: [], logs: [], error: `返回内容过大（${raw.length} 字），这次的命令和日志作废` }
+    let out: unknown
+    try {
+      out = JSON.parse(raw)
+    } catch {
+      return { commands: [], logs: [], error: "返回值无法解析（是否改动了 JSON、Array 或 Object 的原型？）" }
+    }
+    if (out === null || typeof out !== "object") return { commands: [], logs: [], error: "返回值格式不对（是否改动了 Object 的原型？）" }
+    const o = out as { c?: unknown; l?: unknown; d?: unknown; o?: unknown; e?: unknown }
+    const lines = Array.isArray(o.l) ? o.l : []
+    const logs = lines.slice(0, LOG_LINES).map((x) => clip(typeof x === "string" ? x : String(JSON.stringify(x)), LOG_LINE))
+    const droppedLines = (typeof o.d === "number" ? o.d : 0) + Math.max(0, lines.length - LOG_LINES)
+    if (droppedLines > 0) logs.push(`（本次另有 ${droppedLines} 行日志超出每次 ${LOG_LINES} 行的上限，已丢弃）`)
+    const cmds = Array.isArray(o.c) ? o.c : []
+    const droppedCmds = (typeof o.o === "number" ? o.o : 0) + Math.max(0, cmds.length - MAX_COMMANDS)
+    if (droppedCmds > 0) logs.push(`（本次另有 ${droppedCmds} 条命令超出每次 ${MAX_COMMANDS} 条的上限，已丢弃）`)
+    const r: Out = { commands: cmds.slice(0, MAX_COMMANDS), logs }
+    if (typeof o.e === "string" && o.e !== "") r.error = clip(o.e, MAX_ERROR_CHARS)
+    return r
   }
 
   /** 调用出错（含燃料耗尽）后的统一处理 */
@@ -170,8 +230,7 @@ export class QuickJSBot implements BotRunner {
     } catch {
       text = "（错误信息读取失败）"
     }
-    if (/out of memory/i.test(text))
-      return this.fatal(t0, `${phase}内存超限（上限 ${Math.round(this.maxBytes / 1048576)} MB）`)
+    if (/out of memory/i.test(text)) return this.fatal(t0, this.memText(phase))
     if (this.wallOut) return this.fatal(t0, this.wallText(phase))
     const fuel = this.used
     const budget = this.budget
@@ -182,6 +241,7 @@ export class QuickJSBot implements BotRunner {
     return { commands: [], logs, fuel, ms, error: `${phase}${text}` }
   }
 
+  /** 出错后把已经打出来的日志取回来 */
   private drainLogs(): string[] {
     this.begin(this.fuelLimit, this.hardMs)
     const r = this.vm.callFunction(this.fns.drain, this.vm.undefined)
@@ -189,49 +249,37 @@ export class QuickJSBot implements BotRunner {
       r.error.dispose()
       return []
     }
-    const out = JSON.parse(this.vm.getString(r.value)) as { l: string[] }
-    r.value.dispose()
-    return out.l
+    return this.readOut(r.value).logs
   }
 
-  /** 解析 prelude 返回的 JSON：{ c: 命令, l: 日志, d: 丢弃行数, e?: 错误 } */
   private parseOut(h: QuickJSHandle, t0: number, phase: string): BotCall {
+    const out = this.readOut(h)
     const fuel = this.used
     const ms = performance.now() - t0
-    let out: { c: unknown[]; l: string[]; d: number; o: number; e?: string }
-    try {
-      out = JSON.parse(this.vm.getString(h))
-    } catch {
-      return { commands: [], logs: [], fuel, ms, error: `${phase}返回值无法解析` }
-    } finally {
-      h.dispose()
-    }
-    const logs = Array.isArray(out.l) ? out.l.map(String) : []
-    if (out.d > 0) logs.push(`（本次另有 ${out.d} 行日志超出每次 20 行的上限，已丢弃）`)
-    if (out.o > 0) logs.push(`（本次另有 ${out.o} 条命令超出每次 ${MAX_COMMANDS} 条的上限，已丢弃）`)
-    const commands = Array.isArray(out.c) ? out.c : []
-    if (typeof out.e === "string") {
+    if (out.error !== undefined) {
       // 内存耗尽在沙箱里是可以被 try/catch 接住的，也要判停止
-      if (/out of memory/i.test(out.e)) return { ...this.fatal(t0, `${phase}内存超限（上限 ${Math.round(this.maxBytes / 1048576)} MB）`), logs }
-      return { commands: [], logs, fuel, ms, error: `${phase}${out.e}` }
+      if (/out of memory/i.test(out.error)) return this.fatal(t0, this.memText(phase), out.logs)
+      return { commands: [], logs: out.logs, fuel, ms, error: `${phase}${out.error}` }
     }
-    return { commands, logs, fuel, ms }
+    return { commands: out.commands, logs: out.logs, fuel, ms }
   }
 
-  /**
-   * 宿主侧兜底：wasm 崩溃；以及调用结束后才发现超过墙钟（不计燃料的内置操作执行期间不会触发中断回调，
-   * 只能事后判）。墙钟超时不可复现，所以只用来处理极端情况。
-   */
+  /** 宿主侧兜底：wasm 崩溃；调用结束后才发现的单次和整局墙钟超时 */
   private guard(t0: number, phase: string, limitMs: number, fn: () => BotCall): BotCall {
     if (this.broken) return this.fatal(t0, `${phase}沙箱已损坏`)
+    let r: BotCall
     try {
-      const r = fn()
-      if (!r.fatal && performance.now() - t0 > limitMs) return { ...this.fatal(t0, this.wallText(phase)), logs: r.logs }
-      return r
+      r = fn()
     } catch (e) {
-      const msg = this.nearMemoryCap() ? `内存超限（上限 ${Math.round(this.maxBytes / 1048576)} MB）` : `沙箱崩溃：${(e as Error).message}`
-      return this.fatal(t0, phase + msg)
+      const msg = this.nearMemoryCap() ? this.memText(phase) : `${phase}沙箱崩溃：${(e as Error).message}`
+      return this.fatal(t0, msg)
     }
+    const spent = performance.now() - t0
+    this.totalMs += spent
+    if (r.fatal) return r
+    if (spent > limitMs) return this.fatal(t0, this.wallText(phase), r.logs)
+    if (this.totalMs > this.matchMs) return this.fatal(t0, `${phase}整局累计耗时超过 ${this.matchMs / 1000} 秒`, r.logs)
+    return r
   }
 
   start(gameJson: string): BotCall {
@@ -247,15 +295,15 @@ export class QuickJSBot implements BotRunner {
       const rc = this.vm.evalCode(this.code, "bot.ts", { type: "module" })
       // 顶层代码出错，之后也调不了 onTick
       if (rc.error) return this.asFatal(this.failed(rc.error, t0, "加载："))
-      // 模块求值结果是导出对象，或兑现为导出对象的 Promise（顶层 await）
+      // 模块求值结果是导出对象，或兑现为导出对象的 Promise（顶层 await）：加载时把排队的异步任务跑完
       let st = this.vm.getPromiseState(rc.value)
       if (st.type === "pending") {
-        this.rt.executePendingJobs()
+        this.rt.executePendingJobs().dispose()
         st = this.vm.getPromiseState(rc.value)
       }
       if (st.type !== "fulfilled" || !st.notAPromise) rc.value.dispose()
       if (st.type === "rejected") return this.asFatal(this.failed(st.error, t0, "加载："))
-      if (st.type === "pending") return this.fatal(t0, "加载：顶层代码不能用 await")
+      if (st.type === "pending") return this.fatal(t0, "加载：顶层代码在等一个永远不会完成的 await")
       const ns = st.value
       const tickFn = this.vm.getProp(ns, "onTick")
       const startFn = this.vm.getProp(ns, "onStart")
@@ -270,7 +318,9 @@ export class QuickJSBot implements BotRunner {
   }
 
   private asFatal(r: BotCall): BotCall {
-    return r.fatal ? r : { ...r, fatal: r.error, error: undefined, fuelOut: undefined }
+    if (r.fatal) return r
+    this.broken = true
+    return { ...r, fatal: r.error, error: undefined, fuelOut: undefined }
   }
 
   tick(viewJson: string): BotCall {

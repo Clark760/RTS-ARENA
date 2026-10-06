@@ -18,8 +18,28 @@ let playing = false
 let logFilter: number | null = null
 let lastLogDraw = 0
 
-function esc(s: string): string {
-  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!)
+/** 回放文件可能是别人给的，拼进 HTML 的值一律转义 */
+function esc(v: unknown): string {
+  return String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!)
+}
+
+/** 已经拼好的 HTML，放进 html`` 时不再转义 */
+class Raw {
+  readonly s: string
+  constructor(s: string) {
+    this.s = s
+  }
+}
+
+/** 模板里的 ${} 一律转义；Raw 和 Raw 数组原样放入 */
+function html(strings: TemplateStringsArray, ...vals: unknown[]): Raw {
+  let out = strings[0]
+  for (let i = 0; i < vals.length; i++) {
+    const v = vals[i]
+    const part = v instanceof Raw ? v.s : Array.isArray(v) ? v.map((x) => (x instanceof Raw ? x.s : esc(x))).join("") : esc(v)
+    out += part + strings[i + 1]
+  }
+  return new Raw(out)
 }
 
 function hex(c: number): string {
@@ -36,9 +56,7 @@ async function refreshList(prefer?: string): Promise<void> {
   } catch {
     // 静态部署时没有列表接口，只能打开本地文件
   }
-  select.innerHTML = list
-    .map((r) => `<option value="${esc(r.name)}">${esc(r.name)}（${(r.size / 1024).toFixed(0)} KB）</option>`)
-    .join("")
+  select.innerHTML = html`${list.map((r) => html`<option value="${r.name}">${r.name}（${(r.size / 1024).toFixed(0)} KB）</option>`)}`.s
   const want = prefer ?? new URLSearchParams(location.search).get("replay") ?? list[0]?.name
   if (want && list.some((r) => r.name === want)) {
     select.value = want
@@ -114,30 +132,29 @@ function updateUI(force = false): void {
   $("tick-label").textContent = `${state.tick} / ${model.lastTick}`
   $("status-line").textContent = state.status
 
-  $("players").innerHTML = r.players
-    .map((p, i) => {
-      const ps = state!.players[i]
-      const res = Object.entries(ps.resources)
-        .map(([k, v]) => `${k} ${v}`)
-        .join("，")
-      const units = [...state!.ents.values()].filter((e) => e.owner === i && r.types[e.type]?.kind === "unit").length
-      return `<tr><td><span class="swatch" style="background:${hex(playerColor(i))}"></span><span class="${ps.alive ? "" : "out"}">P${i} ${esc(p.name)}</span></td>
-        <td>分 ${ps.score}</td><td>${esc(res)}</td><td>单位 ${units}</td></tr>`
-    })
-    .join("")
+  const rows = r.players.map((p, i) => {
+    const ps = state!.players[i]
+    const res = Object.entries(ps.resources)
+      .map(([k, v]) => `${k} ${v}`)
+      .join("，")
+    const units = [...state!.ents.values()].filter((e) => e.owner === i && r.types[e.type]?.kind === "unit").length
+    return html`<tr><td><span class="swatch" style="background:${hex(playerColor(i))}"></span><span class="${ps.alive ? "" : "out"}">P${i} ${p.name}</span></td>
+        <td>分 ${ps.score}</td><td>${res}</td><td>单位 ${units}</td></tr>`
+  })
+  $("players").innerHTML = html`${rows}`.s
 
   const sel = renderer.selected
   if (sel === null) $("selected").innerHTML = '<span class="muted">点画面上的实体查看</span>'
   else {
     const e = state.ents.get(sel)
-    if (!e) $("selected").innerHTML = `<span class="muted">#${sel} 已经不在了</span>`
+    if (!e) $("selected").innerHTML = html`<span class="muted">#${sel} 已经不在了</span>`.s
     else {
       const info = r.types[e.type]
-      const owner = e.owner < 0 ? "中立" : `P${e.owner} ${esc(r.players[e.owner].name)}`
-      const hp = info.kind === "resource" ? `储量 ${e.hp}` : `${e.hp} / ${info.maxHp}`
-      $("selected").innerHTML = `<div class="kv"><span class="muted">id</span><span>#${e.id} ${esc(e.type)}</span>
+      const owner = e.owner < 0 ? "中立" : `P${e.owner} ${r.players[e.owner]?.name}`
+      const hp = info?.kind === "resource" ? `储量 ${e.hp}` : `${e.hp} / ${info?.maxHp}`
+      $("selected").innerHTML = html`<div class="kv"><span class="muted">id</span><span>#${e.id} ${e.type}</span>
         <span class="muted">归属</span><span>${owner}</span><span class="muted">位置</span><span>(${e.x}, ${e.y})</span>
-        <span class="muted">生命</span><span>${hp}</span><span class="muted">命令</span><span>${esc(e.ord)}</span></div>`
+        <span class="muted">生命</span><span>${hp}</span><span class="muted">命令</span><span>${e.ord}</span></div>`.s
     }
   }
 
@@ -157,9 +174,9 @@ function updateUI(force = false): void {
 
 function drawFilter(): void {
   if (!model) return
-  const btns = [`<button data-p="" class="${logFilter === null ? "on" : ""}">全部</button>`]
-  model.replay.players.forEach((_, i) => btns.push(`<button data-p="${i}" class="${logFilter === i ? "on" : ""}">P${i}</button>`))
-  $("log-filter").innerHTML = btns.join("")
+  const btns = [html`<button data-p="" class="${logFilter === null ? "on" : ""}">全部</button>`]
+  model.replay.players.forEach((_, i) => btns.push(html`<button data-p="${i}" class="${logFilter === i ? "on" : ""}">P${i}</button>`))
+  $("log-filter").innerHTML = html`${btns}`.s
 }
 
 $("log-filter").addEventListener("click", (ev) => {
@@ -173,7 +190,7 @@ $("log-filter").addEventListener("click", (ev) => {
 /** 最近 200 tick 的日志和报错 */
 function drawLogs(): void {
   if (!model || !state) return
-  const lines: string[] = []
+  const lines: Raw[] = []
   const from = Math.max(1, state.tick - 200)
   for (let t = from; t <= state.tick; t++) {
     const f = model.frame(t)
@@ -181,30 +198,28 @@ function drawLogs(): void {
     const cls = t === state.tick ? " now" : ""
     for (const l of f.logs ?? []) {
       if (logFilter !== null && l.p !== logFilter) continue
-      for (const text of l.text) lines.push(`<div class="line${cls}"><span class="t">${t} P${l.p}</span> ${esc(text)}</div>`)
+      for (const text of Array.isArray(l.text) ? l.text : []) lines.push(html`<div class="line${cls}"><span class="t">${t} P${l.p}</span> ${text}</div>`)
     }
     for (const e of f.errs ?? []) {
       if (logFilter !== null && e.p !== logFilter) continue
-      const kind = e.msg.startsWith("命令被拒") ? "rej" : "err"
-      lines.push(`<div class="line ${kind}${cls}"><span class="t">${t} P${e.p}</span> ${esc(e.msg)}</div>`)
+      const kind = String(e.msg).startsWith("命令被拒") ? "rej" : "err"
+      lines.push(html`<div class="line ${kind}${cls}"><span class="t">${t} P${e.p}</span> ${e.msg}</div>`)
     }
   }
   const box = $("logs")
-  box.innerHTML = lines.length ? lines.slice(-400).join("") : '<span class="muted">最近 200 tick 没有日志</span>'
+  box.innerHTML = lines.length ? html`${lines.slice(-400)}`.s : '<span class="muted">最近 200 tick 没有日志</span>'
   box.scrollTop = box.scrollHeight
 }
 
 function drawBotStats(): void {
   if (!model) return
   const r = model.replay
-  $("bot-stats").innerHTML =
-    r.bots
-      .map((b) => {
-        const avg = b.calls ? (b.fuelTotal / b.calls).toFixed(1) : "0"
-        const dead = b.status === "dead" ? `<div class="err">已停止：${esc(b.deadReason ?? "")}</div>` : ""
-        return `<div><b>P${b.player}</b> ${esc(b.bot)}<br>调用 ${b.calls}，燃料均值 ${avg} / 最高 ${b.fuelMax}，报错 ${b.errors}，燃料耗尽 ${b.fuelOuts}，被拒 ${b.rejected}，耗时 ${b.ms.toFixed(0)} ms${dead}</div>`
-      })
-      .join("") + `<div class="muted">实体峰值 ${r.perf.peakEntities}，内核耗时 ${r.perf.simMs} ms，bot 耗时 ${r.perf.botMs} ms</div>`
+  const items = r.bots.map((b) => {
+    const avg = b.calls ? (b.fuelTotal / b.calls).toFixed(1) : "0"
+    const dead = b.status === "dead" ? html`<div class="err">已停止：${b.deadReason ?? ""}</div>` : ""
+    return html`<div><b>P${b.player}</b> ${b.bot}<br>调用 ${b.calls}，燃料均值 ${avg} / 最高 ${b.fuelMax}，报错 ${b.errors}，燃料耗尽 ${b.fuelOuts}，被拒 ${b.rejected}，耗时 ${Math.round(Number(b.ms))} ms${dead}</div>`
+  })
+  $("bot-stats").innerHTML = html`${items}<div class="muted">实体峰值 ${r.perf?.peakEntities}，内核耗时 ${r.perf?.simMs} ms，bot 耗时 ${r.perf?.botMs} ms</div>`.s
 }
 
 // ---------- 控件 ----------

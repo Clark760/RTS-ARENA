@@ -122,7 +122,7 @@ test("没有导出 onTick、顶层出错：加载失败", async () => {
   b.dispose()
 })
 
-test("编译与导出：export const、同一行、export { } 都行；enum、import 不行", async () => {
+test("编译与导出：export const、同一行、export { } 都行；enum、import 不行（注释里的 import 不算）", async () => {
   for (const src of [
     `export const onTick = (view: View, cmd: Commands) => cmd.stop(7)`,
     `const n = 1; export function onTick(view: View, cmd: Commands) { cmd.stop(7) }`,
@@ -137,7 +137,13 @@ test("编译与导出：export const、同一行、export { } 都行；enum、im
   assert.match(def.start(GAME).fatal ?? "", /没有导出 onTick/)
   def.dispose()
   assert.ok("error" in compileBot(`enum A { x }\nexport function onTick() {}`))
-  assert.ok("error" in compileBot(`import { x } from "./y"\nexport function onTick() {}`))
+  const imp = await bot(`import { x } from "./y"\nexport function onTick() {}`)
+  assert.match(imp.start(GAME).fatal ?? "", /不能 import/)
+  imp.dispose()
+  // 注释和字符串里的 import 不算
+  const fake = await bot("/*\nimport 什么都行\n*/\nconst s = `\nimport x`\nexport function onTick(view: View, cmd: Commands) { cmd.stop(1) }")
+  assert.equal(fake.start(GAME).fatal, undefined)
+  fake.dispose()
   assert.ok("code" in compileBot(`import type { X } from "./y"\nexport function onTick() {}`))
 })
 
@@ -173,5 +179,57 @@ test("命令参数里的 toJSON、getter 不会在序列化时执行；命令最
   const r2 = b.tick(VIEW(1))
   assert.equal(r2.commands.length, 2000)
   assert.match(r2.logs.join("\n"), /另有 501 条命令/)
+  b.dispose()
+})
+
+test("改原型绕过 prelude 的上限：宿主照样截断，不崩", async () => {
+  // 改根对象的 toJSON，再耗尽燃料：取回日志时拿到的是乱的结构
+  const a = await bot(`
+    (Object.prototype as any).toJSON = function () { return 1 }
+    export function onTick(view: View) { if (view.tick === 0) for (;;) {} }`)
+  a.start(GAME)
+  const ra = a.tick(VIEW(0))
+  assert.equal(ra.fuelOut, true)
+  assert.deepEqual(ra.logs, [])
+  a.dispose()
+  // 改 slice 和 push：每行超长、行数超限、命令超限
+  const b = await bot(`
+    String.prototype.slice = function (this: string) { return String(this) } as any
+    Array.prototype.push = function (this: unknown[], ...xs: unknown[]) { for (const x of xs) this[this.length] = x; return this.length }
+    export function onTick(view: View, cmd: Commands) {
+      for (let i = 0; i < 50; i++) console.log("x".repeat(5000))
+      for (let i = 0; i < 2500; i++) cmd.stop(1)
+    }`, 1000)
+  b.start(GAME)
+  const rb = b.tick(VIEW(0))
+  assert.equal(rb.commands.length, 2000)
+  assert.ok(rb.logs.length <= 22)
+  for (const l of rb.logs) assert.ok(l.length <= 301)
+  b.dispose()
+})
+
+test("深递归：沙箱里抛出能接住的错误，不撑爆宿主", async () => {
+  const b = await bot(`
+    function r(n: number): number { return n === 0 ? 0 : r(n - 1) + 1 }
+    export function onTick(view: View) {
+      try { r(100000) } catch (e) { console.log("接住了", String(e)) }
+      console.log("还活着", r(500))
+    }`, 1e6)
+  b.start(GAME)
+  const r = b.tick(VIEW(0))
+  assert.equal(r.fatal, undefined)
+  assert.match(r.logs.join("\n"), /接住了.*stack overflow/)
+  assert.match(r.logs.join("\n"), /还活着 500/)
+  b.dispose()
+})
+
+test("整局累计耗时超限：判停止", async () => {
+  const c = compileBot(`export function onTick() { let s = 0; for (let i = 0; i < 300000; i++) s += i }`)
+  if ("error" in c) throw new Error(c.error)
+  const b = await createBot(c.code, 1, { fuel: 1e6, matchMs: 30 })
+  b.start(GAME)
+  let fatal: string | undefined
+  for (let i = 0; i < 50 && !fatal; i++) fatal = b.tick(VIEW(i)).fatal
+  assert.match(fatal ?? "", /整局累计耗时/)
   b.dispose()
 })

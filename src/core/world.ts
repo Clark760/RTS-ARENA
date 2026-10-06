@@ -281,8 +281,9 @@ export class World implements SetupContext, RuleContext {
     }
   }
 
+  /** 资源点和地形一样始终可见（位置、储量都公开） */
   visibleTo(player: number, e: EntityState): boolean {
-    if (!this.rules.fog || e.owner === player) return true
+    if (!this.rules.fog || e.owner === player || e.def.kind === "resource") return true
     const v = this.vis[player]
     for (let y = e.y; y < e.y + e.h; y++)
       for (let x = e.x; x < e.x + e.w; x++) if (v[y * this.width + x]) return true

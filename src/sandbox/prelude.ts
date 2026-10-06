@@ -1,12 +1,13 @@
 // 沙箱里先于 bot 代码执行的脚本：命令对象、console、确定性随机数、禁用 Date 等。
-// 用到的内置函数在这里先存一份引用，bot 改全局对象也影响不到这里。
-export function preludeSource(maxCommands: number): string {
+// JSON 的方法在这里先存一份引用；但 bot 改 Array、String、Object 的原型仍能影响这里的行为，
+// 所以这里的上限只是尽量做到，真正的上限由宿主（quickjs.ts 的 readOut）强制。
+export function preludeSource(maxCommands: number, maxLines: number, maxLine: number): string {
   return String.raw`
 (function () {
   "use strict";
   var G = globalThis;
   var stringify = JSON.stringify, parse = JSON.parse, imul = Math.imul;
-  var MAX_LINES = 20, MAX_LINE = 300, MAX_CMDS = ${maxCommands};
+  var MAX_LINES = ${maxLines}, MAX_LINE = ${maxLine}, MAX_CMDS = ${maxCommands};
   var logs = [], cmds = [], dropped = 0, overflow = 0;
 
   // 确定性随机数（mulberry32），种子由宿主在 init 时给
