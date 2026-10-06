@@ -15,8 +15,10 @@ const HELP = `用法：npm run arena -- <命令> [参数]
   list                                  列出规则包
   docs  <规则包> [--out 目录]            生成 arena.d.ts 和 PROMPT.md（默认 out/<规则包>/）
   init  <规则包> <目录>                  建一个 bot 工作目录：arena.d.ts、PROMPT.md、tsconfig.json、bot.ts 模板
-  check <规则包> <bot.ts>... [--ticks N] 类型检查 + 在每个位置上和不动的对手试打 N tick（默认 300）
-  run   <规则包> <bot.ts>... [选项]      打一局（或多局），写回放
+  check <规则包> <bot>... [--ticks N]    类型检查 + 在每个位置上和不动的对手试打 N tick（默认 300）
+  run   <规则包> <bot>... [选项]         打一局（或多局），写回放
+
+  <bot> 可以是文件路径，也可以是现成 bot 的名字：baseline（每个规则包的基准 bot）、idle（不动）等，见 list
         --seed N      种子（默认随机）
         --games N     连打 N 局，最后报胜率；两人局每个种子换边各打一次
         --out 路径    回放文件（单局）或目录（多局），默认 replays/
@@ -88,16 +90,46 @@ function botName(file: string): string {
   return name === "bot" ? basename(dirname(resolve(file))) : name
 }
 
+/** 一组 bot 的显示名；不同文件同名时带上所在目录（如 koth/baseline 和 annihilation/baseline） */
+function botNames(files: string[]): Map<string, string> {
+  const out = new Map<string, string>()
+  const uniq = [...new Set(files)]
+  for (const f of uniq) {
+    const name = botName(f)
+    const clash = uniq.some((g) => g !== f && resolve(g) !== resolve(f) && botName(g) === name)
+    out.set(f, clash ? `${basename(dirname(resolve(f)))}/${name}` : name)
+  }
+  return out
+}
+
+/** 规则包能用的现成 bot：bots/<规则包>/*.ts 和通用的 bots/*.ts */
+function knownBots(id: string): string[] {
+  const list = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".ts")).map((f) => f.slice(0, -3)) : [])
+  return [...new Set([...list(join(ROOT, "bots", id)), ...list(join(ROOT, "bots"))])]
+}
+
+/** bot 参数可以是文件路径，也可以是现成 bot 的名字（如 baseline、idle） */
+function resolveBots(rules: Ruleset, args: string[]): string[] {
+  return args.map((a) => {
+    if (existsSync(a)) return a
+    if (/^[\w-]+$/.test(a)) {
+      for (const f of [join(ROOT, "bots", rules.id, `${a}.ts`), join(ROOT, "bots", `${a}.ts`)])
+        if (existsSync(f)) return relative(process.cwd(), f)
+    }
+    fail(`找不到 bot "${a}"：既不是文件，也不是「${rules.name}」的现成 bot（${knownBots(rules.id).join("、")}）`)
+  })
+}
+
 function stamp(): string {
   const d = new Date()
   const p = (n: number) => String(n).padStart(2, "0")
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
 }
 
-async function makeBots(rules: Ruleset, files: string[], seed: number): Promise<MatchBot[]> {
+async function makeBots(rules: Ruleset, files: string[], seed: number, names: Map<string, string>): Promise<MatchBot[]> {
   const bots: MatchBot[] = []
   for (const [p, file] of files.entries()) {
-    const name = botName(file)
+    const name = names.get(file) ?? botName(file)
     const compiled = compileBot(readFileSync(file, "utf8"))
     if ("error" in compiled) bots.push({ name, file, runner: null, loadError: compiled.error })
     else bots.push({ name, file, runner: await createBot(compiled.code, mixSeed(seed, "bot", p), { fuel: rules.fuel }) })
@@ -135,10 +167,11 @@ function printResult(replay: Replay): void {
   }
 }
 
-async function cmdRun(rules: Ruleset, files: string[], opt: Record<string, string | true>): Promise<void> {
-  if (files.length < rules.players.min || files.length > rules.players.max)
-    fail(`「${rules.name}」需要 ${rules.players.min}~${rules.players.max} 个 bot，给了 ${files.length} 个`)
-  for (const f of files) if (!existsSync(f)) fail(`找不到 bot 文件 ${f}`)
+async function cmdRun(rules: Ruleset, args: string[], opt: Record<string, string | true>): Promise<void> {
+  if (args.length < rules.players.min || args.length > rules.players.max)
+    fail(`「${rules.name}」需要 ${rules.players.min}~${rules.players.max} 个 bot，给了 ${args.length} 个`)
+  const files = resolveBots(rules, args)
+  const names = botNames(files)
   if (!opt["no-check"]) {
     const out = typecheck(rules, [...new Set(files)])
     if (out) fail(`类型检查没通过（加 --no-check 可以跳过）：\n${out}`)
@@ -157,7 +190,7 @@ async function cmdRun(rules: Ruleset, files: string[], opt: Record<string, strin
     // 两人局：同一个种子两边各打一次（第 1、2 局同种子换边，依此类推），抵消地图和随机数的影响
     const seed = paired ? baseSeed + Math.floor(g / 2) : baseSeed + g
     const order = paired && g % 2 === 1 ? [files[1], files[0]] : files
-    const bots = await makeBots(rules, order, seed)
+    const bots = await makeBots(rules, order, seed, names)
     const t0 = performance.now()
     const replay = runMatch({ ruleset: rules, bots, seed })
     const ms = performance.now() - t0
@@ -167,7 +200,7 @@ async function cmdRun(rules: Ruleset, files: string[], opt: Record<string, strin
     else file = join(outOpt ?? join(ROOT, "replays"), `${rules.id}-${stamp()}-s${seed}${games > 1 ? `-g${g + 1}` : ""}.json`)
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, JSON.stringify(replay))
-    console.log(`第 ${g + 1} 局  种子 ${seed}  ${order.map((f, p) => `P${p}=${botName(f)}`).join("  ")}  用时 ${(ms / 1000).toFixed(1)} 秒`)
+    console.log(`第 ${g + 1} 局  种子 ${seed}  ${order.map((f, p) => `P${p}=${names.get(f)}`).join("  ")}  用时 ${(ms / 1000).toFixed(1)} 秒`)
     printResult(replay)
     console.log(`  回放：${relative(process.cwd(), file)}`)
     const wnr = replay.result.winner
@@ -175,14 +208,14 @@ async function cmdRun(rules: Ruleset, files: string[], opt: Record<string, strin
     else wins.set(order[wnr], (wins.get(order[wnr]) ?? 0) + 1)
   }
   if (games > 1) {
-    console.log(`\n共 ${games} 局：` + [...new Set(files)].map((f) => `${botName(f)} 赢 ${wins.get(f) ?? 0}`).join("，") + `，平 ${draws}`)
+    console.log(`\n共 ${games} 局：` + [...new Set(files)].map((f) => `${names.get(f)} 赢 ${wins.get(f) ?? 0}`).join("，") + `，平 ${draws}`)
   }
 }
 
-async function cmdCheck(rules: Ruleset, files: string[], opt: Record<string, string | true>): Promise<void> {
+async function cmdCheck(rules: Ruleset, args: string[], opt: Record<string, string | true>): Promise<void> {
+  const files = resolveBots(rules, args)
   const checkTicks = typeof opt.ticks === "string" ? Number(opt.ticks) : CHECK_TICKS
   if (!Number.isInteger(checkTicks) || checkTicks < 1) fail("--ticks 要是正整数")
-  for (const f of files) if (!existsSync(f)) fail(`找不到 bot 文件 ${f}`)
   let ok = true
   const out = typecheck(rules, files)
   if (out) {
@@ -245,7 +278,7 @@ async function main(): Promise<void> {
     case "list": {
       for (const id of listRulesets()) {
         const r = await loadRuleset(id)
-        console.log(`${id}\t${r.name}\t${r.players.min}~${r.players.max} 人`)
+        console.log(`${id}\t${r.name}\t${r.players.min}~${r.players.max} 人\t现成 bot：${knownBots(id).join("、")}`)
       }
       return
     }

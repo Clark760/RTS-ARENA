@@ -82,11 +82,12 @@ export function onTick(view: View, cmd: Commands): void {
 
 ```bash
 npm run arena -- check <规则包> my-bot.ts                       # 类型检查 + 在每个位置上和不动的对手试打 300 tick（--ticks N 打更长）
-npm run arena -- run <规则包> my-bot.ts bots/<规则包>/rush.ts     # 打一局
-npm run arena -- run <规则包> my-bot.ts bots/<规则包>/rush.ts --games 10   # 打 10 局看胜率（每个种子换边各打一次）
+npm run arena -- run <规则包> my-bot.ts baseline                # 和基准 bot 打一局
+npm run arena -- run <规则包> my-bot.ts baseline --games 10     # 打 10 局看胜率（每个种子换边各打一次）
 npm run viewer                                                   # 网页播放器看回放
 ```
 
+- `baseline` 是每个规则包的基准 bot：经济、防守、集火都做全了的标准对手，多数对局能打赢这个规则包的其他示例 bot。先打赢它，再谈更强的对手。`idle` 是什么都不做的对手。其他现成 bot 用 `npm run arena -- list` 查看，对手位置写名字或文件路径都行。
 - `check` 只能抓开局阶段的问题，中后期才会出现的错误（比如资源点采完之后）要看 `run` 的输出。
 - `run` 每局会打印胜负、燃料，以及报错和被拒命令按种类汇总的次数和第一次出现的 tick。
 - 回放默认写在 `replays/`（`--out` 可以改），每局一个 JSON 文件。网页播放器能拖进度条、点实体看它当前的命令、对着画面看你的日志和每条被拒命令。

@@ -19,11 +19,13 @@ npm run arena -- init annihilation my-bot   # 建工作目录：PROMPT.md、aren
 
 ```bash
 npm run arena -- check annihilation my-bot/bot.ts                                    # 类型检查 + 每个位置试打 300 tick
-npm run arena -- run annihilation my-bot/bot.ts bots/annihilation/rush.ts            # 打一局
-npm run arena -- run annihilation my-bot/bot.ts bots/annihilation/rush.ts --games 10 # 打 10 局看胜率
+npm run arena -- run annihilation my-bot/bot.ts baseline              # 和基准 bot 打一局
+npm run arena -- run annihilation my-bot/bot.ts baseline --games 10    # 打 10 局看胜率
 ```
 
 `run` 会打印胜负、每个 bot 的燃料、报错和被拒命令，回放写到 `replays/`。
+
+对手可以写文件路径，也可以写现成 bot 的名字：`baseline` 是每个规则包的基准 bot（多数对局能打赢该规则包的其他示例 bot，是衡量新 bot 的标准对手），`idle` 什么都不做。`npm run arena -- list` 列出每个规则包有哪些现成 bot。
 
 ## 看回放
 
