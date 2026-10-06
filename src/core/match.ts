@@ -174,7 +174,7 @@ function play(opts: MatchOptions, w: World): Replay {
   }
   const types: Replay["types"] = {}
   for (const [name, def] of Object.entries(w.types))
-    types[name] = { kind: def.kind, w: def.w, h: def.h, maxHp: def.maxHp, moveTicks: def.moveTicks, sight: def.sight, look: rules.types[name].look }
+    types[name] = { kind: def.kind, w: def.w, h: def.h, maxHp: def.maxHp, moveTicks: def.moveTicks, sight: def.sight, cost: def.cost, look: rules.types[name].look }
   const colors: Record<string, string> = {}
   for (const [ch, t] of Object.entries(rules.terrain)) colors[ch] = t.color
 

@@ -1,6 +1,6 @@
 // 命令行入口：rts-arena <命令> ...（在平台仓库里开发时等价于 npm run arena -- <命令> ...）
 import { randomBytes } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import { checkLimits } from "../core/limits.ts"
 import { runMatch, type MatchBot } from "../core/match.ts"
@@ -22,6 +22,7 @@ import {
   type RulesetRef,
   type Workspace,
 } from "./catalog.ts"
+import { buildReport } from "./report.ts"
 import { writeRulesTemplate } from "./rules-template.ts"
 
 const HELP = `用法：rts-arena <命令> [参数]
@@ -34,6 +35,8 @@ const HELP = `用法：rts-arena <命令> [参数]
   check [--ticks N]                     检查自己的 bot：类型检查 + 在每个位置上和不动的对手试打 N tick（默认 300）
   run [对手...] [选项]                  自己的 bot 打对手（不写就打 baseline），回放和日志写到 ./replays
   view [回放目录] [--port N] [--open]   网页播放器（默认看 ./replays，端口 5180；--open 起来后打开浏览器）
+  report [回放] [--player N] [--every T] 文字战报：每隔 T tick 双方的经济、兵力、建筑，关键事件、战斗、损失、可能的问题
+                                        （不写回放就看 ./replays 里最新的一局；--player 从这个座位的角度写）
 
 在任何目录：
   list                                  列出规则包和现成的 bot
@@ -84,6 +87,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   run: { seed: false, games: false, out: false, teams: false, "no-check": true, json: true },
   check: { ticks: false },
   view: { port: false, open: true },
+  report: { player: false, every: false },
 }
 
 function parseArgs(command: string | undefined, argv: string[]): { pos: string[]; opt: Record<string, string | true> } {
@@ -365,6 +369,7 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
   }
   saveSeries()
   emit0(series.summary)
+  say("（每个 bot 的日志开头附了一份它视角的战报；任何回放都可以用 rts-arena report <回放> --player N 看）")
   if (games > 1 && !jsonMode) {
     const parts =
       k === n
@@ -376,6 +381,16 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
           })
     console.log(`\n共 ${games} 局：${parts.join("，")}，平 ${draws}`)
   }
+}
+
+/** 目录里最新的回放文件（不算 .series.json） */
+function latestReplay(dir: string): string | null {
+  if (!existsSync(dir)) return null
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".json") && !f.endsWith(".series.json"))
+    .map((f) => join(dir, f))
+  files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
+  return files[0] ?? null
 }
 
 /** 只在 --json 时输出的事件 */
@@ -424,11 +439,14 @@ function botLog(replay: Replay, p: number, game: number): string {
   const st = replay.bots[p]
   const avg = st.calls ? (st.fuelTotal / st.calls).toFixed(1) : "0"
   const lines = [
-    `# ${me.name} 的对局日志（只有这个 bot 自己的信息）`,
+    `# ${me.name} 的对局日志（只有这个 bot 自己的信息；后面附了战报）`,
     `规则包：${replay.ruleset.name}（${replay.ruleset.id}）  种子：${replay.seed}  第 ${game} 局`,
     `你是 P${p}（${me.bot}）${allies.length ? `；盟友：${allies.join("、")}` : ""}；对手：${others.join("、")}`,
     `结果：第 ${r.tick} tick，${outcome}——${r.reason}${replay.players.length > 2 ? `；你的名次 ${place} / ${replay.players.length}` : ""}`,
     `统计：调用 ${st.calls} 次，燃料平均 ${avg} 最高 ${st.fuelMax}，报错 ${st.errors}，燃料耗尽 ${st.fuelOuts}，被拒命令 ${st.rejected}${st.status === "dead" ? `，停止运行：${st.deadReason}` : ""}`,
+    "",
+    // 战报是全局视角（赛后复盘，双方信息都有），从这个 bot 的座位写
+    buildReport(replay, { player: p }).replace(/^# /, "## ").replace(/\n## /g, "\n### ").trimEnd(),
     "",
     "## 逐条记录（tick 是记录所在的那一帧；日志属于上一次决策）",
   ]
@@ -667,6 +685,24 @@ async function main(): Promise<void> {
       // bot 目录里不写对手：打基准 bot，人数不够就都补基准
       if (t.mine && t.bots.length === 1) while (t.bots.length < t.rules.players.min) t.bots.push("baseline")
       await cmdRun(t.rules, t.src, t.bots, opt)
+      return
+    }
+    case "report": {
+      const file = pos[0] ?? latestReplay("replays") ?? fail("./replays 里没有回放；写成 rts-arena report <回放文件>")
+      if (!existsSync(file)) fail(`找不到回放 ${file}`)
+      let replay: Replay
+      try {
+        replay = JSON.parse(readFileSync(file, "utf8")) as Replay
+        if (replay.format !== "rts-arena-replay") throw new Error("不是回放文件")
+      } catch (e) {
+        fail(`${file} 读不出来：${(e as Error).message}`)
+      }
+      const player = typeof opt.player === "string" ? Number(opt.player) : undefined
+      if (player !== undefined && !(Number.isInteger(player) && player >= 0 && player < replay.players.length)) fail(`--player 要是 0～${replay.players.length - 1}`)
+      const every = typeof opt.every === "string" ? Number(opt.every) : undefined
+      if (every !== undefined && !(Number.isInteger(every) && every > 0)) fail("--every 要是正整数")
+      if (!pos[0]) console.log(`（最新的一局：${file}）`)
+      process.stdout.write(buildReport(replay, { player, every }))
       return
     }
     case "view": {

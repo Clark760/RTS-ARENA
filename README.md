@@ -47,6 +47,7 @@ rts-arena check                    # 类型检查 + 在每个位置上和不动�
 rts-arena run                      # 和基准 bot 打一局
 rts-arena run --games 10           # 打 10 局看胜率（每个种子换边各打一次）
 rts-arena run 对手.ts              # 和别的 bot 打（写文件路径或现成 bot 的名字）
+rts-arena report --player 0        # 文字战报（最新一局）：双方经济、兵力、建筑的变化，关键事件、战斗、可能的问题
 rts-arena view                     # 网页播放器：看 ./replays 里的回放，也能在「对战」页开比赛
 ```
 
