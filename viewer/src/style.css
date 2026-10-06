@@ -389,3 +389,9 @@ table.matrix td {
   overflow-x: auto;
   max-width: 100%;
 }
+
+ul.stat-list {
+  margin: 2px 0 6px;
+  padding-left: 18px;
+  font-size: 12px;
+}

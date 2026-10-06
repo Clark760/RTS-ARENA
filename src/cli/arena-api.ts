@@ -6,7 +6,7 @@ import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, sta
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { basename, join, relative, resolve, sep } from "node:path"
 import { BOT_EXPORT, discoverBots } from "./bot-finder.ts"
-import { leagueTables } from "./league.ts"
+import { leagueTables, teamSplits } from "./league.ts"
 import { findRuleset, knownBots, listRulesets, loadRulesetRef, localBots, readWorkspaceIn, type RulesetRef } from "./catalog.ts"
 
 export interface ArenaApiOptions {
@@ -189,7 +189,7 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
 
     if (path === "/api/arena/run" && req.method === "POST") {
       if (run && run.exitCode === null) return send(res, 409, { error: "已经有一场比赛在跑，等它结束或先停止" }), true
-      let body: { ruleset?: unknown; bots?: unknown; games?: unknown; seed?: unknown; teams?: unknown; mode?: unknown; perPair?: unknown; perTable?: unknown; size?: unknown }
+      let body: { ruleset?: unknown; bots?: unknown; games?: unknown; seed?: unknown; teams?: unknown; mode?: unknown; perPair?: unknown; perTable?: unknown; size?: unknown; partners?: unknown }
       try {
         body = JSON.parse(await readBody(req))
       } catch {
@@ -205,16 +205,30 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
       if (seed !== undefined && seed !== null && !Number.isInteger(seed)) return send(res, 400, { error: "种子要是整数" }), true
       let args: string[]
       if (mode === "league") {
-        // 联赛：每局 size 个人（默认 2），按组合分桌循环对打
+        // 联赛：各自为战（每局 size 个人），或者分队（teams 写 2v2 这样，partners 是 mixed 轮换搭档 / same 同一个 bot 组队）
         const list = bots as string[]
-        const k = size === undefined || size === null ? 2 : size
-        if (!Number.isInteger(k) || (k as number) < 2) return send(res, 400, { error: "每局人数要是 2 以上的整数" }), true
-        if (list.length < (k as number) || list.length > 16) return send(res, 400, { error: `联赛要 ${k}～16 个 bot` }), true
+        if (list.length < 2 || list.length > 16) return send(res, 400, { error: "联赛要 2～16 个 bot" }), true
         if (new Set(list).size !== list.length) return send(res, 400, { error: "同一个 bot 选了两次" }), true
-        const tables = leagueTables(list.length, k as number, 0).tables.length
-        if (!Number.isInteger(perTable) || (perTable as number) < 1 || (perTable as number) * tables > MAX_GAMES)
+        let sizes: number[] | null = null
+        if (teams !== undefined && teams !== null) {
+          if (typeof teams !== "string" || !/^\d+(v\d+)+$/.test(teams)) return send(res, 400, { error: "分队要写成 2v2 这样" }), true
+          sizes = teams.split("v").map(Number)
+        }
+        const k = sizes ? sizes.reduce((a, b) => a + b, 0) : size === undefined || size === null ? 2 : size
+        if (!Number.isInteger(k) || (k as number) < 2) return send(res, 400, { error: "每局人数要是 2 以上的整数" }), true
+        const partners = body.partners
+        if (partners !== undefined && partners !== null && partners !== "mixed" && partners !== "same") return send(res, 400, { error: "搭档要是 mixed 或 same" }), true
+        const lmode = !sizes ? "ffa" : partners === "same" ? "same" : partners === "mixed" || list.length >= (k as number) ? "mixed" : "same"
+        const sides = sizes ? sizes.length : (k as number)
+        const unit = lmode === "same" ? sides : (k as number)
+        if (list.length < unit) return send(res, 400, { error: lmode === "mixed" ? `轮换搭档每局要 ${k} 个不同的 bot` : `每局 ${unit} 方，至少要 ${unit} 个 bot` }), true
+        const tables = leagueTables(list.length, unit, 0).tables.length
+        // 不给每桌局数：一轮（各自为战是座位轮换一圈；轮换搭档是每种分法都打、各队轮换位置）
+        const cycle = lmode === "mixed" ? teamSplits([...Array(k as number).keys()], sizes!).length * (sizes!.every((x) => x === sizes![0]) ? sides : 1) : sides
+        const per = perTable === undefined || perTable === null ? cycle : perTable
+        if (!Number.isInteger(per) || (per as number) < 1 || (per as number) * tables > MAX_GAMES)
           return send(res, 400, { error: `每桌局数要是正整数，总局数（${tables} 桌 × 每桌局数）最多 ${MAX_GAMES}` }), true
-        args = ["league", ruleset, ...list, "--size", String(k), "--per-table", String(perTable), "--out", replays, "--json"]
+        args = ["league", ruleset, ...list, ...(sizes ? ["--teams", teams as string, "--partners", lmode] : ["--size", String(k)]), "--per-table", String(per), "--out", replays, "--json"]
       } else {
         if (!Number.isInteger(games) || (games as number) < 1 || (games as number) > MAX_GAMES) return send(res, 400, { error: `局数要是 1~${MAX_GAMES} 的整数` }), true
         if (teams !== undefined && teams !== null && (typeof teams !== "string" || !/^\d+(v\d+)+$/.test(teams))) return send(res, 400, { error: "分队要写成 2v2 这样" }), true

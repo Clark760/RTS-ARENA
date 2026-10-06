@@ -57,6 +57,11 @@
         </select></label>
         <label class="field">规则包 <select id="ar-ruleset"></select></label>
         <label class="field" id="ar-size-row" hidden>每局人数 <select id="ar-size"></select></label>
+        <label class="field" id="ar-lteams-row" hidden>分队 <select id="ar-lteams"></select></label>
+        <label class="field" id="ar-partners-row" hidden>搭档 <select id="ar-partners">
+          <option value="mixed">轮换搭档：所有分组方式都打，看谁最会配合</option>
+          <option value="same">同一个 bot 组队：每队都是同一个 bot</option>
+        </select></label>
         <div class="muted" id="ar-players-hint"></div>
         <div id="ar-seats"></div>
         <input id="ar-file" type="file" accept=".ts" hidden />

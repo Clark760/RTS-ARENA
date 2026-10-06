@@ -1,14 +1,14 @@
 // 本地联赛：排名计算、命令行 league、对战接口开联赛
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs"
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import { createArenaApi } from "../src/cli/arena-api.ts"
-import { leagueStandings, leagueTables, type LeagueGame } from "../src/cli/league.ts"
+import { leagueStandings, leagueTables, los, teamSplits, type LeagueGame } from "../src/cli/league.ts"
 
 const ROOT = join(import.meta.dirname, "..")
 const CLI = join(ROOT, "src", "cli", "arena.ts")
@@ -115,6 +115,20 @@ test("对战接口开联赛：事件里有最新排名和最后的汇总；参�
     assert.equal(types.at(-1), "summary")
     const series = (await (await fetch(base + "/api/arena/series")).json()) as { kind?: string }[]
     assert.equal(series[0].kind, "league")
+    // 分队联赛：轮换搭档要够人数；同一个 bot 组队可以只给 2 个
+    assert.equal((await post({ mode: "league", ruleset: "melee", bots: ["baseline", "idle"], teams: "2v2", partners: "mixed" })).status, 400)
+    assert.equal((await post({ mode: "league", ruleset: "melee", bots: ["baseline", "idle"], teams: "2-2" })).status, 400)
+    assert.equal((await post({ mode: "league", ruleset: "melee", bots: ["baseline", "idle"], teams: "2v2", partners: "same", seed: 1 })).status, 200)
+    for (;;) {
+      run = (await (await fetch(base + "/api/arena/run")).json()) as typeof run
+      if (!run.running) break
+      await new Promise((r) => setTimeout(r, 200))
+    }
+    assert.equal(run.exitCode, 0, run.stderr)
+    const start = run.events.find((e) => e.type === "start") as unknown as { teams: string; partners: string; games: number }
+    assert.deepEqual([start.teams, start.partners, start.games], ["2v2", "same", 2])
+    const last = run.events.find((e) => e.type === "standings") as unknown as { stats: { bots: unknown[] } }
+    assert.equal(last.stats.bots.length, 2)
   } finally {
     server.close()
     rmSync(dir, { recursive: true, force: true })
@@ -181,6 +195,72 @@ test("命令行 league：多人局（混战每局 3 人），座位轮换一圈�
       ],
     )
     assert.equal(series.summary.standings[0].name, "baseline")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ---------- 分队联赛、统计 ----------
+
+test("分队局的排名：队里每人拿队伍的分，只和不同队的人比；搭档表记同队的战绩", () => {
+  const names = ["a", "b", "c", "d"]
+  const games: LeagueGame[] = [
+    { players: [0, 1, 2, 3], teams: [[0, 1], [2, 3]], ranking: [[0, 1], [2, 3]] },
+    { players: [0, 2, 1, 3], teams: [[0, 2], [1, 3]], ranking: [[0, 2], [1, 3]] },
+    { players: [0, 3, 1, 2], teams: [[0, 3], [1, 2]], ranking: [[1, 2], [0, 3]] },
+  ]
+  const r = leagueStandings(names, games)
+  const by = (n: string) => r.table.find((s) => s.name === n)!
+  assert.deepEqual([by("a").wins, by("a").losses], [2, 1])
+  assert.equal(by("d").wins, 0)
+  // a 和 b 同队过一次（第 1 局），不同队两次：第 2 局 a 的队在前，第 3 局 b 的队在前
+  assert.deepEqual(r.matrix[0][1], { w: 1, d: 0, l: 1 })
+  assert.deepEqual(r.partners![0][1], { games: 1, wins: 1, points: 1 })
+  assert.deepEqual(r.partners![0][3], { games: 1, wins: 0, points: 0 })
+  assert.equal(r.table[r.table.length - 1].name, "d")
+  assert.equal(r.confidence!.length, 3)
+})
+
+test("分组枚举：一样大的队不分先后；把握度", () => {
+  assert.equal(teamSplits([0, 1, 2, 3], [2, 2]).length, 3)
+  assert.equal(teamSplits([0, 1, 2, 3, 4, 5], [3, 3]).length, 10)
+  assert.equal(teamSplits([0, 1, 2, 3, 4, 5], [2, 2, 2]).length, 15)
+  assert.equal(teamSplits([0, 1, 2, 3], [3, 1]).length, 4)
+  assert.equal(los(0, 0), null)
+  assert.equal(los(5, 5), 0.5)
+  assert.ok(los(10, 0)! > 0.99)
+  assert.ok(los(2, 1)! > 0.5 && los(2, 1)! < 0.9)
+})
+
+test("命令行分队联赛：轮换搭档每种分法都打、两队换位置，出搭档表；同一个 bot 组队按队伍排名；还有统计", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rts-arena-league-teams-"))
+  try {
+    // 三个什么都不做的 bot（不同文件）加 baseline：baseline 在哪队哪队赢
+    for (const n of ["i1", "i2", "i3"]) writeFileSync(join(dir, `${n}.ts`), "export function onTick() {}\n")
+    const run = (args: string[]) => {
+      const r = spawnSync(process.execPath, [CLI, "league", "melee", ...args, "--seed", "2", "--out", "lg", "--no-check"], { cwd: dir, encoding: "utf8" })
+      assert.equal(r.status, 0, r.stdout + r.stderr)
+      return r.stdout
+    }
+    const mixed = run(["baseline", "i1.ts", "i2.ts", "i3.ts", "--teams", "2v2"])
+    assert.match(mixed, /分队 2v2、轮换搭档，所有组合 1 桌，每桌 6 局/)
+    assert.match(mixed, /搭档（行和列同队时/)
+    assert.match(mixed, /## 统计/)
+    assert.match(mixed, /把握度/)
+    assert.match(mixed, /座位（各座位的得分率/)
+    assert.match(mixed, /^ +1 +baseline +6 +6 /m)
+    const same = run(["baseline", "i1.ts", "--teams", "2v2"])
+    assert.match(same, /分队 2v2、每队是同一个 bot/)
+    assert.match(same, /队1\[P0=baseline P1=baseline\] 对 队2\[P2=i1 P3=i1\]/)
+    const files = readdirSync(join(dir, "lg")).filter((f) => f.endsWith(".series.json"))
+    const series = files.map((f) => JSON.parse(readFileSync(join(dir, "lg", f), "utf8")))
+    const m = series.find((x) => x.partners === "mixed")
+    assert.ok(m.summary.partnersMatrix)
+    assert.equal(m.summary.stats.bots.length, 4)
+    const base = m.summary.stats.bots.find((b: { name: string }) => b.name === "baseline")
+    assert.equal(base.games, 6)
+    assert.equal(base.wins, 6)
+    assert.ok(base.produced > 0 && base.killedUnits > 0)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

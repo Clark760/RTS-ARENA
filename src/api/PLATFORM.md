@@ -114,7 +114,7 @@ rts-arena check                    # 类型检查 + 在每个位置上和不动�
 rts-arena run                      # 和基准 bot 打一局
 rts-arena run --games 10           # 打 10 局看胜率（每个种子换边各打一次）
 rts-arena run 对手.ts              # 和别的 bot 打（文件路径或现成 bot 的名字）
-rts-arena league                   # 联赛：和所有现成的 bot 循环对打，出排行榜（--size K 每局 K 人，--per-table N 每桌几局）
+rts-arena league                   # 联赛：和所有现成的 bot 循环对打，出排行榜和统计（--size K 每局 K 人，--teams 2v2 分队，--per-table N 每桌几局）
 rts-arena report                   # 文字战报：看最新一局（按你的 bot 那局坐的座位写）
 rts-arena view                     # 网页播放器看回放，「对战」页也能开比赛
 ```

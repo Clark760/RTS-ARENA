@@ -53,6 +53,8 @@ interface Summary {
   league?: boolean
   standings?: Standing[]
   matrix?: Standings["matrix"]
+  partnersMatrix?: Standings["partners"]
+  stats?: LeagueStatsInfo
   participants: { name: string; wins: number; avgPlace: number }[]
   teams: { members: string[]; wins: number; avgPlace: number }[] | null
 }
@@ -75,6 +77,35 @@ interface Standing {
 interface Standings {
   table: Standing[]
   matrix: { w: number; d: number; l: number }[][]
+  /** 分队联赛：partners[i][j] 是 i、j 同队的局数、队伍独得第一的局数 */
+  partners?: { games: number; wins: number; points: number }[][] | null
+  confidence?: { upper: string; lower: string; w: number; d: number; l: number; los: number | null }[]
+}
+
+/** 联赛统计（服务端 league-stats.ts 的 LeagueStatsJson） */
+interface LeagueStatsInfo {
+  bots: {
+    name: string
+    games: number
+    wins: number
+    ticks: number
+    winGames: number
+    winTicks: number
+    income: number
+    produced: number
+    lostUnits: number
+    killedUnits: number
+    killedBuildings: number
+    lostBuildings: number
+    errors: number
+    fuelOuts: number
+    rejected: number
+    dead: number
+    calls: number
+    fuel: number
+  }[]
+  seats: { games: number; points: number; wins: number }[]
+  reasons: { reason: string; n: number }[]
 }
 
 interface StartEvent {
@@ -106,6 +137,8 @@ interface Series {
   kind?: string
   size?: number
   perTable?: number
+  partners?: string | null
+  stats?: LeagueStatsInfo | null
   /** 联赛打到现在的排名 */
   standings?: Standings | null
   ruleset: { id: string; name: string }
@@ -179,6 +212,10 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
   const rulesetSel = $<HTMLSelectElement>("ar-ruleset")
   const modeSel = $<HTMLSelectElement>("ar-mode")
   const sizeSel = $<HTMLSelectElement>("ar-size")
+  const lteamsSel = $<HTMLSelectElement>("ar-lteams")
+  const partnersSel = $<HTMLSelectElement>("ar-partners")
+  /** 联赛的分队写法（"2v2"），空是各自为战 */
+  const leagueTeams = () => (league() && !$("ar-lteams-row").hidden ? lteamsSel.value : "")
   /** 联赛每局几个人 */
   const leagueSize = () => Number(sizeSel.value) || 2
   /** 和服务端一样的分桌：两人局全部两两组合，多人局组合不超过 20 就全打，否则抽桌（每人大约 6 桌） */
@@ -254,7 +291,18 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     }
     $("ar-size-row").hidden = !lg
     const k = leagueSize()
-    const min = lg ? k : r.players.min
+    // 分队：这个人数能怎么分队（规则包要支持分队）
+    // 联赛里 3v1 和 1v3 是一回事（所有分法都会打），只留从大到小写的
+    const teamSpecs = lg && r.teams ? compositions(k).filter((x) => x.split("v").every((n, i, xs) => i === 0 || Number(xs[i - 1]) >= Number(n))) : []
+    const keepTeams = lteamsSel.value
+    lteamsSel.innerHTML = `<option value="">各自为战</option>` + teamSpecs.map((s) => `<option value="${s}">${s}</option>`).join("")
+    lteamsSel.value = teamSpecs.includes(keepTeams) ? keepTeams : ""
+    $("ar-lteams-row").hidden = teamSpecs.length === 0
+    const tspec = leagueTeams()
+    $("ar-partners-row").hidden = !tspec
+    const sides = tspec ? tspec.split("v").length : k
+    const sameBot = tspec !== "" && partnersSel.value === "same"
+    const min = lg ? (sameBot ? sides : k) : r.players.min
     const max = lg ? LEAGUE_MAX : r.players.max
     // 上次的阵容里找不到了的 bot（文件删了、换了位置）换回默认的
     if (seats.length === 0)
@@ -263,10 +311,12 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     if (seats.length > max) seats = seats.slice(0, max)
     seatsBox.innerHTML = seats.map((v, i) => seatRow(i, v)).join("")
     const leagueOk = r.players.max >= 2
-    const { count: tables, sampled } = tableCount(seats.length, k)
+    const { count: tables, sampled } = tableCount(seats.length, sameBot ? sides : k)
     $("ar-players-hint").textContent = lg
       ? leagueOk
-        ? k === 2
+        ? tspec
+          ? `联赛：${seats.length} 个 bot，分队 ${tspec}，${sameBot ? "每队都是同一个 bot" : "轮换搭档"}，共 ${tables} 桌${sampled ? "（组合太多，抽了一部分）" : ""}（最多 ${LEAGUE_MAX} 个 bot）`
+          : k === 2
           ? `联赛：${seats.length} 个 bot 两两对打，共 ${tables} 对（最多 ${LEAGUE_MAX} 个 bot）`
           : `联赛：${seats.length} 个 bot，每局 ${k} 人，共 ${tables} 桌${sampled ? "（组合太多，抽了一部分）" : ""}（最多 ${LEAGUE_MAX} 个 bot）`
         : `「${r.name}」没法开联赛`
@@ -276,9 +326,14 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     $<HTMLButtonElement>("ar-add").disabled = seats.length >= max
     $<HTMLButtonElement>("ar-remove").disabled = seats.length <= min
     $("ar-add").parentElement!.hidden = min === max
-    $("ar-games-label").textContent = lg ? (k === 2 ? "每对局数" : "每桌局数") : "局数"
+    $("ar-games-label").textContent = lg ? (k === 2 && !tspec ? "每对局数" : "每桌局数") : "局数"
+    $<HTMLInputElement>("ar-games").placeholder = lg ? "留空 = 一轮" : ""
     $("ar-note").textContent = lg
-      ? k === 2
+      ? tspec
+        ? sameBot
+          ? "每队由同一个 bot 的几份副本组成，各队轮换位置；排名按队伍的名次算。每桌局数留空是一轮（每个位置各一次）。"
+          : "每桌挑够人数的 bot，所有分组方式都打、各队轮换位置；每个 bot 拿所在队的名次分，等级分只和不同队的人比。每桌局数留空是一轮。另外出搭档表：两个 bot 同队时的战绩。"
+        : k === 2
         ? "每一对用同一个种子换边打，每对局数最好是双数。排名：胜 1 分、平 0.5 分；等级分（1500 起）按全部对局一起算。"
         : `每一桌用同一个种子轮换座位，每桌局数最好是 ${k} 的倍数。名次分：第一名 1 分、最后一名 0 分、中间平分；等级分（1500 起）把名次拆成两两比较，按全部对局一起算。`
       : "同一个种子会把各方的位置轮换一遍（两人就是换边各打一次）。回放和每个 bot 的日志写在回放目录里。"
@@ -351,6 +406,11 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     renderSetup()
     if (league()) $<HTMLInputElement>("ar-games").value = String(leagueSize())
   })
+  lteamsSel.addEventListener("change", () => {
+    $<HTMLInputElement>("ar-games").value = ""
+    renderSetup()
+  })
+  partnersSel.addEventListener("change", () => renderSetup())
   sizeSel.addEventListener("change", () => {
     // 每桌局数默认等于每局人数：座位正好轮换一圈
     $<HTMLInputElement>("ar-games").value = String(leagueSize())
@@ -413,18 +473,57 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       })
       .join("")
     return `<div class="table-scroll"><table class="summary standings"><tr><th title="名次">#</th><th>bot</th><th title="局数">局</th><th>胜</th><th>平</th><th>负</th>${multi ? '<th title="平均名次">均名次</th>' : ""}<th title="得分率">得分</th><th title="等级分（1500 起）">等级</th></tr>${rows.join("")}</table>
-      ${multi ? '<div class="muted small">胜 = 独得第一，平 = 并列第一；得分率按名次分算：第一名 1 分、最后一名 0 分、中间平分</div>' : ""}
-      <div class="muted small">对阵：${multi ? "同一局里行排在列前面-并列-排在后面的次数" : "行对列的 胜-平-负"}</div><table class="summary matrix"><tr><th></th>${head}</tr>${body}</table></div>`
+      ${st.partners ? '<div class="muted small">分队：胜 = 所在的队独得第一；名次、得分率都按队伍的名次算，队里每个人拿队伍的分</div>' : multi ? '<div class="muted small">胜 = 独得第一，平 = 并列第一；得分率按名次分算：第一名 1 分、最后一名 0 分、中间平分</div>' : ""}
+      <div class="muted small">对阵：${st.partners ? "不同队时，行所在的队排在列所在的队前面-并列-后面的次数" : multi ? "同一局里行排在列前面-并列-排在后面的次数" : "行对列的 胜-平-负"}</div><table class="summary matrix"><tr><th></th>${head}</tr>${body}</table></div>`
+  }
+
+  /** 分队联赛的搭档表：行和列同队时的局数 / 队伍独得第一的局数 */
+  const partnersHtml = (st: Standings) => {
+    const p = st.partners
+    if (!p) return ""
+    const order = st.table.map((s) => s.index)
+    const nameOf = (i: number) => st.table.find((s) => s.index === i)!.name
+    const body = order
+      .map((i) => `<tr><th>${esc(nameOf(i))}</th>${order.map((j) => (i === j ? '<td class="muted">—</td>' : p[i][j].games === 0 ? "<td></td>" : `<td class="${p[i][j].wins * 2 > p[i][j].games ? "win" : p[i][j].wins * 2 < p[i][j].games ? "lose" : ""}">${p[i][j].games}/${p[i][j].wins}</td>`)).join("")}</tr>`)
+      .join("")
+    return `<div class="muted small">搭档：行和列同队时的 局数/队伍独得第一的局数</div><div class="table-scroll"><table class="summary matrix"><tr><th></th>${order.map((j) => `<th>${esc(nameOf(j))}</th>`).join("")}</tr>${body}</table></div>`
+  }
+
+  /** 联赛统计：把握度、每个 bot 每局平均、座位、结束原因 */
+  const statsHtml = (stats: LeagueStatsInfo | null | undefined, st: Standings) => {
+    if (!stats) return ""
+    const avg = (x: number, n: number, d = 0) => (n ? (x / n).toFixed(d) : "—")
+    const conf = (st.confidence ?? [])
+      .map((c) => `<li>${esc(c.upper)} &gt; ${esc(c.lower)}：${c.w}-${c.d}-${c.l}，${c.los === null ? "没分出过先后" : `把握 ${(c.los * 100).toFixed(c.los > 0.99 ? 1 : 0)}%`}</li>`)
+      .join("")
+    const rows = st.table
+      .map((s) => stats.bots[s.index])
+      .map(
+        (b) =>
+          `<tr><td>${esc(b.name)}</td><td>${avg(b.ticks, b.games)}</td><td>${avg(b.winTicks, b.winGames)}</td><td>${avg(b.income, b.games)}</td><td>${avg(b.produced, b.games, 1)}</td><td>${avg(b.lostUnits, b.games, 1)}</td><td>${avg(b.killedUnits, b.games, 1)}</td><td>${avg(b.killedBuildings, b.games, 1)}</td><td>${avg(b.fuel, b.calls, 1)}</td><td class="${b.errors + b.fuelOuts + b.dead ? "err" : ""}">${b.errors}/${b.fuelOuts}/${b.rejected}/${b.dead}</td></tr>`,
+      )
+      .join("")
+    const seats = stats.seats.map((s, p) => `P${p} ${avg(s.points * 100, s.games)}%`).join("，")
+    const reasons = stats.reasons.slice(0, 6).map((r) => `<li>×${r.n} ${esc(r.reason)}</li>`).join("")
+    return `<details open><summary>统计</summary>
+      <div class="muted small">把握度：相邻名次直接对阵时，上面的比下面的强的把握（平局不算，局数少时不可靠）</div><ul class="stat-list">${conf}</ul>
+      <div class="muted small">每个 bot 每局平均（时长是 tick，采集是估算，击杀是最后一击；最后一列是整个联赛的 报错/燃料耗尽/被拒/停止）</div>
+      <div class="table-scroll"><table class="summary standings"><tr><th>bot</th><th>时长</th><th>胜局时长</th><th>采集</th><th>造单位</th><th>损失</th><th>击杀</th><th>拆建筑</th><th>燃料</th><th>出错</th></tr>${rows}</table></div>
+      <div class="muted small">座位的得分率（看地图偏不偏）：${seats}</div>
+      <div class="muted small">结束原因</div><ul class="stat-list">${reasons}</ul>
+    </details>`
   }
 
   /** 联赛的对局多：折叠起来 */
-  const leagueGames = (games: GameEvent[], open = false) =>
-    games.length ? `<details${open ? " open" : ""}><summary>每一局（${games.length}）</summary>${games.map((g) => gameRow(g, false)).join("")}</details>` : ""
+  const leagueGames = (games: GameEvent[], open = false, teamed = false) =>
+    games.length ? `<details${open ? " open" : ""}><summary>每一局（${games.length}）</summary>${games.map((g) => gameRow(g, teamed)).join("")}</details>` : ""
 
   const seriesBody = (s: Series) => {
     if (s.kind === "league") {
       const st = s.summary?.standings && s.summary.matrix ? { table: s.summary.standings, matrix: s.summary.matrix } : s.standings
-      return (st ? standingsHtml(st, (s.size ?? 2) > 2) : "") + leagueGames(s.results)
+      const full = st && (s.summary?.partnersMatrix || s.standings?.partners) ? { ...st, partners: s.summary?.partnersMatrix ?? s.standings?.partners, confidence: s.standings?.confidence } : st && { ...st, confidence: s.standings?.confidence }
+      const multi = (s.size ?? 2) > 2 || s.partners === "mixed"
+      return (full ? standingsHtml(full, multi) + partnersHtml(full) + statsHtml(s.summary?.stats ?? s.stats, full) : "") + leagueGames(s.results, false, !!s.teams)
     }
     const teamed = s.teams !== null
     return s.results.map((g) => gameRow(g, teamed)).join("") + (s.summary ? summaryTable(s.summary) : "")
@@ -437,7 +536,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     const sum = s.summary
     if (s.kind === "league") {
       const top = (sum?.standings ?? s.standings?.table)?.[0]
-      return `${esc(when)} · 联赛 · ${esc(s.ruleset.name)} · ${s.participants.length} 个 bot${(s.size ?? 2) > 2 ? ` · 每局 ${s.size} 人` : ""} · ${s.games} 局${done}${top ? ` · 第一名 ${esc(top.name)}（${Math.round(top.rate * 100)}%，等级分 ${top.elo}）` : ""}`
+      return `${esc(when)} · 联赛 · ${esc(s.ruleset.name)} · ${s.participants.length} 个 bot${(s.size ?? 2) > 2 ? ` · 每局 ${s.size} 人` : ""}${s.teams ? ` · 分队 ${esc(s.teams)}（${s.partners === "same" ? "同一个 bot 组队" : "轮换搭档"}）` : ""} · ${s.games} 局${done}${top ? ` · 第一名 ${esc(top.name)}（${Math.round(top.rate * 100)}%，等级分 ${top.elo}）` : ""}`
     }
     const brief = !sum
       ? "未完成"
@@ -472,7 +571,8 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
         : `<div class="muted">${esc(start.name)} · ${start.games} 局 · 种子从 ${start.seed} 起 · ${start.participants.map((p) => esc(p.name)).join("、")}</div>`
       : ""
     // 联赛：最新的排名放最上面，每一局折叠
-    const standings = [...events].reverse().find((e) => e.type === "standings") as (Standings & { type: string }) | undefined
+    const standings = [...events].reverse().find((e) => e.type === "standings") as (Standings & { type: string; stats?: LeagueStatsInfo }) | undefined
+    const lmulti = start ? (start.size ?? 2) > 2 || (start as { partners?: string }).partners === "mixed" : false
     const teamed = start ? start.teams !== null : false
     if (events.length === 0 && !r.running) {
       $("ar-current").innerHTML = '<span class="muted">还没开始</span>'
@@ -482,7 +582,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       head +
       errors.map((m) => `<div class="err">${esc(m)}</div>`).join("") +
       warnings.map((m) => `<div class="warn">提醒：${esc(m)}</div>`).join("") +
-      (start?.league ? (standings ? standingsHtml(standings, (start.size ?? 2) > 2) : "") + leagueGames(games, r.running) : games.map((g) => gameRow(g, teamed)).join("") + (summary ? summaryTable(summary) : "")) +
+      (start?.league ? (standings ? standingsHtml(standings, lmulti) + partnersHtml(standings) + statsHtml(standings.stats, standings) : "") + leagueGames(games, r.running, teamed) : games.map((g) => gameRow(g, teamed)).join("") + (summary ? summaryTable(summary) : "")) +
       (!r.running && r.exitCode && !errors.length && r.stderr ? `<pre class="err">${esc(r.stderr)}</pre>` : "")
     $<HTMLButtonElement>("ar-start").disabled = r.running
     $<HTMLButtonElement>("ar-stop").disabled = !r.running
@@ -516,7 +616,16 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
         method: "POST",
         body: JSON.stringify(
           league()
-            ? { mode: "league", ruleset: rulesetSel.value, bots: seats, size: leagueSize(), perTable: games, seed }
+            ? {
+                mode: "league",
+                ruleset: rulesetSel.value,
+                bots: seats,
+                size: leagueSize(),
+                teams: leagueTeams() || null,
+                partners: leagueTeams() ? partnersSel.value : null,
+                perTable: $<HTMLInputElement>("ar-games").value.trim() === "" ? null : games,
+                seed,
+              }
             : { ruleset: rulesetSel.value, bots: seats, games, seed, teams: teamsSel.value || null },
         ),
       })
