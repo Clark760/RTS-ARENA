@@ -1,9 +1,11 @@
 // 播放器页面用的本机接口：读回放、读日志、列出规则包和 bot、在后台跑比赛（调用命令行 run --json）。
 // rts-arena view 和 Vite 开发服务器（npm run viewer）共用。只该监听 127.0.0.1。
 import { spawn, type ChildProcess } from "node:child_process"
-import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import type { IncomingMessage, ServerResponse } from "node:http"
-import { join, resolve } from "node:path"
+import { basename, join, relative, resolve, sep } from "node:path"
+import { BOT_EXPORT, discoverBots } from "./bot-finder.ts"
 import { findRuleset, knownBots, listRulesets, loadRulesetRef, localBots, readWorkspaceIn, type RulesetRef } from "./catalog.ts"
 
 export interface ArenaApiOptions {
@@ -17,6 +19,8 @@ export interface ArenaApiOptions {
 
 const JSON_TYPE = "application/json; charset=utf-8"
 const MAX_GAMES = 1000
+/** 页面上传的 bot 文件最大多少字 */
+const MAX_UPLOAD = 500_000
 /** 一次比赛最多保留多少条事件（每局一条，够用） */
 const MAX_EVENTS = MAX_GAMES + 10
 
@@ -54,7 +58,14 @@ function workspaceIn(dir: string) {
 export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
   const replays = resolve(opts.replaysDir)
   const cwd = resolve(opts.cwd)
+  /** 页面"从电脑选文件"上传的 bot 副本放这里（在回放目录里，bot 目录的 .gitignore 已经忽略了 replays/） */
+  const uploads = join(replays, "uploaded-bots")
   let run: Run | null = null
+  /** 平台自带的规则包，加上找到的 bot 目录里用到的自己写的规则包（id 是相对 cwd 的路径） */
+  const rulesetRefs = () => {
+    const found = discoverBots(cwd, uploads)
+    return { found, refs: [...listRulesets().map((id) => findRuleset(id)!), ...found.rulesets] }
+  }
 
   const send = (res: ServerResponse, status: number, body: unknown) => {
     res.statusCode = status
@@ -107,10 +118,7 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
 
     if (path === "/api/arena" && req.method === "GET") {
       const workspace = workspaceIn(cwd)
-      const refs: RulesetRef[] = listRulesets().map((id) => findRuleset(id)!)
-      // bot 目录用的是自己写的规则包：也列出来（id 是 arena.json 里写的路径，命令行在 bot 目录里认得它）
-      const own = workspace ? findRuleset(workspace.ruleset, cwd) : null
-      if (own && !own.builtin) refs.push(own)
+      const { found, refs } = rulesetRefs()
       const rulesets = []
       const broken: string[] = []
       for (const src of refs) {
@@ -120,7 +128,36 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
           broken.push(`${src.ref}：${(e as Error).message}`)
         }
       }
-      send(res, 200, { rulesets, broken, workspace, localBots: localBots(cwd), running: run !== null && run.exitCode === null })
+      send(res, 200, {
+        rulesets,
+        broken,
+        workspace,
+        // 这个 bot 目录用的规则包在 rulesets 里的 id
+        here: found.here,
+        localBots: localBots(cwd),
+        botFiles: found.bots,
+        running: run !== null && run.exitCode === null,
+      })
+      return true
+    }
+
+    if (path === "/api/arena/upload" && req.method === "POST") {
+      let body: { name?: unknown; content?: unknown }
+      try {
+        body = JSON.parse(await readBody(req, MAX_UPLOAD * 2))
+      } catch {
+        return send(res, 400, { error: `文件太大（最多 ${MAX_UPLOAD / 1000} K 字）或者请求不对` }), true
+      }
+      const { name, content } = body
+      if (typeof name !== "string" || !name.endsWith(".ts") || name.endsWith(".d.ts")) return send(res, 400, { error: "要选 .ts 文件" }), true
+      if (typeof content !== "string" || content.length > MAX_UPLOAD) return send(res, 400, { error: `文件太大（最多 ${MAX_UPLOAD / 1000} K 字）` }), true
+      if (!BOT_EXPORT.test(content)) return send(res, 400, { error: `${name} 里没有导出 onTick，不像 bot 文件` }), true
+      // 同样的内容存成同一个文件；名字里只留安全的字符
+      const stem = basename(name, ".ts").replace(/[^\w\u4e00-\u9fa5-]+/g, "_").slice(0, 40) || "bot"
+      const file = join(uploads, `${stem}-${createHash("sha1").update(content).digest("hex").slice(0, 6)}.ts`)
+      mkdirSync(uploads, { recursive: true })
+      writeFileSync(file, content)
+      send(res, 200, { path: relative(cwd, file).split(sep).join("/") })
       return true
     }
 
@@ -158,8 +195,8 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
         return send(res, 400, { error: "请求不是 JSON" }), true
       }
       const { ruleset, bots, games, seed, teams } = body
-      // 只认平台自带的规则包，和这个 bot 目录 arena.json 里写的规则包
-      const allowed = typeof ruleset === "string" && (listRulesets().includes(ruleset) || workspaceIn(cwd)?.ruleset === ruleset)
+      // 只认列表里有的规则包：平台自带的，和找到的 bot 目录里用到的
+      const allowed = typeof ruleset === "string" && rulesetRefs().refs.some((r) => r.ref === ruleset)
       if (!allowed) return send(res, 400, { error: "规则包不对" }), true
       if (!Array.isArray(bots) || bots.length === 0 || bots.some((b) => typeof b !== "string" || b === "" || b.startsWith("-")))
         return send(res, 400, { error: "bot 列表不对" }), true
@@ -214,13 +251,13 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
   }
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
+function readBody(req: IncomingMessage, max = 100_000): Promise<string> {
   return new Promise((ok, fail) => {
     let s = ""
     req.setEncoding("utf8")
     req.on("data", (c: string) => {
       s += c
-      if (s.length > 100_000) {
+      if (s.length > max) {
         fail(new Error("请求太大"))
         req.destroy()
       }

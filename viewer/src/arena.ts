@@ -11,8 +11,19 @@ interface RulesetInfo {
   external?: boolean
 }
 
+/** 服务端找到的 bot 文件 */
+interface BotFile {
+  path: string
+  group: string
+  /** 所在 bot 目录用的规则包 id；null 表示哪个规则包都列出 */
+  ruleset: string | null
+}
+
 interface ArenaInfo {
   rulesets: RulesetInfo[]
+  botFiles?: BotFile[]
+  /** 这个 bot 目录用的规则包的 id */
+  here?: string | null
   /** 加载失败的规则包和原因 */
   broken?: string[]
   workspace: { ruleset: string; bot: string } | null
@@ -73,6 +84,25 @@ interface Series {
 }
 
 const PATH = "__path__"
+const UPLOAD = "__upload__"
+
+/** 每个规则包上次选的阵容记在浏览器里（存不了就算了） */
+function savedSeats(ruleset: string): string[] | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(`rts-arena:seats:${ruleset}`) ?? "null")
+    return Array.isArray(v) && v.every((x) => typeof x === "string" && x !== "") ? v : null
+  } catch {
+    return null
+  }
+}
+
+function saveSeats(ruleset: string, seats: string[]): void {
+  try {
+    localStorage.setItem(`rts-arena:seats:${ruleset}`, JSON.stringify(seats))
+  } catch {
+    // 隐私模式等存不了
+  }
+}
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -117,25 +147,36 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
   const msg = $("ar-msg")
 
   const current = () => info?.rulesets.find((r) => r.id === rulesetSel.value)
+  /** 这个 bot 目录用的规则包 */
+  const here = () => info?.here ?? info?.workspace?.ruleset ?? null
+
+  /** 当前规则包能用的、服务端找到的 bot 文件 */
+  const files = (r: RulesetInfo) => (info?.botFiles ?? []).filter((b) => b.ruleset === null || b.ruleset === r.id)
 
   const defaultBot = (i: number) => {
     const r = current()!
-    if (i === 0 && info?.workspace && info.workspace.ruleset === r.id) return info.workspace.bot
+    if (i === 0 && info?.workspace && here() === r.id) return info.workspace.bot
     return r.bots.includes("baseline") ? "baseline" : r.bots[0]
   }
 
-  /** 一个座位的下拉框：自己目录里的 .ts、现成 bot、其他文件 */
+  /** 一个座位的下拉框：找到的 bot 文件（按所在目录分组）、现成 bot、从电脑选文件、手填路径 */
   const seatRow = (i: number, value: string) => {
     const r = current()!
-    const local = info!.localBots
-    const isKnown = local.includes(value) || r.bots.includes(value)
+    const found = files(r)
+    const isKnown = found.some((b) => b.path === value) || r.bots.includes(value)
     const opt = (v: string, label = v) => `<option value="${esc(v)}"${v === value ? " selected" : ""}>${esc(label)}</option>`
+    const groups = [...new Set(found.map((b) => b.group))]
+      .map((g) => `<optgroup label="${esc(g)}">${found.filter((b) => b.group === g).map((b) => opt(b.path)).join("")}</optgroup>`)
+      .join("")
     return `<div class="seat" data-i="${i}">
       <span class="swatch" style="background:${hex(playerColor(i))}"></span><span class="seat-no">${i + 1}</span>
       <select class="ar-bot">
-        ${local.length ? `<optgroup label="我的目录">${local.map((b) => opt(b)).join("")}</optgroup>` : ""}
+        ${groups}
         <optgroup label="现成">${r.bots.map((b) => opt(b)).join("")}</optgroup>
-        <option value="${PATH}"${isKnown ? "" : " selected"}>其他文件…</option>
+        <optgroup label="别的位置">
+          <option value="${UPLOAD}">从电脑选文件…</option>
+          <option value="${PATH}"${isKnown ? "" : " selected"}>填路径…</option>
+        </optgroup>
       </select>
       <input class="ar-path" placeholder="bot 文件路径（相对 bot 目录）" value="${isKnown ? "" : esc(value)}" ${isKnown ? "hidden" : ""} />
     </div>`
@@ -145,6 +186,9 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     const r = current()
     if (!r) return
     const { min, max } = r.players
+    // 上次的阵容里找不到了的 bot（文件删了、换了位置）换回默认的
+    if (seats.length === 0)
+      seats = (savedSeats(r.id) ?? []).slice(0, max).map((v, i) => (files(r).some((f) => f.path === v) || r.bots.includes(v) ? v : defaultBot(i)))
     while (seats.length < min) seats.push(defaultBot(seats.length))
     if (seats.length > max) seats = seats.slice(0, max)
     seatsBox.innerHTML = seats.map((v, i) => seatRow(i, v)).join("")
@@ -159,15 +203,40 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     $("ar-teams-row").hidden = specs.length === 0
   }
 
-  // 读回当前下拉框里的选择（切换"其他文件…"时显示路径输入框）
+  // 读回当前下拉框里的选择（选"填路径…"时显示路径输入框，选"从电脑选文件…"时打开选文件窗口）
+  const fileInput = $<HTMLInputElement>("ar-file")
+  let uploadSeat = -1
   seatsBox.addEventListener("change", (ev) => {
     const row = (ev.target as HTMLElement).closest(".seat") as HTMLElement | null
-    if (!row) return
+    if (!row || (ev.target as HTMLElement).tagName !== "SELECT") return
     const i = Number(row.dataset.i)
     const sel = row.querySelector("select")!
     const input = row.querySelector("input")!
+    if (sel.value === UPLOAD) {
+      uploadSeat = i
+      fileInput.value = ""
+      fileInput.click()
+      renderSetup() // 先把下拉框恢复成原来的选择，选好文件再换
+      return
+    }
     input.hidden = sel.value !== PATH
     seats[i] = sel.value === PATH ? input.value.trim() : sel.value
+  })
+  // 浏览器不告诉网页文件在哪，所以把内容传给服务端存一份副本（在回放目录的 uploaded-bots/ 里）
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files?.[0]
+    if (!file || uploadSeat < 0) return
+    msg.textContent = ""
+    try {
+      const { path } = await api<{ path: string }>("/api/arena/upload", { method: "POST", body: JSON.stringify({ name: file.name, content: await file.text() }) })
+      const list = (info!.botFiles ??= [])
+      if (!list.some((b) => b.path === path)) list.push({ path, group: "从电脑选的（副本）", ruleset: null })
+      seats[uploadSeat] = path
+      renderSetup()
+      msg.textContent = `已选 ${file.name}（存了一份副本 ${path}；改了原文件要重新选）`
+    } catch (e) {
+      msg.textContent = (e as Error).message
+    }
   })
   seatsBox.addEventListener("input", (ev) => {
     const input = ev.target as HTMLInputElement
@@ -285,9 +354,10 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
 
   $("ar-start").addEventListener("click", async () => {
     msg.textContent = ""
-    if (seats.some((s) => !s)) return void (msg.textContent = "有座位还没选 bot（选了“其他文件…”就要填路径）")
+    if (seats.some((s) => !s)) return void (msg.textContent = "有座位还没选 bot（选了“填路径…”就要填上路径）")
     const games = Number($<HTMLInputElement>("ar-games").value)
     const seedText = $<HTMLInputElement>("ar-seed").value.trim()
+    saveSeats(rulesetSel.value, seats)
     try {
       await api("/api/arena/run", {
         method: "POST",
@@ -319,7 +389,8 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       .map((r) => `<option value="${esc(r.id)}">${esc(r.name)}（${esc(r.id)}${r.external ? "，自己写的" : ""}）</option>`)
       .join("")
     if (info.broken?.length) $("ar-msg").textContent = `有规则包加载失败：${info.broken.join("；")}`
-    if (info.workspace && info.rulesets.some((r) => r.id === info!.workspace!.ruleset)) rulesetSel.value = info.workspace.ruleset
+    const mine = here()
+    if (mine && info.rulesets.some((r) => r.id === mine)) rulesetSel.value = mine
     renderSetup()
     loadHistory()
     if (info.running) timer ??= window.setInterval(poll, 600)
