@@ -6,7 +6,7 @@
 
 ## 安装命令
 
-平台装成一个命令 `rts-arena`，每个人只维护自己的 bot 目录，不用拉平台代码。
+平台克隆一次、装成命令 `rts-arena` 之后，每个人只维护自己的 bot 目录，bot 不用放进平台仓库。
 
 ```bash
 git clone https://gitee.com/mingomin/rts-arena.git
