@@ -28,6 +28,8 @@ import { buildReport } from "./report.ts"
 import { leagueStandings, leagueTables, standingsText, teamSplits, type LeagueGame, type LeagueResult } from "./league.ts"
 import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
 import { excitement, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
+import { videoBrief, type VideoScript } from "../video/brief.ts"
+import { renderLeagueVideo } from "../video/render.ts"
 import { BASELINE as TEMPLATE_BASELINE, GREEDY as TEMPLATE_GREEDY, INDEX as TEMPLATE_INDEX, RUSH as TEMPLATE_RUSH, writeRulesTemplate } from "./rules-template.ts"
 
 const HELP = `用法：rts-arena <命令> [参数]
@@ -41,6 +43,11 @@ const HELP = `用法：rts-arena <命令> [参数]
   run [对手...] [选项]                  自己的 bot 打对手（不写就打 baseline），回放和日志写到 ./replays
   league [对手...] [选项]               联赛：自己的 bot 和对手循环对打，出排行榜（不写对手就和所有现成的 bot 打）
   view [回放目录] [--port N] [--open]   网页播放器（默认看 ./replays，端口 5180；--open 起来后打开浏览器）
+  video-brief [联赛汇总] [--out 文件]   联赛视频的素材包（给大模型写脚本用）：选手文件名、代码风格、成绩、精彩对局、脚本模板
+  video [联赛汇总] --script 脚本.json [--out 视频.mp4] [--preview 秒,秒] [--check 秒,秒]
+                                        按脚本渲染联赛视频（片头片尾平台署名、标题和用户原话、选手介绍、排行榜、精彩对局），
+                                        用本机的 Chrome / Edge 渲染；--preview 只出这几秒的预览图，--check 出完视频后从成品里截图检查
+                                        （不写联赛汇总就用 ./replays 里最新的一场联赛；写法见平台仓库的 skills/league-video/SKILL.md）
   report [回放] [--player N] [--every T] [--full]
                                         文字战报：每隔 T tick 双方的经济、兵力、建筑，关键事件、战斗、损失、可能的问题
                                         （不写回放就看 ./replays 里最新的一局；不写 --player 就按你的 bot 坐的座位写；
@@ -128,6 +135,8 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   check: { ticks: false },
   view: { port: false, open: true },
   report: { player: false, every: false, full: true },
+  "video-brief": { out: false },
+  video: { script: false, out: false, preview: false, check: false, browser: false, fps: false },
 }
 
 function parseArgs(command: string | undefined, argv: string[]): { pos: string[]; opt: Record<string, string | true> } {
@@ -787,6 +796,28 @@ function highlightsText(list: Highlight[]): string {
   return lines.join("\n")
 }
 
+/** 联赛汇总文件：给了文件就用它；给了目录或者没给，就找里面（默认 ./replays）最新的一场联赛 */
+function findLeagueSeries(arg: string | undefined): string {
+  const dir = arg === undefined ? "replays" : arg
+  if (arg !== undefined && !(existsSync(arg) && statSync(arg).isDirectory())) {
+    if (!existsSync(arg)) fail(`找不到 ${arg}`)
+    return arg
+  }
+  if (!existsSync(dir)) fail(`${dir} 不存在；写成 rts-arena video <联赛汇总 *.series.json>`)
+  const leagues = readdirSync(dir)
+    .filter((f) => f.endsWith(".series.json"))
+    .map((f) => join(dir, f))
+    .filter((f) => {
+      try {
+        return (JSON.parse(readFileSync(f, "utf8")) as { kind?: string }).kind === "league"
+      } catch {
+        return false
+      }
+    })
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
+  return leagues[0] ?? fail(`${dir} 里没有联赛的汇总文件（先跑 rts-arena league）`)
+}
+
 /** 只在 --json 时输出的事件 */
 function emit0(event: Record<string, unknown>): void {
   if (jsonMode) emit(event)
@@ -1156,6 +1187,64 @@ async function main(): Promise<void> {
       const others = knownBots(t.src).filter((b) => b !== "baseline" && b !== "idle")
       if (onlyBaseline && others.length)
         say(`（这次只打了 baseline。还有别的打法的参考 bot：${others.join("、")}——rts-arena league 和它们全部打一遍，免得只对 baseline 过拟合）`)
+      return
+    }
+    case "video-brief": {
+      const file = findLeagueSeries(pos[0])
+      const brief = videoBrief(file)
+      const json = JSON.stringify(brief, null, 2)
+      if (typeof opt.out === "string") {
+        writeFileSync(opt.out, json)
+        console.log(`已写好素材包 ${opt.out}（联赛 ${file}）。照着里面的 scriptTemplate 和 rules 写脚本，然后：rts-arena video ${file} --script <脚本.json>`)
+      } else console.log(json)
+      return
+    }
+    case "video": {
+      const file = findLeagueSeries(pos[0])
+      if (typeof opt.script !== "string") fail("要用 --script 给出脚本（JSON）；先用 rts-arena video-brief 拿素材包和脚本模板")
+      let script: VideoScript
+      try {
+        script = JSON.parse(readFileSync(opt.script, "utf8")) as VideoScript
+      } catch (e) {
+        fail(`脚本 ${opt.script} 读不出来：${(e as Error).message}`)
+      }
+      const secs = (v: string | true | undefined, what: string) => {
+        if (v === undefined) return undefined
+        const list = String(v).split(",").map(Number)
+        if (list.some((x) => !Number.isFinite(x) || x < 0)) fail(`${what} 要写成用逗号隔开的秒数，比如 2,15,40`)
+        return list
+      }
+      const fps = typeof opt.fps === "string" ? Number(opt.fps) : 30
+      if (!Number.isInteger(fps) || fps < 10 || fps > 60) fail("--fps 要是 10～60 的整数")
+      const out = typeof opt.out === "string" ? opt.out : file.replace(/\.series\.json$/, ".mp4")
+      const t0 = performance.now()
+      let lastPct = -1
+      try {
+        const r = await renderLeagueVideo({
+          seriesFile: file,
+          script,
+          out,
+          browser: typeof opt.browser === "string" ? opt.browser : undefined,
+          fps,
+          preview: secs(opt.preview, "--preview"),
+          check: secs(opt.check, "--check"),
+          onProgress: (done, total) => {
+            const pct = Math.floor((done / total) * 10) * 10
+            if (pct !== lastPct) {
+              lastPct = pct
+              process.stdout.write(`渲染 ${pct}%（${done}/${total} 帧）\n`)
+            }
+          },
+        })
+        if (!r.file) console.log(`预览图：${r.images.join("、")}（整段视频 ${r.seconds.toFixed(1)} 秒）`)
+        else {
+          console.log(`已生成 ${r.file}：${r.seconds.toFixed(1)} 秒，${r.frames} 帧，${(r.bytes / 1e6).toFixed(1)} MB，用时 ${((performance.now() - t0) / 1000).toFixed(0)} 秒`)
+          if (r.probe) console.log(`浏览器解码检查：时长 ${r.probe.duration.toFixed(1)} 秒，${r.probe.width}×${r.probe.height}`)
+          if (r.images.length) console.log(`从成品截的图：${r.images.join("、")}`)
+        }
+      } catch (e) {
+        fail((e as Error).message)
+      }
       return
     }
     case "report": {
