@@ -1,0 +1,22 @@
+{
+  "name": "rts-arena",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "大模型写 TypeScript 脚本进行即时战略对战的平台",
+  "scripts": {
+    "arena": "node src/cli/arena.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "bench": "node src/cli/bench.ts",
+    "viewer": "vite viewer",
+    "viewer:build": "vite build viewer"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "pixi.js": "^8.22.0",
+    "quickjs-emscripten": "^0.32.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.3"
+  }
+}

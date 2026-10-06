@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RTS Arena 回放</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header>
+      <strong class="brand">RTS Arena</strong>
+      <select id="replay-select" title="选择回放"></select>
+      <button id="refresh" title="刷新回放列表">刷新</button>
+      <label class="file-btn">打开文件<input id="file-input" type="file" accept=".json" hidden /></label>
+      <span id="match-title" class="muted"></span>
+    </header>
+    <main>
+      <section id="stage">
+        <div id="status-line"></div>
+        <div id="result-banner" hidden></div>
+        <div id="empty" class="muted">还没有回放。先跑一局：<code>npm run arena -- run annihilation bots/annihilation/rush.ts bots/idle.ts</code></div>
+      </section>
+      <aside>
+        <div class="panel">
+          <h3>玩家</h3>
+          <table id="players"></table>
+        </div>
+        <div class="panel">
+          <h3>选中</h3>
+          <div id="selected" class="muted">点画面上的实体查看</div>
+        </div>
+        <div class="panel grow">
+          <h3>
+            日志
+            <span id="log-filter"></span>
+          </h3>
+          <div id="logs"></div>
+        </div>
+        <details class="panel">
+          <summary>bot 统计</summary>
+          <div id="bot-stats"></div>
+        </details>
+      </aside>
+    </main>
+    <footer>
+      <button id="to-start" title="回到开头 (Home)">⏮</button>
+      <button id="step-back" title="后退 1 tick (←)">◀</button>
+      <button id="play" title="播放 / 暂停 (空格)">▶</button>
+      <button id="step-fwd" title="前进 1 tick (→)">▶|</button>
+      <select id="speed" title="速度">
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+        <option value="4">4×</option>
+        <option value="8">8×</option>
+        <option value="16">16×</option>
+      </select>
+      <input id="slider" type="range" min="0" max="0" value="0" />
+      <span id="tick-label">0 / 0</span>
+      <button id="fit" title="缩放到整张地图">全图</button>
+    </footer>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

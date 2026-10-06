@@ -1,0 +1,176 @@
+// bot 接口：引擎直接引用这里的类型；`arena docs` 去掉 export、换上规则包的具体类型后，
+// 生成发给 bot 作者（大模型或人）的 arena.d.ts。改这里就是改对外接口。
+
+// #region 规则包类型（生成 arena.d.ts 时换成具体规则包的字面量类型）
+/** 实体类型名（单位、建筑、资源点），见规则说明里的单位表 */
+export type TypeName = string
+/** 资源名 */
+export type ResourceName = string
+/** 规则包给 bot 的目标信息，每个规则包不同，见规则说明 */
+export type Objectives = unknown
+// #endregion
+
+/** 格子坐标。左上角是 (0,0)，x 向右，y 向下。 */
+export interface Pos {
+  x: number
+  y: number
+}
+
+/** 实体类型的固定属性（规则包定义，整局不变） */
+export interface TypeDef {
+  name: TypeName
+  /** unit 能移动；building 不能移动，可以生产、当交货点；resource 是中立资源点，不能被攻击 */
+  kind: "unit" | "building" | "resource"
+  /** 占地宽（格）。单位都是 1×1，建筑可以更大 */
+  w: number
+  /** 占地高（格） */
+  h: number
+  /** 最大生命；0 表示不能被攻击 */
+  maxHp: number
+  /** 造价 */
+  cost: Partial<Record<ResourceName, number>>
+  /** 生产用时（tick） */
+  buildTicks: number
+  /** 走一格要几个 tick；0 表示不能移动 */
+  moveTicks: number
+  /** 视野半径（曼哈顿距离，从占地最近的格子算） */
+  sight: number
+  /** 攻击能力；null 表示不能攻击。打中目标后要等 cooldown 个 tick 才能再打 */
+  attack: { damage: number; range: number; cooldown: number } | null
+  /** 采集能力；null 表示不能采集。贴着资源点每 ticks 个 tick 采 amount，身上最多带 capacity */
+  gather: { amount: number; ticks: number; capacity: number } | null
+  /** 采集者能否在这里交货 */
+  dropOff: boolean
+  /** 能生产的类型 */
+  produces: TypeName[]
+  /** 资源点产出的资源；不是资源点为 null */
+  resource: ResourceName | null
+}
+
+/** 单位当前在执行的命令。命令会一直执行，直到完成、失效或被新命令替换 */
+export type Order =
+  | { kind: "idle" }
+  | { kind: "move"; x: number; y: number }
+  | { kind: "attack"; target: number }
+  | { kind: "attackMove"; x: number; y: number }
+  /** returning 为 true 表示正带着资源回交货点 */
+  | { kind: "gather"; target: number; returning: boolean }
+
+/** 看得到的实体。建筑的 x、y 是占地左上角 */
+export interface Entity {
+  id: number
+  type: TypeName
+  /** 所属玩家编号；-1 表示中立 */
+  owner: number
+  x: number
+  y: number
+  w: number
+  h: number
+  hp: number
+  maxHp: number
+  /** 资源点剩余量（只有资源点有） */
+  amount?: number
+  /** 当前命令（只有自己的实体有） */
+  order?: Order
+  /** 身上带的资源（只有自己的单位、且带着资源时才有） */
+  carrying?: { resource: ResourceName; amount: number }
+  /** 生产队列，第一个正在生产（只有自己的、能生产的实体有） */
+  queue?: { type: TypeName; ticksLeft: number }[]
+  /** 还要几个 tick 才能再攻击，0 表示现在就能打（只有自己的、能攻击的实体有） */
+  cooldown?: number
+}
+
+/** 公开的玩家信息 */
+export interface PlayerInfo {
+  id: number
+  name: string
+  /** false 表示已出局 */
+  alive: boolean
+  /** 当前分数，含义见规则说明 */
+  score: number
+}
+
+/** bot 发出的命令（被拒绝时会原样出现在 rejected 事件里） */
+export type Command =
+  | { kind: "move"; unit: number; x: number; y: number }
+  | { kind: "attack"; unit: number; target: number }
+  | { kind: "attackMove"; unit: number; x: number; y: number }
+  | { kind: "gather"; unit: number; target: number }
+  | { kind: "stop"; unit: number }
+  | { kind: "produce"; building: number; type: TypeName }
+  | { kind: "cancel"; building: number }
+
+/** 上次调用 onTick 之后发生的、和你有关的事 */
+export type GameEvent =
+  /** 命令没被执行，reason 说明原因 */
+  | { kind: "rejected"; tick: number; command: Command; reason: string }
+  /** 你的新实体生产出来了 */
+  | { kind: "created"; tick: number; id: number; type: TypeName }
+  /** 你的实体、或你看得到的实体死了（资源点采完也算） */
+  | { kind: "died"; tick: number; id: number; type: TypeName; owner: number; x: number; y: number }
+  /** 你的实体挨打了 */
+  | { kind: "damaged"; tick: number; id: number; by: number; damage: number }
+  /** 你上次的 onTick 抛错或燃料耗尽，那一次的命令全部作废 */
+  | { kind: "botError"; tick: number; message: string }
+
+/** 每次调用 onTick 时你看到的局面 */
+export interface View {
+  tick: number
+  /** 你的玩家编号 */
+  me: number
+  /** 你拥有的资源 */
+  resources: Record<ResourceName, number>
+  players: PlayerInfo[]
+  /** 你看得到的全部实体（含自己的），按 id 升序 */
+  entities: Entity[]
+  /** 规则包给的目标信息 */
+  objectives: Objectives
+  events: GameEvent[]
+}
+
+/** 游戏静态信息，整局不变 */
+export interface Game {
+  /** 你的玩家编号 */
+  me: number
+  /** 玩家名，下标就是玩家编号 */
+  playerNames: string[]
+  width: number
+  height: number
+  /** 地形，terrain[y][x] 是一个字符 */
+  terrain: string[]
+  /** 地形字符能否通行（建筑和资源点所在的格子也不能通行） */
+  walkable: Record<string, boolean>
+  types: Record<TypeName, TypeDef>
+  resources: ResourceName[]
+  /** 一局最多多少 tick，到点按规则判胜负 */
+  maxTicks: number
+  /** 每隔几个 tick 调用一次 onTick */
+  decisionInterval: number
+  /** 每次调用的燃料上限（1 燃料约等于 5000 次简单循环） */
+  fuel: number
+  /** 每个玩家最多同时拥有多少个单位（建筑和资源点不算，生产队列里的算）；0 表示不限 */
+  unitCap: number
+}
+
+/** onTick 里用来下命令的对象。unit、building、target 可以传实体或 id */
+export interface Commands {
+  /** 走到 (x, y)，途中不还手。到不了就走到最近处后停下 */
+  move(unit: Entity | number, x: number, y: number): void
+  /** 追着打 target，直到它死掉或你看不见它 */
+  attack(unit: Entity | number, target: Entity | number): void
+  /** 走向 (x, y)，路上射程内有敌人就打、视野内有敌人就追 */
+  attackMove(unit: Entity | number, x: number, y: number): void
+  /** 循环采集：采满后自动回最近的交货点交货，再回来采；资源点采完就停下 */
+  gather(unit: Entity | number, resource: Entity | number): void
+  /** 停下。停着的单位会打射程内的敌人，但不追 */
+  stop(unit: Entity | number): void
+  /** 排进生产队列，立即扣钱；队列最多 5 个 */
+  produce(building: Entity | number, type: TypeName): void
+  /** 取消队列里最后一个，全额退款 */
+  cancel(building: Entity | number): void
+}
+
+/** bot 文件导出的 onTick 的类型 */
+export type OnTick = (view: View, cmd: Commands) => void
+/** bot 文件导出的 onStart 的类型（可选） */
+export type OnStart = (game: Game) => void
