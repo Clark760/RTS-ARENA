@@ -1,7 +1,7 @@
 // 播放器页面用的本机接口：读回放、读日志、列出规则包和 bot、在后台跑比赛（调用命令行 run --json）。
 // rts-arena view 和 Vite 开发服务器（npm run viewer）共用。只该监听 127.0.0.1。
 import { spawn, type ChildProcess } from "node:child_process"
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { basename, join, relative, resolve, sep } from "node:path"
 import { BOT_EXPORT, discoverBots, uploadNameProblem } from "./bot-finder.ts"
@@ -186,6 +186,24 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
       if (existsSync(to)) return send(res, 409, { error: `已经有一个叫 ${stem} 的 bot 了` }), true
       renameSync(from, to)
       send(res, 200, { path: relative(cwd, to).split(sep).join("/"), name: stem })
+      return true
+    }
+
+    // 删除上传的副本（只能删 uploaded-bots 里的；正在跑的比赛用着的不能删）
+    if (path === "/api/arena/upload/delete" && req.method === "POST") {
+      let body: { path?: unknown }
+      try {
+        body = JSON.parse(await readBody(req))
+      } catch {
+        return send(res, 400, { error: "请求不是 JSON" }), true
+      }
+      if (typeof body.path !== "string") return send(res, 400, { error: "要给 path" }), true
+      const file = resolve(cwd, body.path)
+      if (!file.startsWith(uploads + sep) || !file.endsWith(".ts") || !existsSync(file)) return send(res, 400, { error: "只能删除上传的 bot" }), true
+      if (run && run.exitCode === null && run.args.some((a) => resolve(cwd, a) === file))
+        return send(res, 409, { error: "正在跑的比赛还要用它，等比赛结束或者先停止再删" }), true
+      rmSync(file)
+      send(res, 200, { ok: true })
       return true
     }
 

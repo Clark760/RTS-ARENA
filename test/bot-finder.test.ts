@@ -107,6 +107,8 @@ test("对战接口：列出找到的 bot；上传的 bot 存成副本，能直�
 
     // 隔壁目录的规则包也能直接选来开比赛
     assert.equal((await post("/api/arena/run", { ruleset: "../gold", bots: ["../my-gold/bot.ts", renamedPath], games: 1, seed: 1 })).status, 200)
+    // 比赛还在跑：它用着的上传 bot 不能删
+    assert.equal((await post("/api/arena/upload/delete", { path: renamedPath })).status, 409)
     let run: { running: boolean; exitCode: number; stderr: string }
     for (;;) {
       run = (await (await fetch(base + "/api/arena/run")).json()) as typeof run
@@ -114,6 +116,15 @@ test("对战接口：列出找到的 bot；上传的 bot 存成副本，能直�
       await new Promise((r) => setTimeout(r, 200))
     }
     assert.equal(run.exitCode, 0, run.stderr)
+
+    // 删除：只能删上传目录里的
+    assert.equal((await post("/api/arena/upload/delete", { path: "bot.ts" })).status, 400)
+    assert.equal((await post("/api/arena/upload/delete", { path: renamedPath })).status, 200)
+    assert.ok(!existsSync(join(cwd, renamedPath)))
+    assert.equal((await post("/api/arena/upload/delete", { path: renamedPath })).status, 400)
+    const after = (await (await fetch(base + "/api/arena")).json()) as { botFiles: { path: string }[] }
+    assert.ok(!after.botFiles.some((b) => b.path === renamedPath))
+    assert.ok(existsSync(join(cwd, "bot.ts")), "自己目录里的 bot 不受影响")
   } finally {
     server.close()
   }

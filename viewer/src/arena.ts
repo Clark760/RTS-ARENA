@@ -272,7 +272,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
         </optgroup>
       </select>
       <button class="ar-pick" title="从电脑上选一个 bot 文件（.ts）">选文件…</button>
-      ${uploaded ? '<button class="ar-rename" title="改这个上传的 bot 的名字（比赛结果里显示这个名字）">改名</button>' : ""}
+      ${uploaded ? '<button class="ar-rename" title="改这个上传的 bot 的名字（比赛结果里显示这个名字）">改名</button><button class="ar-delete" title="删除这个上传的副本（以前的回放不受影响）">删除</button>' : ""}
       <input class="ar-path" placeholder="bot 文件路径（相对 bot 目录）" value="${isKnown ? "" : esc(value)}" ${isKnown ? "hidden" : ""} />
     </div>`
   }
@@ -369,6 +369,9 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     } else if (target.closest(".ar-rename")) {
       const b = info?.botFiles?.find((f) => f.path === seats[i])
       if (b) startNaming({ mode: "rename", seat: i, from: b.path }, b.label ?? "")
+    } else if (target.closest(".ar-delete")) {
+      const b = info?.botFiles?.find((f) => f.path === seats[i])
+      if (b) startDelete(b)
     }
   })
 
@@ -392,6 +395,27 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     input.focus()
     input.select()
   }
+  /** 删除上传的副本：先在页面上确认 */
+  const startDelete = (b: BotFile) => {
+    naming = null
+    const users = seats.filter((x) => x === b.path).length
+    namingBox.innerHTML = `<div class="small">删除上传的 bot「${esc(b.label ?? b.path)}」？只删回放目录里的这份副本，以前的回放和日志不受影响${users > 1 ? `；现在有 ${users} 个座位用着它，会换回默认的 bot` : ""}。</div>
+      <div class="row"><button id="ar-del-ok" class="primary" data-path="${esc(b.path)}">删除</button><button id="ar-name-cancel">取消</button></div>
+      <div id="ar-name-msg" class="err small"></div>`
+    namingBox.hidden = false
+  }
+  const doDelete = async (path: string) => {
+    const r = await post("/api/arena/upload/delete", { path })
+    if (!r.ok) return void ($("ar-name-msg").textContent = r.body.error ?? `删除失败：${r.status}`)
+    const label = info?.botFiles?.find((b) => b.path === path)?.label ?? path
+    if (info?.botFiles) info.botFiles = info.botFiles.filter((b) => b.path !== path)
+    seats = seats.map((x, i) => (x === path ? defaultBot(i) : x))
+    stopNaming()
+    renderSetup()
+    msg.textContent = `已删除 ${label}`
+    msg.classList.add("ok")
+  }
+
   const stopNaming = () => {
     naming = null
     namingBox.hidden = true
@@ -450,6 +474,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     const id = (ev.target as HTMLElement).id
     if (id === "ar-name-ok") void saveName()
     else if (id === "ar-name-cancel") stopNaming()
+    else if (id === "ar-del-ok") void doDelete((ev.target as HTMLElement).dataset.path!)
     else if (id === "ar-name-replace") void saveName(true)
     else if (id === "ar-name-other") {
       $("ar-name-choice").hidden = true
