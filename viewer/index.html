@@ -51,15 +51,19 @@
     <section id="arena-page" hidden>
       <div class="panel arena-setup">
         <h3>开一场比赛</h3>
+        <label class="field">方式 <select id="ar-mode">
+          <option value="series">比赛：一组 bot 打 N 局</option>
+          <option value="league">联赛：多个 bot 两两循环对打，出排行榜</option>
+        </select></label>
         <label class="field">规则包 <select id="ar-ruleset"></select></label>
         <div class="muted" id="ar-players-hint"></div>
         <div id="ar-seats"></div>
         <input id="ar-file" type="file" accept=".ts" hidden />
         <div class="row"><button id="ar-add">加一个</button><button id="ar-remove">减一个</button></div>
         <label class="field" id="ar-teams-row">分队 <select id="ar-teams"></select></label>
-        <label class="field">局数 <input id="ar-games" type="number" min="1" max="1000" value="10" /></label>
+        <label class="field"><span id="ar-games-label">局数</span> <input id="ar-games" type="number" min="1" max="1000" value="10" /></label>
         <label class="field">种子 <input id="ar-seed" type="number" placeholder="留空随机" /></label>
-        <div class="muted small">同一个种子会把各方的位置轮换一遍（两人就是换边各打一次）。回放和每个 bot 的日志写在回放目录里。</div>
+        <div class="muted small" id="ar-note">同一个种子会把各方的位置轮换一遍（两人就是换边各打一次）。回放和每个 bot 的日志写在回放目录里。</div>
         <div class="row"><button id="ar-start" class="primary">开始</button><button id="ar-stop" disabled>停止</button></div>
         <div id="ar-msg" class="err"></div>
       </div>

@@ -188,24 +188,36 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
 
     if (path === "/api/arena/run" && req.method === "POST") {
       if (run && run.exitCode === null) return send(res, 409, { error: "已经有一场比赛在跑，等它结束或先停止" }), true
-      let body: { ruleset?: unknown; bots?: unknown; games?: unknown; seed?: unknown; teams?: unknown }
+      let body: { ruleset?: unknown; bots?: unknown; games?: unknown; seed?: unknown; teams?: unknown; mode?: unknown; perPair?: unknown }
       try {
         body = JSON.parse(await readBody(req))
       } catch {
         return send(res, 400, { error: "请求不是 JSON" }), true
       }
-      const { ruleset, bots, games, seed, teams } = body
+      const { ruleset, bots, games, seed, teams, mode, perPair } = body
       // 只认列表里有的规则包：平台自带的，和找到的 bot 目录里用到的
       const allowed = typeof ruleset === "string" && rulesetRefs().refs.some((r) => r.ref === ruleset)
       if (!allowed) return send(res, 400, { error: "规则包不对" }), true
       if (!Array.isArray(bots) || bots.length === 0 || bots.some((b) => typeof b !== "string" || b === "" || b.startsWith("-")))
         return send(res, 400, { error: "bot 列表不对" }), true
-      if (!Number.isInteger(games) || (games as number) < 1 || (games as number) > MAX_GAMES) return send(res, 400, { error: `局数要是 1~${MAX_GAMES} 的整数` }), true
       if (seed !== undefined && seed !== null && !Number.isInteger(seed)) return send(res, 400, { error: "种子要是整数" }), true
-      if (teams !== undefined && teams !== null && (typeof teams !== "string" || !/^\d+(v\d+)+$/.test(teams))) return send(res, 400, { error: "分队要写成 2v2 这样" }), true
-      const args = ["run", ruleset, ...(bots as string[]), "--games", String(games), "--out", replays, "--json"]
+      let args: string[]
+      if (mode === "league") {
+        // 联赛：bot 两两循环对打
+        const list = bots as string[]
+        if (list.length < 2 || list.length > 16) return send(res, 400, { error: "联赛要 2～16 个 bot" }), true
+        if (new Set(list).size !== list.length) return send(res, 400, { error: "同一个 bot 选了两次" }), true
+        const pairs = (list.length * (list.length - 1)) / 2
+        if (!Number.isInteger(perPair) || (perPair as number) < 1 || (perPair as number) * pairs > MAX_GAMES)
+          return send(res, 400, { error: `每对局数要是正整数，总局数（${pairs} 对 × 每对局数）最多 ${MAX_GAMES}` }), true
+        args = ["league", ruleset, ...list, "--per-pair", String(perPair), "--out", replays, "--json"]
+      } else {
+        if (!Number.isInteger(games) || (games as number) < 1 || (games as number) > MAX_GAMES) return send(res, 400, { error: `局数要是 1~${MAX_GAMES} 的整数` }), true
+        if (teams !== undefined && teams !== null && (typeof teams !== "string" || !/^\d+(v\d+)+$/.test(teams))) return send(res, 400, { error: "分队要写成 2v2 这样" }), true
+        args = ["run", ruleset, ...(bots as string[]), "--games", String(games), "--out", replays, "--json"]
+        if (typeof teams === "string") args.push("--teams", teams)
+      }
       if (typeof seed === "number") args.push("--seed", String(seed))
-      if (typeof teams === "string") args.push("--teams", teams)
       // 不经过 shell，参数原样传给命令行，不会被注入
       const child = spawn(process.execPath, [opts.cliPath, ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] })
       const r: Run = { child, args, events: [], stderr: "", exitCode: null, cancelled: false }
@@ -220,7 +232,11 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
           buf = buf.slice(i + 1)
           if (!line) continue
           try {
-            if (r.events.length < MAX_EVENTS) r.events.push(JSON.parse(line))
+            const ev = JSON.parse(line) as Record<string, unknown>
+            // 联赛每局都发一次排名，只留最新的一份（不然长联赛会把事件数撑满，最后的汇总进不来）
+            const old = ev.type === "standings" ? r.events.findIndex((x) => x.type === "standings") : -1
+            if (old >= 0) r.events[old] = ev
+            else if (r.events.length < MAX_EVENTS) r.events.push(ev)
           } catch {
             r.stderr += line + "\n"
           }

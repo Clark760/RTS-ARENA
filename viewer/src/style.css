@@ -359,3 +359,16 @@ pre.err {
 #ar-msg.ok {
   color: var(--muted);
 }
+
+/* 联赛的对阵表：赢的格子偏绿、输的偏红 */
+table.matrix td.win {
+  color: #6ee36e;
+}
+table.matrix td.lose {
+  color: #f25f5c;
+}
+table.matrix th,
+table.matrix td {
+  padding: 2px 6px;
+  white-space: nowrap;
+}
