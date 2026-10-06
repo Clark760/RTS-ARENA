@@ -6,6 +6,7 @@ import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, sta
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { basename, join, relative, resolve, sep } from "node:path"
 import { BOT_EXPORT, discoverBots } from "./bot-finder.ts"
+import { leagueTables } from "./league.ts"
 import { findRuleset, knownBots, listRulesets, loadRulesetRef, localBots, readWorkspaceIn, type RulesetRef } from "./catalog.ts"
 
 export interface ArenaApiOptions {
@@ -188,13 +189,14 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
 
     if (path === "/api/arena/run" && req.method === "POST") {
       if (run && run.exitCode === null) return send(res, 409, { error: "已经有一场比赛在跑，等它结束或先停止" }), true
-      let body: { ruleset?: unknown; bots?: unknown; games?: unknown; seed?: unknown; teams?: unknown; mode?: unknown; perPair?: unknown }
+      let body: { ruleset?: unknown; bots?: unknown; games?: unknown; seed?: unknown; teams?: unknown; mode?: unknown; perPair?: unknown; perTable?: unknown; size?: unknown }
       try {
         body = JSON.parse(await readBody(req))
       } catch {
         return send(res, 400, { error: "请求不是 JSON" }), true
       }
-      const { ruleset, bots, games, seed, teams, mode, perPair } = body
+      const { ruleset, bots, games, seed, teams, mode, perPair, size } = body
+      const perTable = body.perTable ?? perPair
       // 只认列表里有的规则包：平台自带的，和找到的 bot 目录里用到的
       const allowed = typeof ruleset === "string" && rulesetRefs().refs.some((r) => r.ref === ruleset)
       if (!allowed) return send(res, 400, { error: "规则包不对" }), true
@@ -203,14 +205,16 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
       if (seed !== undefined && seed !== null && !Number.isInteger(seed)) return send(res, 400, { error: "种子要是整数" }), true
       let args: string[]
       if (mode === "league") {
-        // 联赛：bot 两两循环对打
+        // 联赛：每局 size 个人（默认 2），按组合分桌循环对打
         const list = bots as string[]
-        if (list.length < 2 || list.length > 16) return send(res, 400, { error: "联赛要 2～16 个 bot" }), true
+        const k = size === undefined || size === null ? 2 : size
+        if (!Number.isInteger(k) || (k as number) < 2) return send(res, 400, { error: "每局人数要是 2 以上的整数" }), true
+        if (list.length < (k as number) || list.length > 16) return send(res, 400, { error: `联赛要 ${k}～16 个 bot` }), true
         if (new Set(list).size !== list.length) return send(res, 400, { error: "同一个 bot 选了两次" }), true
-        const pairs = (list.length * (list.length - 1)) / 2
-        if (!Number.isInteger(perPair) || (perPair as number) < 1 || (perPair as number) * pairs > MAX_GAMES)
-          return send(res, 400, { error: `每对局数要是正整数，总局数（${pairs} 对 × 每对局数）最多 ${MAX_GAMES}` }), true
-        args = ["league", ruleset, ...list, "--per-pair", String(perPair), "--out", replays, "--json"]
+        const tables = leagueTables(list.length, k as number, 0).tables.length
+        if (!Number.isInteger(perTable) || (perTable as number) < 1 || (perTable as number) * tables > MAX_GAMES)
+          return send(res, 400, { error: `每桌局数要是正整数，总局数（${tables} 桌 × 每桌局数）最多 ${MAX_GAMES}` }), true
+        args = ["league", ruleset, ...list, "--size", String(k), "--per-table", String(perTable), "--out", replays, "--json"]
       } else {
         if (!Number.isInteger(games) || (games as number) < 1 || (games as number) > MAX_GAMES) return send(res, 400, { error: `局数要是 1~${MAX_GAMES} 的整数` }), true
         if (teams !== undefined && teams !== null && (typeof teams !== "string" || !/^\d+(v\d+)+$/.test(teams))) return send(res, 400, { error: "分队要写成 2v2 这样" }), true

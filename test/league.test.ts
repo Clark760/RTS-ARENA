@@ -8,20 +8,17 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import { createArenaApi } from "../src/cli/arena-api.ts"
-import { leagueStandings } from "../src/cli/league.ts"
+import { leagueStandings, leagueTables, type LeagueGame } from "../src/cli/league.ts"
 
 const ROOT = join(import.meta.dirname, "..")
 const CLI = join(ROOT, "src", "cli", "arena.ts")
 
+/** 两人局：winner 为 null 是平局 */
+const duel = (a: number, b: number, winner: number | null): LeagueGame => ({ players: [a, b], ranking: winner === null ? [[a, b]] : [[winner], [winner === a ? b : a]] })
+
 test("联赛排名：胜 1 分平 0.5 分；等级分和打的先后顺序无关；全胜也是有限的分数；同分同等级分并列", () => {
   const names = ["a", "b", "c"]
-  const games = [
-    { a: 0, b: 1, winner: 0 },
-    { a: 0, b: 1, winner: 0 },
-    { a: 0, b: 2, winner: 0 },
-    { a: 1, b: 2, winner: null },
-    { a: 1, b: 2, winner: 1 },
-  ]
+  const games = [duel(0, 1, 0), duel(0, 1, 0), duel(0, 2, 0), duel(1, 2, null), duel(1, 2, 1)]
   const r = leagueStandings(names, games)
   assert.deepEqual(
     r.table.map((s) => [s.name, s.rank, s.wins, s.draws, s.losses, s.points]),
@@ -41,10 +38,7 @@ test("联赛排名：胜 1 分平 0.5 分；等级分和打的先后顺序无关
     r.table.map((s) => s.elo),
   )
   // 完全对称：并列第一
-  const tie = leagueStandings(["x", "y"], [
-    { a: 0, b: 1, winner: 0 },
-    { a: 0, b: 1, winner: 1 },
-  ])
+  const tie = leagueStandings(["x", "y"], [duel(0, 1, 0), duel(0, 1, 1)])
   assert.deepEqual(
     tie.table.map((s) => [s.rank, s.elo]),
     [
@@ -74,7 +68,7 @@ test("命令行 league：两两循环、换边，写汇总和每局回放；bot 
     assert.equal(series.summary.standings.length, 3)
     assert.equal(series.summary.standings.at(-1).name, "idle")
     // 每对两局换边
-    const pair01 = series.results.filter((g: { pair: number[] }) => g.pair[0] === 0 && g.pair[1] === 1)
+    const pair01 = series.results.filter((g: { table: number[] }) => g.table[0] === 0 && g.table[1] === 1)
     assert.deepEqual(
       pair01.map((g: { seats: number[] }) => g.seats),
       [
@@ -123,6 +117,71 @@ test("对战接口开联赛：事件里有最新排名和最后的汇总；参�
     assert.equal(series[0].kind, "league")
   } finally {
     server.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("多人局的排名：名次分（第一 1 分、最后 0 分、中间平分，并列取平均）、平均名次、两两对阵", () => {
+  const names = ["a", "b", "c", "d"]
+  const games: LeagueGame[] = [
+    { players: [0, 1, 2, 3], ranking: [[0], [1], [2], [3]] },
+    { players: [1, 2, 3, 0], ranking: [[1], [0], [2, 3]] },
+    { players: [2, 3, 0, 1], ranking: [[0, 1], [2], [3]] },
+  ]
+  const r = leagueStandings(names, games)
+  const a = r.table.find((s) => s.name === "a")!
+  // a：第 1、第 2、并列第 1（算 1.5）
+  assert.equal(a.avgPlace, 1.5)
+  assert.equal(a.wins, 1)
+  assert.equal(a.draws, 1)
+  assert.equal(a.losses, 1)
+  // 名次分：1 + 2/3 + (4-1.5)/3
+  assert.ok(Math.abs(a.points - (1 + 2 / 3 + 2.5 / 3)) < 1e-3)
+  const d = r.table.find((s) => s.name === "d")!
+  assert.equal(d.rank, 4)
+  // c、d 并列的那局在对阵表里算并列
+  assert.deepEqual(r.matrix[2][3], { w: 2, d: 1, l: 0 })
+  // a、b：一局 a 在前、一局 b 在前、一局并列
+  assert.deepEqual(r.matrix[0][1], { w: 1, d: 1, l: 1 })
+  assert.equal(r.table[0].name, "a")
+})
+
+test("联赛分桌：两人局全部两两组合；多人局组合少就全打，多了就抽桌、每人上场次数差不多", () => {
+  assert.equal(leagueTables(6, 2, 1).tables.length, 15)
+  const full = leagueTables(5, 4, 1)
+  assert.equal(full.complete, true)
+  assert.equal(full.tables.length, 5)
+  const sampled = leagueTables(8, 4, 1)
+  assert.equal(sampled.complete, false)
+  assert.equal(sampled.tables.length, 12)
+  const appear = new Array(8).fill(0)
+  for (const t of sampled.tables) {
+    assert.equal(new Set(t).size, 4)
+    for (const i of t) appear[i]++
+  }
+  assert.ok(Math.max(...appear) - Math.min(...appear) <= 1, appear.join())
+  assert.equal(leagueTables(8, 4, 1, 3).tables.length, 3)
+})
+
+test("命令行 league：多人局（混战每局 3 人），座位轮换一圈，输出平均名次", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rts-arena-league-ffa-"))
+  try {
+    const r = spawnSync(process.execPath, [CLI, "league", "melee", "baseline", "idle", join(ROOT, "bots", "annihilation", "rush.ts"), "--size", "3", "--seed", "4", "--out", "lg", "--no-check"], { cwd: dir, encoding: "utf8" })
+    assert.equal(r.status, 0, r.stdout + r.stderr)
+    assert.match(r.stdout, /每局 3 人，所有组合 1 桌，每桌 3 局（轮换座位），共 3 局/)
+    assert.match(r.stdout, /名次 baseline > /)
+    assert.match(r.stdout, /平均名次/)
+    const series = JSON.parse(readFileSync(join(dir, "lg", readdirSync(join(dir, "lg")).find((f) => f.endsWith(".series.json"))!), "utf8"))
+    assert.deepEqual(
+      series.results.map((g: { seats: number[] }) => g.seats),
+      [
+        [0, 1, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+      ],
+    )
+    assert.equal(series.summary.standings[0].name, "baseline")
+  } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })

@@ -372,3 +372,20 @@ table.matrix td {
   padding: 2px 6px;
   white-space: nowrap;
 }
+
+/* 联赛排行榜在窄的面板里也放得下 */
+table.standings th,
+table.standings td {
+  padding: 2px 4px;
+  white-space: nowrap;
+  font-size: 12px;
+}
+table.matrix th,
+table.matrix td {
+  font-size: 12px;
+}
+/* 面板太窄时表格横向滚动，不撑破面板 */
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
