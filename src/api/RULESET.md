@@ -18,6 +18,8 @@ my-rules/
 
 ## 命令
 
+动手之前先运行 `rts-arena list` 看看平台自带的规则包和一句话简介，别和它们撞题。
+
 ```bash
 rts-arena new-rules my-rules          # 建一个能直接跑的示例规则包，从它改起
 rts-arena check ./my-rules            # 检查规则包：类型、格式、各种人数试打、打一整局看结束判定
@@ -39,6 +41,7 @@ import { standardTypes, STANDARD_TERRAIN } from "rts-arena/standard"
 const ruleset: Ruleset = {
   id: "my-rules",          // 小写字母开头，只含小写字母、数字、_、-；不能和平台自带的重名
   name: "我的玩法",
+  summary: "一句话说清楚玩什么（最多 60 字），rts-arena list 里显示",
   players: { min: 2, max: 2 },
   teams: false,            // 支持 --teams 分队时写 true，并且自己按队伍摆位置、判胜负
   maxTicks: 4000,
@@ -83,15 +86,19 @@ export default ruleset
 
 - 只能在 setup 里用：`setTerrain(rows)`（每行一个字符串，只能调一次）、`spawn(type, owner, x, y, { amount })`（owner 写 -1 是中立；位置被占会抛错）、`setResources(player, { gold: 200 })`（一次设好几种资源）。
 - setup 里也能读局面（`entities()`、`get(id)`、`entitiesIn`、`dist`、`isAlly`、`terrain`，看到的是到目前为止放下的）、用 `spawnNear` 找空位放实体（比自己记哪些格子被占了省事）、用 `remove` 删掉摆好又不要的。
-- `spawnNear(type, owner, x, y)` 的找法：(x, y) 放得下就放在那里；否则往外找，(x, y) 落在建筑或资源点里时从它的外圈开始找（所以"主基地旁边放个工人"直接写主基地的坐标就行）。单位按走路的步数往外找（不穿墙，最多 8 步），建筑按距离一圈一圈找（最多 8 圈）。找不到返回 null、什么都不放；setup 里出现这种情况 `rts-arena check` 会提醒。
+- `spawnNear(type, owner, x, y)` 的找法：(x, y) 放得下就放在那里；否则往外找，(x, y) 落在建筑或资源点里时从它的外圈开始找（所以"主基地旁边放个工人"直接写主基地的坐标就行）；单位的起点落在不能走的地形（水、墙）里时，按距离找最近能站的格子。单位按走路的步数往外找（不穿墙，最多 8 步），建筑按距离一圈一圈找（最多 8 圈）。找不到返回 null、什么都不放；setup 里出现这种情况 `rts-arena check` 会提醒。
 - `terrain` 是地形，每行一个字符串，`terrain[y][x]` 是 (x, y) 的地形字符，能不能走看你自己定义的 `terrain` 表。buildCheck 里判断"贴着路""在草地上"这类规则时用。
+- 编号：玩家编号从 0 开始，命令行、战报、对战页都写成 P0、P1……（和 `view.me`、`ctx.players[i].id` 一样）；队伍编号也从 0 开始，但显示成「队1」「队2」……（「队1」就是队伍 0）。状态文字、叠加层里写玩家时也用 P0 起，免得和平台的输出对不上。
 - `teams[p]` 是座位 p 的队伍编号，从 0 开始：命令行、战报、对战页里的「队1」就是队伍 0。不分队时 `teams[p] === p`。命令行和对战页给的分队，同一队的座位总是连在一起、队伍编号按座位从小到大（2v2 是 [0, 0, 1, 1]，3v1 是 [0, 0, 0, 1]）；哪个 bot 坐哪个座位会轮换。
 - 读：`seed`（对局种子）、`tick`、`maxTicks`、`playerCount`、`teams`、`isAlly(a, b)`、`width`、`height`、`entities()`（按创建顺序；可以筛选：`entities({ owner: 0, type: "base", kind: "building" })`，不写的项不限）、`get(id)`、`entitiesIn(x, y, w, h)`、`players`（分数、资源、是否在场）、`events`（本 tick 的 died、created、deposit、built）、`dist(a, b)`。
 - 写：`addScore(player, n)`、`setScore(player, n)`、`addResource(player, "gold", n)`（一次加一种，和 setResources 不一样）、`spawnNear(type, owner, x, y, { amount })`（找空位刷实体，找不到返回 null）、`remove(id)`（移除：回放和战报里记成"规则包移除"，不算死亡和损失；规则包和 bot 收到的 `died` 事件带 `removed: true`）、`eliminate(player)`（出局：不再调用他的 bot，实体留着，要清掉自己 remove）、`setStatus(text)`（回放顶部的一行字，最多 200 字）。
 - 叠加层 `setMarkers([...])`（回放里画，bot 看不到）：区域 `{ kind: "zone", x, y, w, h, owner, label?, color? }`（owner 是玩家编号或 null，按它上色；写了 `color: "#rrggbb"` 就用这个颜色），文字 `{ kind: "label", x, y, text, owner? }`；文字最多 40 字，最多 500 个。每次调用整个替换，不变就不用每 tick 都设。
 - 改实体：`setHp(id, hp)`（改到 0 或以下就死，击杀者算 -1）、`setOwner(id, player)`（占领、招降、变成中立 -1；命令变成 idle，生产队列清空不退钱；换主人的那一刻不检查单位上限，之后照常算进新主人的单位数，满了新主人就造不了兵）。回放会记下换主人：播放器按新主人上色，战报的关键事件里有"换主人"。
 - **中立实体**（owner -1，比如野怪）：能攻击的闲着时会自动打射程内的玩家实体。玩家的单位不会自动打它们：不管是 idle、attackMove，还是正挨着中立实体的打，都不会还手，只有 bot 下 `attack` 命令才打（RULES.md 里要提醒 bot 作者）。中立实体之间不会互相打。平时不动，用 `orderNeutral(id, order)` 指挥（只能指挥中立实体，对玩家的实体用会抛错）：`{ kind: "move", x, y }`、`{ kind: "attack", target }`、`{ kind: "attackMove", x, y }`、`{ kind: "stop" }`，命令会一直执行到完成或失效（和 bot 的同名命令一样）。被打死时 `died` 事件的 `killer` 是最后一击的玩家，可以据此给赏金。在 RULES.md 里把中立实体会做什么写清楚。
-- **放置限制**：规则包可以导出 `buildCheck(ctx, player, type, x, y)`，玩家放地基时（平台检查完位置之后、扣钱之前；钱够不够在它之后才查）调用：返回 null 允许，返回字符串就拒绝、原样告诉 bot（比如 "烽火台只能建在台址里"）。bot 的 canBuild 不知道这条规则，要在 RULES.md 里写清楚；最好把能放的地方也放进 objectives（比如列出允许的格子或区域），bot 才能自己判断，不然每个 bot 都得把你的规则抄一遍。
+- **视野**：`isVisible(player, x, y)` 查某一格现在在不在 player 那一队的视野里（没开迷雾时总是 true）。
+- **自己的事件**：`note(text, player?)` 往回放和战报的关键事件里写一条（比如 "P0 扛起了 P1 的旗"），player 是这条主要关于谁（不写是所有人）；每 tick 最多 20 条、每条 100 字，整局 2000 条。关键事件里会标"（规则包）"。
+- **死亡事件**：`died` 的 `killer` 是最后一击的玩家，-1 表示没有；最后一击是中立实体时 killer 也是 -1，但多一个 `byNeutral: true`。
+- **放置限制**：规则包可以导出 `buildCheck(ctx, player, type, x, y)`，玩家放地基时（平台检查完位置之后、扣钱之前；钱够不够在它之后才查）调用：返回 null 允许，返回字符串就拒绝、原样告诉 bot（比如 "烽火台只能建在台址里"）。bot 的 canBuild 不知道这条规则，要在 RULES.md 里写清楚；最好把能放的地方也放进 objectives（比如列出允许的格子或区域），bot 才能自己判断，不然每个 bot 都得把你的规则抄一遍。开了迷雾时注意：平台先要求占地每格都在玩家视野里，不在就直接拒绝（"不在你方视野里"），根本不会问 buildCheck；所以列给 bot 的位置要在玩家一定看得见的地方，或者说明要先派人过去（可以用 `isVisible` 在 objectives 里标出现在能不能建）。
 - 随机数用 `ctx.rng`（`next()`、`int(n)`、`shuffle(arr)`），同一个种子结果完全一样。`Math.random` 也按种子确定，但在 setup 之前（规则包的顶层代码里）每局都一样，推荐只用 `ctx.rng`。
 - 分数 `players[i].score` 的含义由你定，在 RULES.md 里写清楚；bot 能在 `view.players` 里看到每个人的分数。
 - `died` 事件里 `killer` 是最后一击的玩家（-1 表示没有），`unfinished` 表示死的是没建好的建筑。

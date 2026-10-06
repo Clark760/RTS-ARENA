@@ -23,6 +23,7 @@ function hasBase(ctx: RuleContext, player: number): boolean {
 const ruleset: Ruleset = {
   id: "__ID__",
   name: "采金赛",
+  summary: "先累计交够 600 金的赢，摧毁对方主基地也直接赢",
   players: { min: 2, max: 2 },
   maxTicks: 4000,
   tickRate: 10,

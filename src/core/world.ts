@@ -218,6 +218,7 @@ export class World implements SetupContext, RuleContext {
       moveCd: 0,
       gatherCd: 0,
       lastHitBy: -1,
+      lastHitNeutral: false,
       path: [],
       pathKey: "",
       planX: 0,
@@ -265,14 +266,14 @@ export class World implements SetupContext, RuleContext {
   }
 
   /** 实体死亡或被移除：发事件、清占位 */
-  destroy(e: EntityState, killer: number, removed = false): void {
+  destroy(e: EntityState, killer: number, removed = false, byNeutral = false): void {
     if (!e.alive) return
     e.alive = false
     this.occupy(e, 0)
     this.ents.delete(e.id)
     if (removed) this.removed.add(e.id)
     const flags = { ...(e.construction ? { unfinished: true as const } : {}), ...(removed ? { removed: true as const } : {}) }
-    this.events.push({ kind: "died", id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, killer, ...flags })
+    this.events.push({ kind: "died", id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, killer, ...flags, ...(byNeutral ? { byNeutral: true as const } : {}) })
     for (const p of this.players) {
       if (p.id === e.owner || this.visibleTo(p.id, e)) this.pushEvent(p.id, { kind: "died", tick: this.tick, id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, ...flags })
     }
@@ -307,6 +308,28 @@ export class World implements SetupContext, RuleContext {
             ties.length = 0
           }
           if (c === bestC) ties.push({ x, y })
+        }
+      if (ties.length > 0) return ties.length === 1 ? ties[0] : ties[this.simRng.int(ties.length)]
+    }
+    return null
+  }
+
+  /** 离 (x, y) 曼哈顿距离 1～maxRing 里最近的能放的格子；一样近的选离地图中心近的，再一样随机 */
+  private ringSpot(def: TypeDef, x: number, y: number, maxRing: number): { x: number; y: number } | null {
+    for (let d = 1; d <= maxRing; d++) {
+      let bestC = Number.MAX_SAFE_INTEGER
+      const ties: { x: number; y: number }[] = []
+      for (let dx = -d; dx <= d; dx++)
+        for (const dy of Math.abs(dx) === d ? [0] : [d - Math.abs(dx), -(d - Math.abs(dx))]) {
+          const px = x + dx
+          const py = y + dy
+          if (!this.canPlace(def, px, py)) continue
+          const c = Math.abs(2 * px - (this.width - 1)) + Math.abs(2 * py - (this.height - 1))
+          if (c < bestC) {
+            bestC = c
+            ties.length = 0
+          }
+          if (c === bestC) ties.push({ x: px, y: py })
         }
       if (ties.length > 0) return ties.length === 1 ? ties[0] : ties[this.simRng.int(ties.length)]
     }
@@ -469,7 +492,9 @@ export class World implements SetupContext, RuleContext {
     // (x, y) 落在建筑、资源点里：从它的外圈开始找（不然单位从建筑中间一步也走不出去）
     const inside = this.inBounds(x, y) ? this.ents.get(this.staticOcc[y * this.width + x]) : undefined
     const around = inside ? { x: inside.x, y: inside.y, w: inside.w, h: inside.h } : { x, y, w: 1, h: 1 }
-    const spot = this.findSpotAround(def, around, 8)
+    // 单位从不能走的地形（水、墙）里开始找：按距离一圈圈找最近能站的格子（按步数走不出去）
+    const blocked = !inside && def.w === 1 && def.h === 1 && (!this.inBounds(x, y) || !this.walk[y * this.width + x])
+    const spot = blocked ? this.ringSpot(def, x, y, 8) : this.findSpotAround(def, around, 8)
     if (!spot && this.tick === 0) this.notes.push(`setup 里 spawnNear("${type}", ${owner}, ${x}, ${y}) 没找到空位，返回了 null（这个实体没放下）`)
     return spot ? this.spawnLive(type, owner, spot.x, spot.y, opts?.amount).id : null
   }
@@ -542,6 +567,21 @@ export class World implements SetupContext, RuleContext {
 
   setStatus(text: string): void {
     this.status = text
+  }
+
+  isVisible(player: number, x: number, y: number): boolean {
+    if (!this.rules.fog) return true
+    if (!this.inBounds(x, y) || !this.vis[player]) return false
+    return this.vis[player][y * this.width + x] === 1
+  }
+
+  /** 这一 tick 规则包写的事件（回放记下后清空）、整局写了几条 */
+  readonly ruleNotes: { p: number; text: string }[] = []
+  private noteTotal = 0
+  note(text: string, player = -1): void {
+    if (this.ruleNotes.length >= 20 || this.noteTotal >= 2000) return
+    this.noteTotal++
+    this.ruleNotes.push({ p: Number.isInteger(player) && player >= 0 && player < this.players.length ? player : -1, text: String(text).slice(0, 100) })
   }
 
   // ---------- 结果 ----------

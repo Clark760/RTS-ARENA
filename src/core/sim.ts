@@ -130,12 +130,13 @@ function combat(w: World): void {
     const dmg = a.def.attack!.damage
     t.hp -= dmg
     t.lastHitBy = a.owner
+    t.lastHitNeutral = a.owner < 0
     w.shots.push(a.id, t.id)
     if (t.owner >= 0) w.pushEvent(t.owner, { kind: "damaged", tick: w.tick, id: t.id, by: a.id, damage: dmg })
   }
   for (let i = 1; i < hits.length; i += 2) {
     const t = hits[i]
-    if (t.alive && t.hp <= 0) w.destroy(t, t.lastHitBy)
+    if (t.alive && t.hp <= 0) w.destroy(t, t.lastHitBy, false, t.lastHitNeutral)
   }
 }
 

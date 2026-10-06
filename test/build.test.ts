@@ -5,6 +5,7 @@ import type { Commands, Entity, GameEvent, View } from "../src/api/bot-api.ts"
 import { runMatch } from "../src/core/match.ts"
 import type { Replay, Ruleset, TypeSpec } from "../src/core/types.ts"
 import { STANDARD_TERRAIN } from "../rulesets/common/standard.ts"
+import { World } from "../src/core/world.ts"
 import { fnBot } from "./helpers.ts"
 
 const look = { shape: "circle" as const }
@@ -206,6 +207,19 @@ test("建造：有迷雾时只能建在视野里，拒绝原因不暴露看不�
   assert.equal(r.length, 2)
   assert.equal(r[0].replace(/\(\d+, \d+\)/, "#"), r[1].replace(/\(\d+, \d+\)/, "#"), "两种情况的拒绝原因一样")
   assert.match(r[0], /视野/)
+})
+
+test("spawnNear：单位的起点在水里时找最近能站的格子", () => {
+  const rows = ["..~~~...", "..~~~...", "..~~~...", "........"]
+  const rules = mini(rows, [["hq", 0, 7, 0], ["hq", 1, 7, 3]])
+  const w = new World(rules, ["a", "b"], 1)
+  rules.setup(w)
+  const id = w.spawnNear("peon", 0, 3, 1)
+  assert.ok(id !== null)
+  const e = w.ents.get(id!)!
+  assert.equal(rows[e.y][e.x], ".")
+  assert.equal(Math.abs(e.x - 3) + Math.abs(e.y - 1), 2)
+  assert.equal(w.notes.length, 0)
 })
 
 test("建造：地基被打掉，去建它的工人变 idle", () => {

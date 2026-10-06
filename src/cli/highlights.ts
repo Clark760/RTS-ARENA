@@ -148,8 +148,10 @@ export function gameFacts(replay: Replay): GameFacts {
   }
   const big = groups.filter((g) => g.xs.length >= 3)
 
+  // 险胜看赢家里主建筑活到最后的（分队时队友已经出局的不算"差点被拆"）
   const winnerSeats = replay.players.map((_, p) => p).filter((p) => winner !== null && side(p) === winner)
-  const mins = winnerSeats.map((p) => baseMin.get(p)).filter((v): v is number => v !== undefined)
+  const alive = winnerSeats.filter((p) => mainOf.has(p) && s.ents.has(mainOf.get(p)!))
+  const mins = (alive.length ? alive : winnerSeats).map((p) => baseMin.get(p)).filter((v): v is number => v !== undefined)
   return {
     sides,
     winner,
@@ -205,7 +207,8 @@ export function excitement(f: GameFacts, upset: { level: number; text: string } 
             ? `险胜：${W} 的主基地一度只剩 ${Math.round(f.winnerBaseMin! * 100)}% 血`
             : null,
   })
-  if (upset) parts.push({ v: 20 * upset.level, text: upset.level >= 0.25 ? upset.text : null })
+  // 爆冷：得分率差 20 个百分点以上才写出来（差得少的只是正常波动）
+  if (upset) parts.push({ v: 20 * upset.level, text: upset.level >= 0.5 ? upset.text : null })
   let score = Math.min(100, parts.reduce((a, p) => a + p.v, 0))
   const quiet = f.battles === 0 && f.killedRatio < 0.05
   if (quiet) score -= 20
@@ -232,11 +235,15 @@ export interface Highlight {
   reasons: string[]
 }
 
-/** 挑精彩对局：按精彩度从高到低，同一组对手最多 2 局，太平淡的（不到 20 分）不要；最多 limit 局 */
-export function pickHighlights(all: (Highlight & { key: string })[], limit: number): Highlight[] {
+/**
+ * 挑精彩对局：按精彩度从高到低，同一组对手最多 2 局，太平淡的（不到 20 分）不要；最多 limit 局。
+ * prefer 为 true 的局（在 bot 目录里跑联赛时，有自己的 bot 的局）排序时多算 15 分
+ */
+export function pickHighlights(all: (Highlight & { key: string })[], limit: number, prefer: (h: Highlight) => boolean = () => false): Highlight[] {
   const per = new Map<string, number>()
   const out: Highlight[] = []
-  for (const h of [...all].sort((a, b) => b.score - a.score || a.index - b.index)) {
+  const rank = (h: Highlight) => h.score + (prefer(h) ? 15 : 0)
+  for (const h of [...all].sort((a, b) => rank(b) - rank(a) || a.index - b.index)) {
     if (out.length >= limit || h.score < 20) break
     if ((per.get(h.key) ?? 0) >= 2) continue
     per.set(h.key, (per.get(h.key) ?? 0) + 1)

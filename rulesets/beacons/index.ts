@@ -112,6 +112,7 @@ function hasBase(ctx: RuleContext, player: number): boolean {
 const ruleset: Ruleset = {
   id: "beacons",
   name: "烽火台",
+  summary: "清掉台址里的野怪和守卫，建烽火台独占台址计分，先到 400 分",
   players: { min: 2, max: 2 },
   teams: false,
   maxTicks: 4000,

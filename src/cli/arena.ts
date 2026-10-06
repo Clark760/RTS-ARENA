@@ -486,7 +486,8 @@ const botsBrief = (replay: Replay) =>
  * 同一桌每轮用同一个种子轮换位置；先把每桌的第 1 局都打完再打第 2 局，中途停下时各桌打的局数差不多。
  * 出排行榜（名次分、得分率、等级分）、对阵表（分队时还有搭档表）和统计
  */
-async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: Record<string, string | true>): Promise<void> {
+/** mine：在 bot 目录里跑的，第一个参赛者是自己的 bot */
+async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: Record<string, string | true>, mine = false): Promise<void> {
   const { min, max } = rules.players
   const intOpt = (key: string): number | undefined => {
     const v = opt[key]
@@ -607,7 +608,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
         : `每局 ${players} 人，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? "轮换座位" : notFull}）`
       : mode === "mixed"
         ? `分队 ${teamSpec}、轮换搭档，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? `每种分法都打${equalSizes ? "、各队轮换位置" : ""}` : notFull}）`
-        : `分队 ${teamSpec}、每队是同一个 bot，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? "轮换位置" : notFull}）`
+        : `分队 ${teamSpec}、每队是同一个 bot${partnersOpt === undefined ? `（bot 不够一局的 ${players} 人，自动用这种，没有搭档表；要轮换搭档就给够 ${players} 个 bot）` : ""}，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? "轮换位置" : notFull}）`
   say(`联赛：${rules.name}（${rules.id}），${N} 个 bot（${labels.join("、")}），${how}，共 ${total} 局，种子从 ${baseSeed} 起`)
 
   const record: LeagueGame[] = []
@@ -646,7 +647,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
         const winTeams = [...new Set(won.map((p) => teams![p]))]
         outcome = winTeams.length === 1 ? `队${winTeams[0] + 1} 赢` : "平局"
       }
-      say(`第 ${index}/${total} 局  ${lineup}  种子 ${seed}：${outcome}（第 ${replay.result.tick} tick，${replay.result.reason}）  用时 ${(ms / 1000).toFixed(1)} 秒`)
+      say(`第 ${index}/${total} 局  ${lineup}  种子 ${seed}：${outcome}（第 ${replay.result.tick} tick，${replay.result.reason}）  用时 ${(ms / 1000).toFixed(1)} 秒  ${basename(file)}`)
       const entry = {
         type: "game",
         index,
@@ -672,7 +673,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
       emit0({ type: "standings", ...series.standings, stats: series.stats })
     }
   const st = leagueStandings(labels, record)
-  const highlights = leagueHighlights(played, st, labels)
+  const highlights = leagueHighlights(played, st, labels, mine ? 0 : undefined)
   series.summary = {
     type: "summary",
     league: true,
@@ -696,6 +697,19 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
     console.log("\n" + standingsText(labels, st, { multi: sides > 2 || mode === "mixed", teams: mode === "mixed" }))
     console.log("\n" + statsText(stats.toJSON(), st))
     console.log("\n" + highlightsText(highlights))
+    if (mine) {
+      // 自己的 bot 输掉的局（没拿到第一的），方便直接去看回放
+      const lost = played.filter((g) => {
+        const side = (i: number) => g.sideOf[g.seats.indexOf(i)]
+        return g.seats.includes(0) && g.facts.winner !== side(0)
+      })
+      console.log(`\n## 你的 bot（${labels[0]}）没拿到第一的局：${lost.length} 局`)
+      for (const g of lost.slice(0, 12)) {
+        const foes = [...new Set(g.seats.filter((i) => i !== 0))].map((i) => labels[i]).join("、")
+        console.log(`  第 ${g.index} 局 对 ${foes}（${g.facts.winner === null ? "平局" : "输了"}，第 ${g.tick} tick）  ${g.replay}`)
+      }
+      if (lost.length > 12) console.log(`  另有 ${lost.length - 12} 局`)
+    }
   }
   say(`\n回放和每个 bot 的日志在 ${outDir}；排名和统计记在 ${relative(process.cwd(), seriesFile)}；看某一局：rts-arena report <回放>`)
 }
@@ -720,6 +734,7 @@ function leagueHighlights(
   played: { index: number; seed: number; replay: string; tick: number; seats: number[]; sideOf: number[]; facts: GameFacts }[],
   st: LeagueResult,
   labels: string[],
+  mine?: number,
 ): Highlight[] {
   const rate = new Map(st.table.map((s) => [s.index, s.rate]))
   const all = played.map((g) => {
@@ -757,7 +772,8 @@ function leagueHighlights(
         .join("|"),
     }
   })
-  return pickHighlights(all, Math.min(5, Math.max(1, Math.round(played.length / 4))))
+  const byIndex = new Map(played.map((g) => [g.index, g]))
+  return pickHighlights(all, Math.min(5, Math.max(1, Math.round(played.length / 4))), (h) => mine !== undefined && !!byIndex.get(h.index)?.seats.includes(mine))
 }
 
 function highlightsText(list: Highlight[]): string {
@@ -881,6 +897,14 @@ async function cmdCheck(rules: Ruleset, src: RulesetRef, args: string[], opt: Re
       } else {
         console.log(`${where}：试打 ${replay.result.tick} tick 通过（调用 ${st.calls} 次，燃料最高 ${st.fuelMax}，被拒命令 ${st.rejected}）`)
       }
+      // bot 自己的 console.log：第一个位置上打印前几行（onStart 里打的也在）
+      if (seat === 0) {
+        const logs = replay.frames.flatMap((f) => (f.logs ?? []).filter((l) => l.p === seat).flatMap((l) => l.text.map((t) => `t${f.t} ${t}`)))
+        if (logs.length) {
+          console.log(`  bot 的日志（前 ${Math.min(5, logs.length)} 行，共 ${logs.length} 行）：`)
+          for (const l of logs.slice(0, 5)) console.log(`    ${l.slice(0, 200)}`)
+        }
+      }
       for (const line of errs.slice(0, 5)) console.log(`  ${line.split("\n").slice(0, 3).join(" | ")}`)
       if (errs.length > 5) console.log(`  另有 ${errs.length - 5} 条，见 run 的回放`)
     }
@@ -993,17 +1017,20 @@ async function cmdCheckRules(src: RulesetRef, opt: Record<string, string | true>
   }
   // 整局：打到底看结束判定。有 baseline 时它在第一个、最后一个座位各打一次不动的对手，再自己打自己一次
   const m = rules.players.min
-  const full: { label: string; seats: number[] }[] = baseline
+  const team4 = rules.teams && rules.players.min <= 4 && rules.players.max >= 4
+  const full: { label: string; seats: number[]; n?: number; teams?: number[] }[] = baseline
     ? [
         { label: "P0 是 baseline、其余不动", seats: [0] },
         ...(m > 1 ? [{ label: `P${m - 1} 是 baseline、其余不动`, seats: [m - 1] }] : []),
         { label: "全是 baseline", seats: [...Array(m).keys()] },
+        // 分队的胜负判定最容易出错：完整打一局 2v2
+        ...(team4 ? [{ label: "分队 2v2，P0、P1 是 baseline，P2、P3 不动", seats: [0, 1], n: 4, teams: [0, 0, 1, 1] }] : []),
       ]
     : [{ label: "都是不动的 bot", seats: [] }]
   for (const [i, c] of full.entries()) {
     try {
       const t0 = performance.now()
-      const replay = runMatch({ ruleset: rules, bots: await lineup(m, 2 + i, c.seats), seed: 2 + i })
+      const replay = runMatch({ ruleset: rules, bots: await lineup(c.n ?? m, 2 + i, c.seats), seed: 2 + i, teams: c.teams })
       const r = replay.result
       console.log(`整局（${c.label}）：第 ${r.tick} tick 结束，${r.winners?.length ? `赢家 ${r.winners.map((p) => `P${p}`).join("、")}` : "平局"}——${r.reason}（用时 ${((performance.now() - t0) / 1000).toFixed(1)} 秒）`)
     } catch (e) {
@@ -1080,7 +1107,8 @@ async function main(): Promise<void> {
       }
       for (const id of listRulesets()) {
         const { rules: r, src } = await loadRuleset(id)
-        console.log(`${id}\t${r.name}\t${r.players.min}~${r.players.max} 人\t现成 bot：${knownBots(src).join("、")}`)
+        console.log(`${id}\t${r.name}\t${r.players.min}~${r.players.max} 人${r.teams ? "、可分队" : ""}\t${r.summary ?? ""}`)
+        console.log(`\t参考 bot：${knownBots(src).join("、")}`)
       }
       console.log("（rts-arena list <规则包> 看每个参考 bot 的打法；自己写的规则包用目录路径，比如 rts-arena run ./my-rules a.ts b.ts；rts-arena new-rules <目录> 建一个）")
       return
@@ -1166,7 +1194,7 @@ async function main(): Promise<void> {
       const t = await target(pos, "league")
       // 只写了自己的 bot（或者只写了规则包）：和这个规则包所有现成的 bot 打（不算 idle）
       if (t.bots.length <= 1) for (const b of knownBots(t.src)) if (b !== "idle") t.bots.push(b)
-      await cmdLeague(t.rules, t.src, t.bots, opt)
+      await cmdLeague(t.rules, t.src, t.bots, opt, t.mine)
       return
     }
     case "view": {

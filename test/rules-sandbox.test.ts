@@ -33,7 +33,7 @@ function stable(r: Replay): string {
   return JSON.stringify({ ...r, perf: null, bots: r.bots.map((b) => ({ ...b, ms: 0 })) })
 }
 
-for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "beacons", "wild-herd", "caravan-raid"]) {
+for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "beacons", "wild-herd", "caravan-raid", "flag-run"]) {
   test(`自带规则包「${id}」放进沙箱，回放和直接跑完全一样`, async () => {
     const native = await importRuleset(id)
     const boxed = await loadSandboxedRuleset(join(ROOT, "rulesets", id))
@@ -82,7 +82,7 @@ test("ctx.entities 的筛选：沙箱里不管有没有全量快照，结果都�
 })
 
 test("自带规则包的定义都能通过沙箱规则包的格式检查", async () => {
-  for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "beacons", "wild-herd", "caravan-raid"]) {
+  for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "beacons", "wild-herd", "caravan-raid", "flag-run"]) {
     const r = await importRuleset(id)
     const fns = ["setup", "onTick", "objectives", "result", "timeUp"].filter((f) => typeof (r as unknown as Record<string, unknown>)[f] === "function")
     assert.deepEqual(checkRulesetData(JSON.parse(JSON.stringify(r)), fns), [], id)
@@ -364,6 +364,22 @@ test("ctx.remove 在回放里记成移除，战报和联赛统计不算死亡；
   assert.match(statsText(json, leagueStandings(["a", "b"], games)), /规则包统计[^\n]*\n {2}bot +测试\n {2}a +1\.5/)
   // stats 格式不对
   assert.match(checkResult({ winner: 0, reason: "x", stats: { a: [1] } }, 2, false) ?? "", /2 个数的数组/)
+})
+
+test("规则包写的事件进回放和战报；被中立实体打死的 died 带 byNeutral；isVisible；summary 太长被拒", async () => {
+  const dir = rules({
+    types: CREEP_TYPES,
+    setup: `ctx.spawn("creep", -1, 2, 1)`,
+    onTick: `if (ctx.tick === 1) ctx.note("测试事件 " + ctx.isVisible(0, 5, 5), 0)
+      for (const ev of ctx.events) if (ev.kind === "died" && ev.byNeutral === true) ctx.note("中立打死了 " + ev.type + " " + ev.killer)`,
+  })
+  const replay = await play(dir)
+  const notes = replay.frames.flatMap((f) => (f.notes ?? []).map((n) => `${n.p}:${n.text}`))
+  assert.deepEqual(notes, ["0:测试事件 true", "-1:中立打死了 hq -1"])
+  const text = buildReport(replay, { player: 0 })
+  assert.match(text, /（规则包）测试事件 true/)
+  assert.match(text, /你失去 hq \(1, 1\)，被中立实体打死/)
+  await assert.rejects(loadSandboxedRuleset(rules({ extra: `summary: "${"长".repeat(61)}",` }), quiet), /summary/)
 })
 
 test("区域叠加层可以自定颜色；颜色格式不对被拒", async () => {

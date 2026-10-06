@@ -414,6 +414,12 @@ class RulesBox {
         w().setStatus(clip(str(h, "状态文字", 100_000), RULES_LIMITS.statusChars))
         return undefined
       },
+      isVisible: (p, x, y) => n(w().isVisible(player(p), int(x, "x"), int(y, "y")) ? 1 : 0),
+      note: (h, p) => {
+        const who = p && vm.typeof(p) === "number" ? int(p, "玩家编号") : -1
+        w().note(str(h, "事件文字", 10_000), who)
+        return undefined
+      },
       entities: () => s(JSON.stringify(w().entities().map(entJson))),
       entitiesWhere: (h) => {
         const f = json(h, "筛选条件", 1000) as Record<string, unknown> | null

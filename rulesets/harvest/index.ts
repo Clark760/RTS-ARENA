@@ -14,6 +14,7 @@ types.barracks.maxHp = 0
 const ruleset: Ruleset = {
   id: "harvest",
   name: "采集竞速",
+  summary: "比谁先采够 1500 金交回主基地，建筑打不坏，可以出兵骚扰对方工人",
   players: { min: 2, max: 2 },
   maxTicks: 4000,
   tickRate: 10,

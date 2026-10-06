@@ -300,6 +300,7 @@ function markers(ctx: RuleContext): void {
 const ruleset: Ruleset = {
   id: "wild-herd",
   name: "牧野争牛",
+  summary: "驯服荒原上游荡的野牛赶回牧栏得分，可以偷别人的牛，狼群专冲领先的队",
   players: { min: 2, max: 4 },
   teams: true,
   maxTicks: 6000,

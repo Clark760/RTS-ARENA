@@ -33,6 +33,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
 
   if (typeof d.id !== "string" || !/^[a-z][a-z0-9_-]{0,31}$/.test(d.id)) bad("id 要是小写字母开头、只含小写字母数字 _ - 的字符串（最长 32）")
   if (typeof d.name !== "string" || d.name.length === 0 || d.name.length > 40) bad("name 要是 1～40 字的字符串")
+  if (d.summary !== undefined && (typeof d.summary !== "string" || d.summary.length > 60)) bad("summary 要是最长 60 字的字符串（一句话玩法简介）")
   const players = d.players
   if (!isObj(players) || !isInt(players.min, 1, RULES_HARD.players) || !isInt(players.max, 1, RULES_HARD.players) || players.min > players.max)
     bad(`players 要写成 { min, max }，1 ≤ min ≤ max ≤ ${RULES_HARD.players}`)

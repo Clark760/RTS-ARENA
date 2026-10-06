@@ -83,7 +83,10 @@ test("命令行 league：两两循环、换边，写汇总和每局回放；bot 
     // bot 目录：自己的 bot + 所有现成 bot（不含 idle）
     sh(["init", "koth", "me"], dir)
     const mine = sh(["league", "--per-pair", "1", "--no-check"], join(dir, "me"))
-    assert.match(mine, /6 个 bot（me、baseline、boom、hold、rush、sneak）/)
+    assert.match(mine, /7 个 bot（me、baseline、boom、hold、rush、sneak、steady）/)
+    // 在 bot 目录里：列出自己的 bot 没拿到第一的局；逐局那行带回放文件名
+    assert.match(mine, /## 你的 bot（me）没拿到第一的局：\d+ 局/)
+    assert.match(mine, /^第 1\/\d+ 局 .*koth-[\w-]+-g1\.json$/m)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

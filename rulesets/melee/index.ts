@@ -126,6 +126,7 @@ function teamName(ctx: RuleContext, team: number): string {
 const ruleset: Ruleset = {
   id: "melee",
   name: "混战",
+  summary: "2～4 人各占一角混战，主基地被拆就出局，最后剩下的一队赢",
   players: { min: 2, max: 4 },
   teams: true,
   maxTicks: 8000,

@@ -241,6 +241,7 @@ function stepCaravan(ctx: RuleContext, id: number, st: CaravanState): void {
 const ruleset: Ruleset = {
   id: "caravan-raid",
   name: "劫镖",
+  summary: "劫下商路上过境的中立商队、押回家交货得分，押运途中会被别人抢走",
   players: { min: 2, max: 4 },
   teams: true,
   maxTicks: 4000,

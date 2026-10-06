@@ -130,6 +130,7 @@ export function setupWorld(rules: Ruleset, n: number, teams?: number[]): World {
 export function lineups(rules: Ruleset): { label: string; n: number; teams?: number[] }[] {
   const out: { label: string; n: number; teams?: number[] }[] = []
   for (let n = Math.max(1, rules.players.min); n <= rules.players.max; n++) out.push({ label: `${n} 人`, n })
+  if (rules.teams && rules.players.min <= 3 && rules.players.max >= 3) out.push({ label: "分队 2v1（P0、P1 一队，P2 一队）", n: 3, teams: [0, 0, 1] })
   if (rules.teams && rules.players.min <= 4 && rules.players.max >= 4) out.push({ label: "分队 2v2（P0、P1 一队，P2、P3 一队）", n: 4, teams: [0, 0, 1, 1] })
   return out
 }
@@ -246,10 +247,18 @@ function botsSection(dir: string): string {
     "|---|---|",
     ...rows,
     "",
-    "- `baseline` 是基准：经济、防守、集火都做全了的标准对手，先打赢它。但只对着一个对手调出来的 bot 容易过拟合（专门克制它的打法，换个对手就输），每改一版都用 `rts-arena league` 和所有参考 bot 打一遍，看总的得分率，别只看对 baseline 的胜率。",
+    "- `baseline` 是基准（这个规则包的标准对手），先打赢它。但只对着一个对手调出来的 bot 容易过拟合（专门克制它的打法，换个对手就输），每改一版都用 `rts-arena league` 和所有参考 bot 打一遍，看总的得分率，别只看对 baseline 的胜率。",
     "- 想要别的打法当陪练，可以自己再写几个（比如照着你担心的打法写），和参考 bot 一起放进联赛。",
     "- 参考 bot 的源码随规则包发布，在规则包目录的 `bots/` 里（平台自带的规则包在 rts-arena 安装目录的 `rulesets/<规则包>/bots/`）。",
   ].join("\n")
+}
+
+/** 谁能建造什么；没有能建造的单位时直接说，免得 bot 作者去试 */
+function buildersLine(rules: Ruleset): string {
+  const list = Object.entries(rules.types)
+    .filter(([, t]) => (t.builds ?? []).length > 0)
+    .map(([k, t]) => `${k} 能建 ${(t.builds ?? []).join("、")}`)
+  return list.length ? `- 建造：${list.join("；")}（见平台通用说明的「建造」）` : "- 建造：这个规则包没有能建造的单位，cmd.build 用不上（平台通用说明里的「建造」一节可以跳过）"
 }
 
 export function buildPrompt(rules: Ruleset, dir: string, dts: string): string {
@@ -266,6 +275,7 @@ export function buildPrompt(rules: Ruleset, dir: string, dts: string): string {
     `- 战争迷雾：${rules.fog ? "有" : "无"}`,
     `- 资源：${rules.resources.join("、")}`,
     `- 地形：${terrain}`,
+    buildersLine(rules),
   ].join("\n")
   return [
     `# 「${rules.name}」bot 编写说明`,

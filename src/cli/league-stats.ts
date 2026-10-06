@@ -275,10 +275,9 @@ export function statsText(stats: LeagueStatsJson, result: LeagueResult): string 
   lines.push("", "结束原因（数字不一样的算一类，后面是其中一局的原话）")
   for (const r of stats.reasons.slice(0, 8)) lines.push(`  ×${r.n}  ${r.example ?? r.reason}${r.n > 1 && r.example && r.example !== r.reason ? "  等" : ""}`)
   if (stats.reasons.length > 8) lines.push(`  另有 ${stats.reasons.length - 8} 种`)
-  if (stats.timeUps?.length) {
-    lines.push("", "打到时间上限才结束的对局")
-    for (const t of stats.timeUps.slice(0, 8)) lines.push(`  ×${t.n}  ${t.who}`)
-    if (stats.timeUps.length > 8) lines.push(`  另有 ${stats.timeUps.length - 8} 组`)
-  }
+  lines.push("", "打到时间上限才结束的对局")
+  if (!stats.timeUps?.length) lines.push("  没有")
+  for (const t of (stats.timeUps ?? []).slice(0, 8)) lines.push(`  ×${t.n}  ${t.who}`)
+  if ((stats.timeUps?.length ?? 0) > 8) lines.push(`  另有 ${stats.timeUps.length - 8} 组`)
   return lines.join("\n")
 }

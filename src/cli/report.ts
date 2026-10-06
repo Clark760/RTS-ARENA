@@ -47,6 +47,10 @@ interface IdleSpan {
   y: number
   /** 闲下来之前在做什么 */
   before: string
+  /** 闲下来时在哪、在不在规则包标出的区域里 */
+  sx: number
+  sy: number
+  zone: string | null
 }
 
 /** 报错和被拒命令按种类汇总（数字归一后算同一种），最多的在前 */
@@ -159,12 +163,14 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   /** 工人最后一个不是 idle 的命令；闲下来时记下当时在做什么 */
   const lastOrd = new Map<number, string>()
   const idleBefore = new Map<number, string>()
+  const idleAt = new Map<number, { x: number; y: number; zone: string | null }>()
   const at = (e: { x: number; y: number }) => `(${e.x}, ${e.y})`
   const closeIdle = (e: EntSnap, t: number) => {
     const from = idleFrom.get(e.id)
     if (from === undefined) return
     idleFrom.delete(e.id)
-    if (t - from >= LONG_IDLE) idleSpans.push({ id: e.id, type: e.type, owner: e.owner, from, to: t, x: e.x, y: e.y, before: idleBefore.get(e.id) ?? "" })
+    const st = idleAt.get(e.id) ?? { x: e.x, y: e.y, zone: null }
+    if (t - from >= LONG_IDLE) idleSpans.push({ id: e.id, type: e.type, owner: e.owner, from, to: t, x: e.x, y: e.y, before: idleBefore.get(e.id) ?? "", sx: st.x, sy: st.y, zone: st.zone })
   }
   const startIdle = (id: number, t: number, born: string) => {
     if (idleFrom.has(id)) return
@@ -172,6 +178,11 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     const o = lastOrd.get(id)
     const m = o ? /#(\d+)/.exec(o) : null
     idleBefore.set(id, o ? `闲下来之前在 ${o}${m && !s.ents.has(Number(m[1])) ? `（#${m[1]} 这时已经没了）` : ""}` : born)
+    const e = s.ents.get(id)
+    if (e) {
+      const z = s.markers.find((mk) => mk.kind === "zone" && e.x >= mk.x && e.x < mk.x + mk.w && e.y >= mk.y && e.y < mk.y + mk.h)
+      idleAt.set(id, { x: e.x, y: e.y, zone: z && z.kind === "zone" ? (z.label ?? "") : null })
+    }
   }
   for (const e of s.ents.values()) {
     if (e.owner < 0 || !isWorker(e.type)) continue
@@ -186,7 +197,8 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       const a = s.ents.get(sh[i])
       const tg = s.ents.get(sh[i + 1])
       if (!a || !tg) continue
-      if (a.owner >= 0) lastHit.set(tg.id, a.owner)
+      // 最后一击：玩家编号；中立实体打的记 -2
+      lastHit.set(tg.id, a.owner >= 0 ? a.owner : -2)
       if (!enemies(a.owner, tg.owner)) continue
       if (firstContact < 0) {
         firstContact = f.t
@@ -215,20 +227,41 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       }
       const by = lastHit.get(id) ?? -1
       deaths.push({ t: f.t, owner: e.owner, type: e.type, x: e.x, y: e.y, by, ord: e.ord })
-      const byText = by >= 0 ? `，最后一击是 P${by}` : ""
+      const byText = by >= 0 ? `，最后一击是 P${by}` : by === -2 ? "，被中立实体打死" : ""
       if (e.owner < 0) events.push({ t: f.t, p: -1, text: `中立的 ${e.type} 死了 ${at(e)}${byText}` })
       else if (kind(e.type) === "building") events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}失去 ${e.type}${e.bp !== undefined ? "（还没建好）" : ""} ${at(e)}${byText}` })
     }
+    for (const nt of f.notes ?? []) events.push({ t: f.t, p: nt.p, text: `（规则包）${nt.text}`, cat: "key" })
     const delta = applyFrame(s, f)
+    // 换主人：同一 tick、同一对主人之间换了好几个（比如出局时整队交给队友）合成一行
+    const moves = new Map<string, { from: number; to: number; ents: EntSnap[] }>()
     for (const o of delta.owned) {
       const e = s.ents.get(o.id)!
-      const to = e.owner < 0 ? "中立" : e.owner === me ? "你" : " " + who0(e.owner)
-      events.push({ t: f.t, p: -1, text: `${o.from < 0 ? "中立" : who(o.from)}的 ${e.type} #${e.id} ${at(e)} 换主人，归了${to}`, cat: "key" })
+      const k = `${o.from}>${e.owner}`
+      const g = moves.get(k) ?? { from: o.from, to: e.owner, ents: [] }
+      g.ents.push(e)
+      moves.set(k, g)
       if (e.owner >= 0 && e.owner < n && isArmy(e.type) && firstArmy[e.owner] < 0) firstArmy[e.owner] = f.t
       if (e.owner < 0) idleFrom.delete(e.id)
     }
+    for (const g of moves.values()) {
+      const to = g.to < 0 ? "中立" : g.to === me ? "你" : " " + who0(g.to)
+      const from = g.from < 0 ? "中立" : who(g.from)
+      if (g.ents.length <= 2)
+        for (const e of g.ents) events.push({ t: f.t, p: -1, text: `${from}的 ${e.type} #${e.id} ${at(e)} 换主人，归了${to}`, cat: "key" })
+      else {
+        const m = new Map<string, number>()
+        for (const e of g.ents) m.set(e.type, (m.get(e.type) ?? 0) + 1)
+        events.push({ t: f.t, p: -1, text: `${from}的 ${g.ents.length} 个实体（${countList(m)}）换主人，归了${to}`, cat: "key" })
+      }
+    }
     for (const e of f.spawn ?? []) {
       if (initialIds.has(e.id) || e.owner < 0 || e.owner >= n) continue
+      // 玩家放的地基一出来就有建造进度；直接是建好的建筑，是规则包放的
+      if (kind(e.type) === "building" && e.bp === undefined) {
+        events.push({ t: f.t, p: e.owner, text: `规则包给${e.owner === me ? "你" : ` ${who0(e.owner)} `}放了 ${e.type} ${at(e)}` })
+        continue
+      }
       const cost = types[e.type]?.cost ?? {}
       for (const [r, c] of Object.entries(cost)) {
         spent[e.owner].set(r, (spent[e.owner].get(r) ?? 0) + (c ?? 0))
@@ -275,7 +308,9 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   out.push(`参赛：${replay.players.map((p, i) => `P${i} ${p.name}${n > 2 && new Set(replay.players.map((x) => x.team)).size < n ? `（队${team(i) + 1}）` : ""}`).join("，")}${me !== undefined ? `；你是 P${me}` : ""}`)
   out.push("")
 
-  out.push(`## 局势（每 ${every} tick；收入是这一段采到的，估算；单位后面括号里是闲着的个数，建筑括号里是没建好的个数）`)
+  out.push(
+    `## 局势（每 ${every} tick；收入是这一段采到的，估算：生产队列里还没造出来的已经扣了钱、还没算进花费，所以偶尔是负数；单位后面括号里是闲着的个数，建筑括号里是没建好的个数）`,
+  )
   samples.forEach((smp, i) => {
     for (let p = 0; p < n; p++) {
       const ps = smp.players[p]
@@ -284,7 +319,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       const units = [...ps.units].map(([k, u]) => `${k}×${u.n}${u.idle ? `（闲 ${u.idle}）` : ""}`).join(" ") || "无"
       const blds = [...ps.buildings].map(([k, b]) => `${k}×${b.n}${b.building ? `（${b.building}）` : ""}`).join(" ") || "无"
       const head = p === 0 ? `t${smp.t}`.padEnd(7) : "".padEnd(7)
-      out.push(`${head} ${who0(p)}${ps.alive ? "" : "（已出局）"}：${fmtRes(ps.res)}${prev ? `（收入 +${Math.round(income)}）` : ""}，分 ${Math.round(ps.score)} | 单位 ${units} | 建筑 ${blds}`)
+      out.push(`${head} ${who0(p)}${ps.alive ? "" : "（已出局）"}：${fmtRes(ps.res)}${prev ? `（收入 ${income < 0 ? "−" : "+"}${Math.abs(Math.round(income))}）` : ""}，分 ${Math.round(ps.score)} | 单位 ${units} | 建筑 ${blds}`)
     }
   })
   out.push("")
@@ -407,10 +442,13 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     if (avgIdle >= 1.5) hints.push(`抽样时平均有 ${avgIdle.toFixed(1)} 个工人闲着（命令是 idle）：没去采集、也没在建造`)
     const longest = idleSpans.filter((sp) => sp.owner === p).sort((a, b) => b.to - b.from - (a.to - a.from))
     for (const sp of longest.slice(0, 3))
-      hints.push(`${sp.type} #${sp.id} 从 t${sp.from} 闲到 t${sp.to}（${sp.to - sp.from} tick），${sp.to === last ? "最后" : "当时"}在 (${sp.x}, ${sp.y})；${sp.before}`)
+      hints.push(
+        `${sp.type} #${sp.id} 从 t${sp.from} 闲到 t${sp.to}（${sp.to - sp.from} tick），闲下来时在 (${sp.sx}, ${sp.sy})${sp.sx !== sp.x || sp.sy !== sp.y ? `，${sp.to === last ? "最后" : "当时"}在 (${sp.x}, ${sp.y})` : ""}；${sp.before}${sp.zone !== null ? `（站在规则包标出的区域${sp.zone ? `「${sp.zone}」` : ""}里，可能是故意的）` : ""}`,
+      )
     if (longest.length > 3) hints.push(`另有 ${longest.length - 3} 段工人闲了 ${LONG_IDLE} tick 以上`)
     const cheapest = Math.min(...Object.values(types).map((t) => Object.values(t.cost ?? {}).reduce((a: number, c) => a + (c ?? 0), 0)).filter((c) => c > 0))
-    const avgBank = after.reduce((a, smp) => a + sum(smp.players[p].res), 0) / Math.max(1, after.length)
+    const inGame = after.filter((smp) => smp.players[p].alive)
+    const avgBank = inGame.reduce((a, smp) => a + sum(smp.players[p].res), 0) / Math.max(1, inGame.length)
     if (Number.isFinite(cheapest) && avgBank >= cheapest * 4) hints.push(`钱囤着没花：抽样时平均手上留着 ${Math.round(avgBank)}（最便宜的东西才 ${cheapest}）`)
     if (firstHitDealt[p] < 0 && firstHitTaken[p] >= 0) hints.push("整局没打到过敌人，只挨了打")
     // 同一个位置的建筑反复被拆

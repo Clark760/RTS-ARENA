@@ -23,6 +23,7 @@ function baseHp(ctx: RuleContext, p: number): number {
 const ruleset: Ruleset = {
   id: "annihilation",
   name: "歼灭",
+  summary: "两人对战，采矿、出兵，摧毁对方主基地获胜",
   players: { min: 2, max: 2 },
   maxTicks: 6000,
   tickRate: 10,

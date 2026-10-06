@@ -86,8 +86,11 @@ export interface EntityFilter {
 /** 规则包发给自己的事件（本 tick 内发生的） */
 export type RuleEvent =
   /** killer 是最后一击的玩家，-1 表示没有（如资源采完、规则移除、拆掉自己的地基）；unfinished 表示死的是没建好的建筑 */
-  /** removed 为 true 表示是规则包用 remove 移除的（不是打死的），killer 是 -1 */
-  | { kind: "died"; id: number; type: string; owner: number; x: number; y: number; killer: number; unfinished?: true; removed?: true }
+  /**
+   * removed 为 true 表示是规则包用 remove 移除的（不是打死的），killer 是 -1；
+   * byNeutral 为 true 表示最后一击是中立实体（killer 也是 -1，用它和"没有凶手"区分）
+   */
+  | { kind: "died"; id: number; type: string; owner: number; x: number; y: number; killer: number; unfinished?: true; removed?: true; byNeutral?: true }
   | { kind: "created"; id: number; type: string; owner: number }
   | { kind: "deposit"; player: number; resource: string; amount: number; by: number }
   /** 工人建造的建筑建好了（放下地基时是 created） */
@@ -178,11 +181,23 @@ export interface RuleContext {
   setMarkers(markers: Marker[]): void
   /** 回放顶部显示的一行状态文字 */
   setStatus(text: string): void
+  /**
+   * (x, y) 这一格现在在不在 player 那一队的视野里（没开迷雾时总是 true）。玩家放地基时平台先要求占地每格都看得见，
+   * 然后才问 buildCheck，所以列给 bot 的建造位置要保证玩家看得见；用它在 objectives 里标出现在能不能建
+   */
+  isVisible(player: number, x: number, y: number): boolean
+  /**
+   * 往回放和战报的关键事件里写一条规则包自己的事（比如"P0 扛起了 P1 的旗"）。player 是这条主要关于谁（不写或 -1 是所有人），
+   * 按某个玩家写战报时只列和他、盟友、对手有关的。每 tick 最多 20 条、每条最多 100 字，整局 2000 条，多了的丢掉
+   */
+  note(text: string, player?: number): void
 }
 
 export interface Ruleset {
   id: string
   name: string
+  /** 可选：一句话玩法简介（最多 60 字），rts-arena list 里显示，免得别人写了撞题的规则包 */
+  summary?: string
   players: { min: number; max: number }
   /** 是否支持分队（规则包要自己按队伍摆位置、判胜负）；不支持时命令行拒绝 --teams */
   teams?: boolean
@@ -268,6 +283,8 @@ export interface EntityState extends RuleEntity {
   gatherCd: number
   /** 最后一击的玩家，-1 表示没有 */
   lastHitBy: number
+  /** 最后一击是中立实体 */
+  lastHitNeutral: boolean
   /** 追会动的目标时的 A* 路径：倒序存格子下标，末尾是下一步 */
   path: number[]
   pathKey: string
@@ -350,6 +367,8 @@ export interface Frame {
   ord?: [number, string][]
   /** die 里由规则包 remove 掉的（不是被打死的） */
   removed?: number[]
+  /** 规则包用 ctx.note 写的事件（p 是主要关于谁，-1 是所有人） */
+  notes?: { p: number; text: string }[]
   /** [id, 新主人, ...]：规则包改了归属（setOwner）的实体，-1 是中立 */
   owner?: number[]
   /** [id, 建造进度百分比, ...]；100 表示建好了 */

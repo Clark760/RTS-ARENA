@@ -54,6 +54,7 @@ function baseHp(ctx: RuleContext, p: number): number {
 const ruleset: Ruleset = {
   id: "frontier",
   name: "拓荒",
+  summary: "开局没有兵营，工人自己建兵营、箭塔、仓库，摧毁对方主基地获胜",
   players: { min: 2, max: 2 },
   maxTicks: 9000,
   tickRate: 10,

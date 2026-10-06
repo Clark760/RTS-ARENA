@@ -15,6 +15,7 @@ import melee from "../rulesets/melee/index.ts"
 import beacons from "../rulesets/beacons/index.ts"
 import wildHerd from "../rulesets/wild-herd/index.ts"
 import caravanRaid from "../rulesets/caravan-raid/index.ts"
+import flagRun from "../rulesets/flag-run/index.ts"
 
 const ROOT = join(import.meta.dirname, "..")
 
@@ -24,7 +25,7 @@ const load = async (rules: Ruleset, file: string, p: number) => {
   return { name: file, file, runner: await createBot(c.code, p, { fuel: rules.fuel }) }
 }
 
-for (const rules of [annihilation, koth, harvest, melee, frontier, beacons, wildHerd, caravanRaid] as Ruleset[]) {
+for (const rules of [annihilation, koth, harvest, melee, frontier, beacons, wildHerd, caravanRaid, flagRun] as Ruleset[]) {
   test(`示例 bot 能通过「${rules.name}」生成的 arena.d.ts 类型检查`, () => {
     const dir = join(ROOT, "rulesets", rules.id, "bots")
     const files = [join(ROOT, "bots", "idle.ts"), ...readdirSync(dir).map((f) => join(dir, f))]

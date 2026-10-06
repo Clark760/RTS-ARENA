@@ -90,7 +90,7 @@ test("战报：事件太多时先把采完的资源点合成一行，--full 全�
   assert.match(text, /你放下 hut 的地基 \(10, 10\)/)
   assert.match(text, /加 --full 列出全部事件/)
   assert.match(text, /同一个位置的建筑反复被拆：hut \(10, 10\) 2 次/)
-  assert.match(text, /u #1 从 t1 闲到 t400（399 tick），最后在 \(0, 0\)；闲下来之前在 gather #100（#100 这时已经没了）/)
+  assert.match(text, /u #1 从 t1 闲到 t400（399 tick），闲下来时在 \(0, 0\)；闲下来之前在 gather #100（#100 这时已经没了）/)
   const full = buildReport(replay, { player: 0, full: true })
   assert.equal(full.match(/的 ore 采完了/g)?.length, 60)
   assert.doesNotMatch(full, /加 --full/)

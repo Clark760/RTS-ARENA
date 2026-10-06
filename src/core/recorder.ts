@@ -103,6 +103,7 @@ export class Recorder {
       f.status = w.status
       this.lastStatus = w.status
     }
+    if (w.ruleNotes.length) f.notes = w.ruleNotes.splice(0)
     if (extra.logs?.length) f.logs = extra.logs
     if (extra.errs?.length) f.errs = extra.errs
     this.frames.push(f)

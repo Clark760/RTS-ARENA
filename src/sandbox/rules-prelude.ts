@@ -124,6 +124,8 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
     },
     setMarkers: function (m) { H.setMarkers(stringify(m)); },
     setStatus: function (t) { H.setStatus(String(t)); },
+    isVisible: function (p, x, y) { return H.isVisible(p, x, y) === 1; },
+    note: function (t, p) { H.note(String(t), p === undefined || p === null ? -1 : p); },
     entities: function (f) {
       if (f === undefined || f === null) return ents().slice();
       // 已经有全量快照就在这里筛，否则让宿主筛好再传进来
@@ -172,7 +174,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
   }
 
   var R = null;
-  var KEYS = ["id", "name", "players", "teams", "maxTicks", "tickRate", "decisionInterval", "fuel", "unitCap", "fog", "resources", "terrain", "types"];
+  var KEYS = ["id", "name", "summary", "players", "teams", "maxTicks", "tickRate", "decisionInterval", "fuel", "unitCap", "fog", "resources", "terrain", "types"];
   var FNS = ["setup", "onTick", "objectives", "result", "timeUp", "buildCheck"];
 
   G.__rules = {
