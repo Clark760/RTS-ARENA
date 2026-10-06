@@ -123,7 +123,8 @@ export type GameEvent =
   /** 你的建筑建好了 */
   | { kind: "built"; tick: number; id: number; type: TypeName }
   /** 你的实体、或你看得到的实体死了（资源点采完也算） */
-  | { kind: "died"; tick: number; id: number; type: TypeName; owner: number; x: number; y: number }
+  /** unfinished 为 true 表示死的是没建好的建筑（地基） */
+  | { kind: "died"; tick: number; id: number; type: TypeName; owner: number; x: number; y: number; unfinished?: true }
   /** 你的实体挨打了；by 是攻击者 id，攻击者不一定在你视野里 */
   | { kind: "damaged"; tick: number; id: number; by: number; damage: number }
   /** 你上次的 onTick 抛错或燃料耗尽，那一次的命令全部作废 */

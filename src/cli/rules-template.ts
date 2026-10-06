@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, join, resolve } from "node:path"
 import { PKG_ROOT } from "../paths.ts"
 import { loadSandboxedRuleset } from "../sandbox/ruleset.ts"
-import { buildDts, rulesTsconfig } from "./docgen.ts"
+import { buildDts, RULES_GLOBALS_DTS, rulesTsconfig } from "./docgen.ts"
 
 const INDEX = `// 示例规则包「采金赛」：先累计交够 600 金的赢；主基地被摧毁直接输；到时间比交货量。从这里改起。
 // 写法见同目录的 RULESET.md。类型从 "rts-arena/ruleset" 导入（import type），共用的单位和地图工具从 "rts-arena/standard" 导入。
@@ -197,9 +197,10 @@ async function writePlatformFiles(dir: string): Promise<void> {
   writeFileSync(join(api, "ruleset.ts"), API_HEAD('"rts-arena/ruleset"：规则包对象 Ruleset、ctx（SetupContext、RuleContext）、实体类型 TypeSpec、实体、事件、叠加层、结果') + read("src", "core", "types.ts").replace('from "../api/bot-api.ts"', 'from "./bot-api.ts"'))
   writeFileSync(join(api, "bot-api.ts"), API_HEAD("bot 接口（TypeDef、命令、事件等，ruleset.ts 引用了其中的类型）") + read("src", "api", "bot-api.ts"))
   writeFileSync(join(api, "standard.ts"), API_HEAD('"rts-arena/standard"：几个规则包共用的标准单位、地形、对称地图工具') + read("rulesets", "common", "standard.ts").replace('from "../../src/core/types.ts"', 'from "./ruleset.ts"'))
+  writeFileSync(join(api, "globals.d.ts"), RULES_GLOBALS_DTS)
   writeFileSync(join(dir, "RULESET.md"), read("src", "api", "RULESET.md"))
   // 编辑器用目录里的副本，整个目录拷到别处也能用；rts-arena check 用平台自己的文件检查
-  writeFileSync(join(dir, "tsconfig.json"), rulesTsconfig(["index.ts"], { ruleset: "./api/ruleset.ts", standard: "./api/standard.ts" }))
+  writeFileSync(join(dir, "tsconfig.json"), rulesTsconfig(["index.ts", "api/globals.d.ts"], { ruleset: "./api/ruleset.ts", standard: "./api/standard.ts" }))
   // bots/ 里的 bot 用的接口（和 init 给 bot 目录生成的 arena.d.ts 一样）
   try {
     const rules = await loadSandboxedRuleset(dir, { onLog: () => {} })

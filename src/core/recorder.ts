@@ -56,6 +56,7 @@ export class Recorder {
     const hp: number[] = []
     const ord: [number, string][] = []
     const bp: number[] = []
+    const owner: number[] = []
     for (const e of w.ents.values()) {
       const prev = this.last.get(e.id)
       const cur = snapOf(e)
@@ -68,6 +69,7 @@ export class Recorder {
       if (prev.hp !== cur.hp) hp.push(e.id, cur.hp)
       if (prev.ord !== cur.ord) ord.push([e.id, cur.ord])
       if (prev.bp !== cur.bp) bp.push(e.id, cur.bp ?? 100)
+      if (prev.owner !== cur.owner) owner.push(e.id, cur.owner)
       this.last.set(e.id, cur)
     }
     const die: number[] = []
@@ -81,6 +83,7 @@ export class Recorder {
     if (w.shots.length) f.shots = w.shots.slice()
     if (ord.length) f.ord = ord
     if (bp.length) f.bp = bp
+    if (owner.length) f.owner = owner
     const players = playerSnaps(w)
     const pj = JSON.stringify(players)
     if (pj !== this.lastPlayers) {

@@ -35,8 +35,65 @@ test("战报：输家视角有局势抽样、建造事件、战斗、经济对�
   assert.match(text, /## 战斗[^\n]*\nt\d+～\d+ 在 \(\d+, \d+\) 附近：/)
   assert.match(text, /经济差得多/)
   assert.match(text, /你失去 base/)
+  assert.match(text, /工人被卷进战斗：t\d+ 在 \(\d+, \d+\) 附近死了 \d+ 个工人/)
   // 全局视角：给每个玩家的提示都带编号
   assert.match(buildReport(replay), /## 可能的问题\n- P\d：/)
+})
+
+test("战报：事件太多时先把采完的资源点合成一行，--full 全列；同一个位置反复被拆；闲下来之前在做什么", () => {
+  const ores = Array.from({ length: 60 }, (_, i) => ({ id: 100 + i, type: "ore", owner: -1, x: i % 20, y: 5 + Math.floor(i / 20), hp: 50, ord: "idle" }))
+  const hut = (id: number) => ({ id, type: "hut", owner: 0, x: 10, y: 10, hp: 10, ord: "idle", bp: 0 })
+  const frames = Array.from({ length: 400 }, (_, i) => ({ t: i + 1 }) as Record<string, unknown>)
+  for (let k = 1; k <= 60; k++) frames[k - 1].die = [100 + k - 1]
+  frames[0].ord = [[1, "idle"]]
+  frames[99].spawn = [hut(500)]
+  frames[109].die = [500]
+  frames[119].spawn = [hut(501)]
+  frames[129].die = [501]
+  const replay: Replay = JSON.parse(
+    JSON.stringify({
+      format: "rts-arena-replay",
+      version: 1,
+      ruleset: { id: "t", name: "测试" },
+      seed: 1,
+      tickRate: 10,
+      maxTicks: 400,
+      players: [
+        { name: "a", bot: "a.ts", team: 0 },
+        { name: "b", bot: "b.ts", team: 1 },
+      ],
+      map: { width: 20, height: 20, terrain: Array(20).fill(".".repeat(20)), colors: { ".": "#000000" } },
+      types: {
+        u: { kind: "unit", w: 1, h: 1, maxHp: 10, moveTicks: 1, sight: 2, cost: { gold: 10 }, worker: true, look: { shape: "circle" } },
+        ore: { kind: "resource", w: 1, h: 1, maxHp: 0, moveTicks: 0, sight: 0, look: { shape: "diamond" } },
+        hut: { kind: "building", w: 1, h: 1, maxHp: 100, moveTicks: 0, sight: 2, cost: { gold: 10 }, look: { shape: "square" } },
+      },
+      initial: {
+        entities: [{ id: 1, type: "u", owner: 0, x: 0, y: 0, hp: 10, ord: "gather #100" }, ...ores],
+        players: [
+          { resources: { gold: 0 }, score: 0, alive: true },
+          { resources: { gold: 0 }, score: 0, alive: true },
+        ],
+        markers: [],
+        status: "",
+      },
+      frames,
+      result: { winner: null, winners: [], reason: "到时间", tick: 400, ranking: [[0, 1]] },
+      bots: [0, 1].map((p) => ({ player: p, bot: "x", status: "ok", calls: 1, fuelTotal: 0, fuelMax: 0, errors: 0, fuelOuts: 0, rejected: 0, ms: 0 })),
+      perf: { peakEntities: 61, simMs: 0, botMs: 0 },
+      fog: false,
+    }),
+  )
+  const text = buildReport(replay, { player: 0 })
+  assert.doesNotMatch(text, /\(3, 5\) 的 ore 采完了/)
+  assert.match(text, /资源点采完了 60 处（t1～t60）/)
+  assert.match(text, /你放下 hut 的地基 \(10, 10\)/)
+  assert.match(text, /加 --full 列出全部事件/)
+  assert.match(text, /同一个位置的建筑反复被拆：hut \(10, 10\) 2 次/)
+  assert.match(text, /u #1 从 t1 闲到 t400（399 tick），最后在 \(0, 0\)；闲下来之前在 gather #100（#100 这时已经没了）/)
+  const full = buildReport(replay, { player: 0, full: true })
+  assert.equal(full.match(/的 ore 采完了/g)?.length, 60)
+  assert.doesNotMatch(full, /加 --full/)
 })
 
 test("战报：被拒命令和闲着的单位会提示", () => {

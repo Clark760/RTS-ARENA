@@ -17,6 +17,8 @@ export interface Delta {
   spawned: number[]
   died: EntSnap[]
   shots: number[]
+  /** 换了主人的实体（from 是原来的主人） */
+  owned: { id: number; from: number }[]
 }
 
 function clone(s: State): State {
@@ -64,7 +66,7 @@ export class ReplayModel {
 
 /** 把一帧应用到局面上（原地修改），返回变化 */
 export function applyFrame(s: State, f: Frame): Delta {
-  const d: Delta = { moved: [], spawned: [], died: [], shots: f.shots ?? [] }
+  const d: Delta = { moved: [], spawned: [], died: [], shots: f.shots ?? [], owned: [] }
   for (const e of f.spawn ?? []) {
     s.ents.set(e.id, { ...e })
     d.spawned.push(e.id)
@@ -85,6 +87,13 @@ export function applyFrame(s: State, f: Frame): Delta {
   for (const [id, ord] of f.ord ?? []) {
     const e = s.ents.get(id)
     if (e) e.ord = ord
+  }
+  const ow = f.owner ?? []
+  for (let i = 0; i < ow.length; i += 2) {
+    const e = s.ents.get(ow[i])
+    if (!e || e.owner === ow[i + 1]) continue
+    d.owned.push({ id: e.id, from: e.owner })
+    e.owner = ow[i + 1]
   }
   const bp = f.bp ?? []
   for (let i = 0; i < bp.length; i += 2) {

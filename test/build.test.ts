@@ -171,6 +171,27 @@ test("建造：被拒的情况（不能建造、钱不够、有东西挡着、�
   assert.match(r[5], /不够/)
 })
 
+test("建造：检查顺序是地图 → 地形和资源点（整局都看得见）→ 视野 → 其他实体", () => {
+  const events: GameEvent[] = []
+  // (20, 1) 看不见、是岩石；(24, 1) 看不见、有资源点；(1, 2) 看得见、站着自己
+  const rows = Array(5).fill(".".repeat(30))
+  rows[1] = ".".repeat(20) + "#" + ".".repeat(9)
+  const types = { ...TYPES, ore: { kind: "resource" as const, resource: "gold", amount: 100, look } }
+  play(mini(rows, [["peon", 0, 1, 2], ["hq", 1, 27, 3], ["ore", -1, 24, 1]], { fog: true, maxTicks: 3, types }), (v, cmd) => {
+    events.push(...v.events)
+    if (v.tick !== 0) return
+    const p = mine(v, "peon")[0]
+    cmd.build(p, "post", 20, 1)
+    cmd.build(p, "post", 24, 1)
+    cmd.build(p, "post", 26, 3)
+  })
+  const r = reasons(events)
+  assert.equal(r.length, 3, r.join("\n"))
+  assert.match(r[0], /\(20, 1\) 的地形不能建造/)
+  assert.match(r[1], /\(24, 1\) 有 #\d+（ore）挡着/)
+  assert.match(r[2], /视野/)
+})
+
 test("建造：有迷雾时只能建在视野里，拒绝原因不暴露看不见的格子里有什么", () => {
   const events: GameEvent[] = []
   const rows = Array(5).fill(".".repeat(30))
@@ -202,6 +223,14 @@ test("建造：地基被打掉，去建它的工人变 idle", () => {
   const died = rep.frames.some((f) => f.die && f.die.length > 0)
   assert.ok(died, "地基被打掉了")
   assert.equal(peon?.order?.kind, "idle")
+  // bot 收到的 died 事件说明死的是没建好的地基
+  const ev: GameEvent[] = []
+  play(mini(ROWS, [["peon", 0, 0, 7], ["grunt", 1, 8, 1], ["grunt", 1, 8, 2], ["hq", 1, 12, 6]], { maxTicks: 10 }), (v, cmd) => {
+    ev.push(...v.events)
+    if (v.tick === 0) cmd.build(mine(v, "peon")[0], "hut", 6, 1)
+  })
+  const d = ev.find((e) => e.kind === "died" && e.type === "hut")
+  assert.ok(d && d.kind === "died" && d.unfinished === true, JSON.stringify(d))
 })
 
 test("建造：规则包里 builds 写了不是建筑的类型会报错", () => {

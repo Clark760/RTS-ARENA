@@ -253,7 +253,6 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
         // 联赛：各自为战（每局 size 个人），或者分队（teams 写 2v2 这样，partners 是 mixed 轮换搭档 / same 同一个 bot 组队）
         const list = bots as string[]
         if (list.length < 2 || list.length > 16) return send(res, 400, { error: "联赛要 2～16 个 bot" }), true
-        if (new Set(list).size !== list.length) return send(res, 400, { error: "同一个 bot 选了两次" }), true
         let sizes: number[] | null = null
         if (teams !== undefined && teams !== null) {
           if (typeof teams !== "string" || !/^\d+(v\d+)+$/.test(teams)) return send(res, 400, { error: "分队要写成 2v2 这样" }), true

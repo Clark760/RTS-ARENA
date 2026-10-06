@@ -85,6 +85,32 @@ test("命令行 league：两两循环、换边，写汇总和每局回放；bot 
   }
 })
 
+test("命令行：联赛里同一个 bot 可以报名两次（带编号）；统计有座位区间、损失的工人；help <命令>；run --quiet 每局一行", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rts-arena-league-"))
+  const sh = (args: string[]) => {
+    const r = spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: "utf8" })
+    assert.equal(r.status, 0, r.stdout + r.stderr)
+    return r.stdout
+  }
+  try {
+    const out = sh(["league", "koth", "baseline", "baseline", "idle", "--per-pair", "1", "--seed", "3", "--out", "lg", "--no-check"])
+    assert.match(out, /3 个 bot（baseline#1、baseline#2、idle）/)
+    assert.match(out, /其中工人/)
+    assert.match(out, /P0 3 局，得分率 \d+% ±\d+%/)
+    const help = sh(["help", "run"])
+    assert.match(help, /--quiet/)
+    assert.doesNotMatch(help, /new-rules/)
+    const q = sh(["run", "koth", "baseline", "idle", "--games", "2", "--seed", "1", "--quiet", "--no-check", "--out", "q"])
+    const games = q.split("\n").filter((l) => l.startsWith("第 "))
+    assert.equal(games.length, 2, q)
+    assert.match(games[0], /^第 1\/2 局 .*（第 \d+ tick，/)
+    assert.doesNotMatch(q, /的日志：/)
+    assert.match(q, /共 2 局：/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("对战接口开联赛：事件里有最新排名和最后的汇总；参数不对被拒", async () => {
   const dir = mkdtempSync(join(tmpdir(), "rts-arena-league-api-"))
   const api = createArenaApi({ replaysDir: dir, cliPath: CLI, cwd: ROOT })
@@ -99,7 +125,7 @@ test("对战接口开联赛：事件里有最新排名和最后的汇总；参�
   const post = (body: unknown) => fetch(base + "/api/arena/run", { method: "POST", headers: { "Content-Type": "application/json", "X-Arena": "1" }, body: JSON.stringify(body) })
   try {
     assert.equal((await post({ mode: "league", ruleset: "koth", bots: ["baseline"], perPair: 2 })).status, 400)
-    assert.equal((await post({ mode: "league", ruleset: "koth", bots: ["baseline", "baseline"], perPair: 2 })).status, 400)
+    assert.equal((await post({ mode: "league", ruleset: "koth", bots: Array(17).fill("baseline"), perPair: 2 })).status, 400)
     assert.equal((await post({ mode: "league", ruleset: "koth", bots: ["baseline", "hold", "idle"], perPair: 0 })).status, 400)
     assert.equal((await post({ mode: "league", ruleset: "koth", bots: ["baseline", "hold", "idle"], perPair: 1, seed: 2 })).status, 200)
     let run: { running: boolean; exitCode: number; stderr: string; events: { type: string; table?: unknown[] }[] }

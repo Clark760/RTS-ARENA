@@ -5,6 +5,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { after, test } from "node:test"
 import { findRuleset, importRuleset, loadRulesetRef } from "../src/cli/catalog.ts"
+import { buildReport } from "../src/cli/report.ts"
+import { ReplayModel } from "../src/core/replay-model.ts"
 import { writeRulesTemplate } from "../src/cli/rules-template.ts"
 import { runMatch, type MatchBot } from "../src/core/match.ts"
 import type { Replay, Ruleset } from "../src/core/types.ts"
@@ -247,6 +249,25 @@ test("规则包改血、改归属：bot 看到实体换了主人；生命改到 
   })
   assert.deepEqual(seen && { owner: seen.owner, hp: seen.hp }, { owner: 1, hp: 7 })
   assert.ok(replay.frames.some((f) => f.t === 6 && (f.die?.length ?? 0) > 0), "主基地被改到 0 血死了")
+  // 回放记下换主人：播放器、战报都按新主人算
+  const creep = replay.initial.entities.find((e) => e.type === "creep")!
+  assert.deepEqual(replay.frames[1].owner, [creep.id, 1])
+  const model = new ReplayModel(replay)
+  assert.equal(model.stateAt(1).ents.get(creep.id)?.owner, -1)
+  assert.equal(model.stateAt(5).ents.get(creep.id)?.owner, 1)
+  assert.match(buildReport(replay), /中立的 creep #\d+ \(5, 5\) 换主人，归了 P1/)
+})
+
+test("规则包的 setup 里也能读局面、用 spawnNear 找空位", async () => {
+  const dir = rules({
+    types: CREEP_TYPES,
+    setup: `const hq = ctx.entities({ owner: 0, type: "hq" })[0]
+      for (let i = 0; i < 3; i++) if (ctx.spawnNear("creep", -1, hq.x, hq.y) === null) throw new Error("没空位")
+      const near = ctx.entitiesIn(0, 0, 4, 4).length
+      ctx.setStatus("creep " + ctx.entities({ type: "creep" }).length + "，左上 " + near + "，距离 " + ctx.dist(hq, ctx.get(ctx.entities({ owner: 1 })[0].id)) + "，" + ctx.isAlly(0, 1))`,
+  })
+  const replay = await play(dir)
+  assert.equal(replay.initial.status, "creep 3，左上 4，距离 14，false")
 })
 
 test("规则包的 buildCheck：拒绝原因原样告诉 bot，允许的照常建", async () => {

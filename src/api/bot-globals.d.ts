@@ -26,3 +26,10 @@ declare function canBuild(view: View, type: TypeName, x: number, y: number): boo
  * 原因的文字和 build 被拒时的一样。派工人去远处建造时，可以每次决策都看一眼，知道还差什么
  */
 declare function buildProblem(view: View, type: TypeName, x: number, y: number): string | null
+
+/**
+ * 在 near 附近找能放 type 的位置（返回左上角）：按离 near 的距离从近到远找到 maxRange 格（默认 8）；
+ * 占地四周 margin 格（默认 1）以内不能有建筑和资源点，留出走路的空，免得堵住采矿的路。
+ * 找到的位置 buildProblem 一定是 null；找不到返回 null（可能是附近不在视野里，或者都被占了）
+ */
+declare function findBuildSpot(view: View, type: TypeName, near: Pos, maxRange?: number, margin?: number): Pos | null

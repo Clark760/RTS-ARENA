@@ -181,6 +181,15 @@ export class Renderer {
       }
     }
     for (const id of d.spawned) this.addView(state.ents.get(id)!, t)
+    // 换了主人：按新主人的颜色重画
+    for (const o of d.owned) {
+      const v = this.views.get(o.id)
+      const e = state.ents.get(o.id)
+      if (!v || !e) continue
+      v.root.destroy({ children: true })
+      this.views.delete(o.id)
+      this.addView(e, t)
+    }
     for (const m of d.moved) {
       const v = this.views.get(m.id)
       const e = state.ents.get(m.id)

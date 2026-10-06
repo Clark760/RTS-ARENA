@@ -2,7 +2,7 @@
 // 再加上排名里的把握度。命令行打印、对战页显示、写进联赛的汇总文件。
 import { applyFrame, ReplayModel } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
-import { adjacentConfidence, type LeagueResult } from "./league.ts"
+import { adjacentConfidence, rateCi, type LeagueResult } from "./league.ts"
 
 /** 一局里一个座位的数据 */
 export interface SeatGameStats {
@@ -10,8 +10,9 @@ export interface SeatGameStats {
   income: number
   /** 造出来的单位（不算开局就有的） */
   produced: number
-  /** 损失的单位、建筑 */
+  /** 损失的单位（其中工人有几个）、建筑 */
   lostUnits: number
+  lostWorkers: number
   lostBuildings: number
   /** 最后一击是这个座位的：打死的单位、拆掉的建筑（不算自己和盟友的，算中立的） */
   killedUnits: number
@@ -25,7 +26,7 @@ export function gameSeatStats(replay: Replay): SeatGameStats[] {
   const model = new ReplayModel(replay)
   const s = model.initialState()
   const initial = new Set(s.ents.keys())
-  const out: SeatGameStats[] = replay.players.map(() => ({ income: 0, produced: 0, lostUnits: 0, lostBuildings: 0, killedUnits: 0, killedBuildings: 0 }))
+  const out: SeatGameStats[] = replay.players.map(() => ({ income: 0, produced: 0, lostUnits: 0, lostWorkers: 0, lostBuildings: 0, killedUnits: 0, killedBuildings: 0 }))
   const spent = new Array<number>(n).fill(0)
   const startRes = s.players.map((p) => Object.values(p.resources).reduce((a, b) => a + b, 0))
   const lastHit = new Map<number, number>()
@@ -41,8 +42,10 @@ export function gameSeatStats(replay: Replay): SeatGameStats[] {
       const kind = types[e.type]?.kind
       if (kind === "resource") continue
       if (e.owner >= 0 && e.owner < n) {
-        if (kind === "unit") out[e.owner].lostUnits++
-        else out[e.owner].lostBuildings++
+        if (kind === "unit") {
+          out[e.owner].lostUnits++
+          if (types[e.type]?.worker) out[e.owner].lostWorkers++
+        } else out[e.owner].lostBuildings++
       }
       const by = lastHit.get(id)
       if (by !== undefined && by !== e.owner && (e.owner < 0 || team(by) !== team(e.owner))) {
@@ -91,6 +94,7 @@ interface BotAgg {
   income: number
   produced: number
   lostUnits: number
+  lostWorkers: number
   lostBuildings: number
   killedUnits: number
   killedBuildings: number
@@ -106,16 +110,16 @@ interface BotAgg {
 export interface LeagueStatsJson {
   /** 每个 bot（下标是参赛者编号）：累计值，除以 games 就是每局平均 */
   bots: (BotAgg & { name: string })[]
-  /** 每个座位：局数、名次分之和、独得第一的局数 */
-  seats: { games: number; points: number; wins: number }[]
-  /** 结束原因（数字归一成 N）和次数，多的在前 */
-  reasons: { reason: string; n: number }[]
+  /** 每个座位：局数、名次分之和、独得第一的局数、得分率 95% 区间的半宽 */
+  seats: { games: number; points: number; wins: number; ci: number }[]
+  /** 结束原因（数字归一成 N 算一类）、次数、这一类里第一局的原话，多的在前 */
+  reasons: { reason: string; n: number; example: string }[]
 }
 
 export class LeagueStats {
   private bots: BotAgg[]
   private seats: { games: number; points: number; wins: number }[] = []
-  private reasons = new Map<string, number>()
+  private reasons = new Map<string, { n: number; example: string }>()
   private names: string[]
 
   constructor(names: string[]) {
@@ -129,6 +133,7 @@ export class LeagueStats {
       income: 0,
       produced: 0,
       lostUnits: 0,
+      lostWorkers: 0,
       lostBuildings: 0,
       killedUnits: 0,
       killedBuildings: 0,
@@ -169,6 +174,7 @@ export class LeagueStats {
         a.income += g.income
         a.produced += g.produced
         a.lostUnits += g.lostUnits
+        a.lostWorkers += g.lostWorkers
         a.lostBuildings += g.lostBuildings
         a.killedUnits += g.killedUnits
         a.killedBuildings += g.killedBuildings
@@ -184,14 +190,16 @@ export class LeagueStats {
       }
     }
     const reason = replay.result.reason.replace(/\d+/g, "N")
-    this.reasons.set(reason, (this.reasons.get(reason) ?? 0) + 1)
+    const r = this.reasons.get(reason)
+    if (r) r.n++
+    else this.reasons.set(reason, { n: 1, example: replay.result.reason })
   }
 
   toJSON(): LeagueStatsJson {
     return {
       bots: this.bots.map((b, i) => ({ name: this.names[i], ...b })),
-      seats: this.seats,
-      reasons: [...this.reasons].map(([reason, n]) => ({ reason, n })).sort((a, b) => b.n - a.n),
+      seats: this.seats.map((s) => ({ ...s, ci: Number(rateCi(s.points, s.games).toFixed(3)) })),
+      reasons: [...this.reasons].map(([reason, r]) => ({ reason, ...r })).sort((a, b) => b.n - a.n),
     }
   }
 }
@@ -208,18 +216,18 @@ export function statsText(stats: LeagueStatsJson, result: LeagueResult): string 
   const width = Math.max(4, ...names.map((x) => [...x].length))
   const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - [...s].length))
   lines.push("", "每个 bot 每局平均（时长是 tick；采集是估算；击杀是最后一击）")
-  lines.push(`  ${pad("bot", width)}  局数  时长  胜局时长    采集  造单位  损失单位  击杀单位  拆建筑  丢建筑  燃料均值  报错  燃料耗尽  被拒  停止`)
+  lines.push(`  ${pad("bot", width)}  局数  时长  胜局时长    采集  造单位  损失单位  其中工人  击杀单位  拆建筑  丢建筑  燃料均值  报错  燃料耗尽  被拒  停止`)
   for (const i of result.table.map((s) => s.index)) {
     const b = stats.bots[i]
     lines.push(
-      `  ${pad(b.name, width)}  ${String(b.games).padStart(4)}  ${avg(b.ticks, b.games).padStart(4)}  ${avg(b.winTicks, b.winGames).padStart(8)}  ${avg(b.income, b.games).padStart(6)}  ${avg(b.produced, b.games, 1).padStart(6)}  ${avg(b.lostUnits, b.games, 1).padStart(8)}  ${avg(b.killedUnits, b.games, 1).padStart(8)}  ${avg(b.killedBuildings, b.games, 1).padStart(6)}  ${avg(b.lostBuildings, b.games, 1).padStart(6)}  ${avg(b.fuel, b.calls, 1).padStart(8)}  ${String(b.errors).padStart(4)}  ${String(b.fuelOuts).padStart(8)}  ${String(b.rejected).padStart(4)}  ${String(b.dead).padStart(4)}`,
+      `  ${pad(b.name, width)}  ${String(b.games).padStart(4)}  ${avg(b.ticks, b.games).padStart(4)}  ${avg(b.winTicks, b.winGames).padStart(8)}  ${avg(b.income, b.games).padStart(6)}  ${avg(b.produced, b.games, 1).padStart(6)}  ${avg(b.lostUnits, b.games, 1).padStart(8)}  ${avg(b.lostWorkers ?? 0, b.games, 1).padStart(8)}  ${avg(b.killedUnits, b.games, 1).padStart(8)}  ${avg(b.killedBuildings, b.games, 1).padStart(6)}  ${avg(b.lostBuildings, b.games, 1).padStart(6)}  ${avg(b.fuel, b.calls, 1).padStart(8)}  ${String(b.errors).padStart(4)}  ${String(b.fuelOuts).padStart(8)}  ${String(b.rejected).padStart(4)}  ${String(b.dead).padStart(4)}`,
     )
   }
   lines.push("（报错、燃料耗尽、被拒、停止是整个联赛的总数）")
-  lines.push("", "座位（各座位的得分率，看地图和规则包偏不偏向某个位置）")
-  lines.push("  " + stats.seats.map((s, p) => `P${p} ${s.games} 局，得分率 ${avg(s.points * 100, s.games)}%，独得第一 ${s.wins}`).join("；"))
-  lines.push("", "结束原因")
-  for (const r of stats.reasons.slice(0, 8)) lines.push(`  ×${r.n}  ${r.reason}`)
+  lines.push("", "座位（各座位的得分率和 95% 区间，看地图和规则包偏不偏向某个位置；区间都盖住 50% 就还看不出偏）")
+  lines.push("  " + stats.seats.map((s, p) => `P${p} ${s.games} 局，得分率 ${avg(s.points * 100, s.games)}% ±${Math.round((s.ci ?? 0) * 100)}%，独得第一 ${s.wins}`).join("；"))
+  lines.push("", "结束原因（数字不一样的算一类，后面是其中一局的原话）")
+  for (const r of stats.reasons.slice(0, 8)) lines.push(`  ×${r.n}  ${r.example ?? r.reason}${r.n > 1 && r.example && r.example !== r.reason ? "  等" : ""}`)
   if (stats.reasons.length > 8) lines.push(`  另有 ${stats.reasons.length - 8} 种`)
   return lines.join("\n")
 }

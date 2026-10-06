@@ -45,10 +45,11 @@ rts-arena init melee          # 建 bot 目录：arena.json、bot.ts 模板、PR
 ```bash
 rts-arena check                    # 类型检查 + 在每个位置上和不动的对手试打 300 tick
 rts-arena run                      # 和基准 bot 打一局
-rts-arena run --games 10           # 打 10 局看胜率（每个种子换边各打一次）
+rts-arena run --games 10           # 打 10 局看胜率（每个种子换边各打一次；--quiet 每局只打一行）
 rts-arena run 对手.ts              # 和别的 bot 打（写文件路径或现成 bot 的名字）
 rts-arena league                   # 联赛：和这个规则包所有现成的 bot 循环对打，出排行榜和对阵表（--size 3 每局 3 人）
-rts-arena report                   # 文字战报（最新一局）：双方经济、兵力、建筑的变化，关键事件、战斗、可能的问题
+rts-arena report                   # 文字战报（最新一局）：双方经济、兵力、建筑的变化，关键事件、战斗、可能的问题（--full 不省略）
+rts-arena help run                 # 只看某个命令的用法
 rts-arena view                     # 网页播放器：看 ./replays 里的回放，也能在「对战」页开比赛
 ```
 
@@ -56,7 +57,7 @@ rts-arena view                     # 网页播放器：看 ./replays 里的回�
 - 平台升级后在目录里跑一次 `rts-arena init`，只更新说明书和接口，不动 `bot.ts`。
 - 回放和日志写在 `./replays`：每局一个 JSON 回放，外加每个 bot 一份只含它自己信息的日志（`<回放>.P<座位>-<bot 名>.log`），几个 agent 同时跑也分得清。
 - 现成的对手：`baseline` 是每个规则包的基准 bot（多数对局能打赢该规则包的其他示例 bot，是衡量新 bot 的标准对手），`idle` 什么都不做；`rts-arena list` 列出全部。
-- 联赛：`rts-arena league 对手1.ts 对手2.ts --per-pair 4`（不写对手就和所有现成的 bot 打，不含 idle），任意目录里写成 `rts-arena league koth a.ts b.ts c.ts`。默认两两对打、同一对用同一个种子换边。多人局用 `--size K`（比如混战 `rts-arena league melee a.ts b.ts c.ts d.ts e.ts --size 4`）：按 K 人组合分桌（组合超过 20 桌就抽桌，每个 bot 大约上场 6 桌，`--tables M` 可以改），每桌用同一个种子轮换座位打 `--per-table` 局（默认 K 局，正好轮一圈）。名次分：第一名 1 分、最后一名 0 分、中间平分（两人局就是胜 1、平 0.5）；等级分（1500 起）把每局的名次拆成两两比较、按全部对局一起算，和打的先后顺序无关。最后打印排行榜和对阵表，记在回放目录的 `*.series.json` 里。
+- 联赛：`rts-arena league 对手1.ts 对手2.ts --per-pair 4`（不写对手就和所有现成的 bot 打，不含 idle），任意目录里写成 `rts-arena league koth a.ts b.ts c.ts`。默认两两对打、同一对用同一个种子换边。多人局用 `--size K`（比如混战 `rts-arena league melee a.ts b.ts c.ts d.ts e.ts --size 4`）：按 K 人组合分桌（组合超过 20 桌就抽桌，每个 bot 大约上场 6 桌，`--tables M` 可以改），每桌用同一个种子轮换座位打 `--per-table` 局（默认 K 局，正好轮一圈）。名次分：第一名 1 分、最后一名 0 分、中间平分（两人局就是胜 1、平 0.5）；等级分（1500 起）把每局的名次拆成两两比较、按全部对局一起算，和打的先后顺序无关。最后打印排行榜和对阵表，记在回放目录的 `*.series.json` 里。同一个 bot 可以写好几次（名字带 #编号）：同一个 bot 的两份副本之间差多少，就能看出排行榜的误差有多大。
 - 分队联赛（规则包要支持分队，比如混战）：`rts-arena league melee a.ts b.ts c.ts d.ts --teams 2v2`。默认轮换搭档：每桌挑够人数的 bot，所有分组方式都打、两队换位置，每个 bot 拿所在队的名次分，额外出一张搭档表（两个 bot 同队时打了几局、赢了几局），看谁最会配合；`--partners same` 是每队都由同一个 bot 组成（bot 不够一局的人数时自动用这种）。
 - 联赛最后还有统计：相邻名次之间的把握度（直接对阵的结果推出"上面的确实更强"有多大把握）、得分率的 95% 区间、每个 bot 每局平均的时长（含胜局时长）、采集、造单位、损失、击杀、拆建筑、燃料，以及报错 / 燃料耗尽 / 被拒 / 停止的总数，各座位的得分率（看地图偏不偏），结束原因的分布。
 - 多方混战：`rts-arena run 对手1.ts 对手2.ts 对手3.ts --games 8`，同一个种子把座位轮换一遍，报胜场和平均名次。分队加 `--teams 2v2`（按 自己、参数里的顺序 前两个一队、后两个一队），盟友共享视野、按队伍判胜负。

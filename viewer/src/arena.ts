@@ -100,6 +100,7 @@ interface LeagueStatsInfo {
     income: number
     produced: number
     lostUnits: number
+    lostWorkers?: number
     killedUnits: number
     killedBuildings: number
     lostBuildings: number
@@ -110,8 +111,8 @@ interface LeagueStatsInfo {
     calls: number
     fuel: number
   }[]
-  seats: { games: number; points: number; wins: number }[]
-  reasons: { reason: string; n: number }[]
+  seats: { games: number; points: number; wins: number; ci?: number }[]
+  reasons: { reason: string; n: number; example?: string }[]
 }
 
 interface StartEvent {
@@ -623,17 +624,20 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       .map((s) => stats.bots[s.index])
       .map(
         (b) =>
-          `<tr><td>${esc(b.name)}</td><td>${avg(b.ticks, b.games)}</td><td>${avg(b.winTicks, b.winGames)}</td><td>${avg(b.income, b.games)}</td><td>${avg(b.produced, b.games, 1)}</td><td>${avg(b.lostUnits, b.games, 1)}</td><td>${avg(b.killedUnits, b.games, 1)}</td><td>${avg(b.killedBuildings, b.games, 1)}</td><td>${avg(b.fuel, b.calls, 1)}</td><td class="${b.errors + b.fuelOuts + b.dead ? "err" : ""}">${b.errors}/${b.fuelOuts}/${b.rejected}/${b.dead}</td></tr>`,
+          `<tr><td>${esc(b.name)}</td><td>${avg(b.ticks, b.games)}</td><td>${avg(b.winTicks, b.winGames)}</td><td>${avg(b.income, b.games)}</td><td>${avg(b.produced, b.games, 1)}</td><td>${avg(b.lostUnits, b.games, 1)}${b.lostWorkers !== undefined ? `（${avg(b.lostWorkers, b.games, 1)}）` : ""}</td><td>${avg(b.killedUnits, b.games, 1)}</td><td>${avg(b.killedBuildings, b.games, 1)}</td><td>${avg(b.fuel, b.calls, 1)}</td><td class="${b.errors + b.fuelOuts + b.dead ? "err" : ""}">${b.errors}/${b.fuelOuts}/${b.rejected}/${b.dead}</td></tr>`,
       )
       .join("")
-    const seats = stats.seats.map((s, p) => `P${p} ${avg(s.points * 100, s.games)}%`).join("，")
-    const reasons = stats.reasons.slice(0, 6).map((r) => `<li>×${r.n} ${esc(r.reason)}</li>`).join("")
+    const seats = stats.seats.map((s, p) => `P${p} ${avg(s.points * 100, s.games)}%${s.ci !== undefined ? ` ±${Math.round(s.ci * 100)}%` : ""}`).join("，")
+    const reasons = stats.reasons
+      .slice(0, 6)
+      .map((r) => `<li>×${r.n} ${esc(r.example ?? r.reason)}${r.n > 1 && r.example && r.example !== r.reason ? " 等" : ""}</li>`)
+      .join("")
     return `<details open><summary>统计</summary>
       <div class="muted small">把握度：相邻名次直接对阵时，上面的比下面的强的把握（平局不算，局数少时不可靠）</div><ul class="stat-list">${conf}</ul>
       <div class="muted small">每个 bot 每局平均（时长是 tick，采集是估算，击杀是最后一击；最后一列是整个联赛的 报错/燃料耗尽/被拒/停止）</div>
-      <div class="table-scroll"><table class="summary standings"><tr><th>bot</th><th>时长</th><th>胜局时长</th><th>采集</th><th>造单位</th><th>损失</th><th>击杀</th><th>拆建筑</th><th>燃料</th><th>出错</th></tr>${rows}</table></div>
-      <div class="muted small">座位的得分率（看地图偏不偏）：${seats}</div>
-      <div class="muted small">结束原因</div><ul class="stat-list">${reasons}</ul>
+      <div class="table-scroll"><table class="summary standings"><tr><th>bot</th><th>时长</th><th>胜局时长</th><th>采集</th><th>造单位</th><th title="损失的单位（括号里是其中的工人）">损失（工人）</th><th>击杀</th><th>拆建筑</th><th>燃料</th><th>出错</th></tr>${rows}</table></div>
+      <div class="muted small">座位的得分率和 95% 区间（看地图偏不偏；区间都盖住 50% 就还看不出偏）：${seats}</div>
+      <div class="muted small">结束原因（数字不一样的算一类，这里是其中一局的原话）</div><ul class="stat-list">${reasons}</ul>
     </details>`
   }
 
@@ -729,7 +733,6 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     msg.textContent = ""
     msg.classList.remove("ok")
     if (seats.some((s) => !s)) return void (msg.textContent = "有座位还没选 bot（选了“填路径…”就要填上路径）")
-    if (league() && new Set(seats).size !== seats.length) return void (msg.textContent = "联赛里同一个 bot 选了两次")
     const games = Number($<HTMLInputElement>("ar-games").value)
     const seedText = $<HTMLInputElement>("ar-seed").value.trim()
     saveSeats(`${modeSel.value}:${rulesetSel.value}`, seats)

@@ -288,4 +288,45 @@ test("canBuild：地图内、地形可走、没有实体、有迷雾时每格都
   assert.match(reasons[0][3] ?? "", /不在你方视野里/)
   assert.match(reasons[0][4] ?? "", /超出地图/)
   assert.match(reasons[0][5] ?? "", /不是建筑/)
+  // 看不见的格子里的敌人：有迷雾时只说看不见
+  assert.match(reasons[0][7] ?? "", /不在你方视野里/)
+  assert.match(reasons[1][7] ?? "", /有 #2（peon）挡着/)
+})
+
+test("buildProblem 的顺序和引擎一样（地形、资源点先于视野）；findBuildSpot 找附近放得下的位置", async () => {
+  const game = JSON.stringify({
+    me: 0,
+    width: 10,
+    height: 5,
+    fog: true,
+    terrain: ["........#.", "..........", "..........", "..........", ".........."],
+    walkable: { ".": true, "#": false },
+    types: { hut: { kind: "building", w: 2, h: 2, sight: 1 }, peon: { kind: "unit", w: 1, h: 1, sight: 3 }, ore: { kind: "resource", w: 1, h: 1, sight: 0 } },
+  })
+  const view = JSON.stringify({
+    tick: 0,
+    me: 0,
+    players: [{ team: 0 }, { team: 1 }],
+    entities: [
+      { id: 1, type: "peon", owner: 0, x: 0, y: 0, w: 1, h: 1 },
+      { id: 5, type: "ore", owner: -1, x: 8, y: 3, w: 1, h: 1 },
+      { id: 6, type: "ore", owner: -1, x: 2, y: 3, w: 1, h: 1 },
+    ],
+    events: [],
+  })
+  const b = await bot(`
+    export function onTick(view: View, cmd: Commands) {
+      console.log(JSON.stringify([buildProblem(view, "hut" as TypeName, 7, 0), buildProblem(view, "hut" as TypeName, 8, 2), buildProblem(view, "hut" as TypeName, 5, 2)]))
+      const spot = findBuildSpot(view, "hut" as TypeName, { x: 0, y: 0 })
+      console.log(JSON.stringify([spot, spot && buildProblem(view, "hut" as TypeName, spot.x, spot.y), findBuildSpot(view, "hut" as TypeName, { x: 0, y: 0 }, 1), findBuildSpot(view, "hut" as TypeName, { x: 0, y: 0 }, 8, 0)]))
+    }`)
+  b.start(game)
+  const r = b.tick(view)
+  const [a, c] = r.logs.map((l) => JSON.parse(l))
+  assert.match(a[0], /\(8, 0\) 的地形不能建造/)
+  assert.match(a[1], /\(8, 3\) 有 #5（ore）挡着/)
+  assert.match(a[2], /不在你方视野里/)
+  // 离 (0, 0) 最近、四周一格不挨着资源点 (2, 3) 的位置；半径 1 以内没有；不留空就能更近
+  assert.deepEqual(c, [{ x: 1, y: 0 }, null, null, { x: 0, y: 1 }])
+  b.dispose()
 })

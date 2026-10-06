@@ -102,6 +102,17 @@ export interface SetupContext {
   /** 开局的叠加层和状态文字 */
   setMarkers(markers: Marker[]): void
   setStatus(text: string): void
+  /** 读局面（setup 里也能用，看到的是到目前为止放下的实体）：按创建顺序，可以按 owner、type、kind 筛选 */
+  entities(filter?: EntityFilter): readonly RuleEntity[]
+  get(id: number): RuleEntity | undefined
+  /** 和矩形区域重叠的实体 */
+  entitiesIn(x: number, y: number, w: number, h: number): RuleEntity[]
+  /** 两个占地矩形之间的曼哈顿距离（贴着 = 1） */
+  dist(a: Rect, b: Rect): number
+  /** 两个玩家是否同队 */
+  isAlly(a: number, b: number): boolean
+  /** 在 (x, y) 附近找空位放实体，找不到返回 null（setup 里也能用，比自己记占用的格子省事） */
+  spawnNear(type: string, owner: number, x: number, y: number, opts?: { amount?: number }): number | null
 }
 
 /** 每 tick 规则包能用的接口（规则包是可信代码，拿到的是内部状态，别直接改字段，用下面的方法） */
@@ -144,9 +155,8 @@ export interface RuleContext {
   orderNeutral(id: number, order: NeutralOrder): void
   /** 改生命（不超过最大生命）；改到 0 或以下就死掉（击杀者算 -1）。资源点不能用（储量用不了这个改） */
   setHp(id: number, hp: number): void
-  /**
-   * 改归属（占领、招降、变成中立）。实体的命令变成 idle，生产队列清空（不退钱）；不受单位上限限制。
-   * 没建好的建筑换了主人，原来去建它的工人会停下
+  /** 改归属（占领、招降、变成中立）。实体的命令变成 idle，生产队列清空（不退钱）。换主人的那一刻不检查单位上限，
+   * 之后照常算进新主人的单位数（满了的话新主人就造不了兵）。没建好的建筑换了主人，原来去建它的工人会停下
    */
   setOwner(id: number, owner: number): void
   setMarkers(markers: Marker[]): void
@@ -185,7 +195,7 @@ export interface Ruleset {
   /** 到 maxTicks 还没分出胜负时调用 */
   timeUp(ctx: RuleContext): MatchResult
   /**
-   * 可选：玩家用 build 放地基时，平台检查完位置、钱之前再问规则包一次。返回 null 是允许，返回字符串是拒绝原因
+   * 可选：玩家用 build 放地基时，平台检查完位置之后、扣钱之前（钱够不够在它之后检查）再问规则包一次。返回 null 是允许，返回字符串是拒绝原因
    * （会原样告诉 bot）。比如"烽火台只能建在台址里"。bot 的 canBuild 不知道这条规则，要在 RULES.md 里写清楚
    */
   buildCheck?(ctx: RuleContext, player: number, type: string, x: number, y: number): string | null
@@ -322,6 +332,8 @@ export interface Frame {
   /** [攻击者, 目标, ...] */
   shots?: number[]
   ord?: [number, string][]
+  /** [id, 新主人, ...]：规则包改了归属（setOwner）的实体，-1 是中立 */
+  owner?: number[]
   /** [id, 建造进度百分比, ...]；100 表示建好了 */
   bp?: number[]
   players?: PlayerSnap[]

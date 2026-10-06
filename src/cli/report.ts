@@ -8,6 +8,8 @@ export interface ReportOptions {
   player?: number
   /** 每隔多少 tick 抽样一次；不给按整局长度挑（大约 10 行） */
   every?: number
+  /** 关键事件、战斗全部列出，不省略 */
+  full?: boolean
 }
 
 interface PlayerSample {
@@ -41,6 +43,8 @@ interface IdleSpan {
   to: number
   x: number
   y: number
+  /** 闲下来之前在做什么 */
+  before: string
 }
 
 /** 报错和被拒命令按种类汇总（数字归一后算同一种），最多的在前 */
@@ -90,6 +94,10 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   const kind = (type: string) => types[type]?.kind
   // 工人：能采集或能建造的单位（老回放没有这个标记，就当都是兵）
   const isWorker = (type: string) => types[type]?.worker === true
+  const hasWorkers = Object.values(types).some((t) => t.worker === true)
+  // 兵：要花钱造、不是工人的单位（白捡来的单位、老回放不算）
+  const isArmy = (type: string) => hasWorkers && kind(type) === "unit" && !isWorker(type) && Object.values(types[type]?.cost ?? {}).some((c) => (c ?? 0) > 0)
+  const hasArmy = Object.keys(types).some(isArmy)
   const model = new ReplayModel(replay)
   const last = model.lastTick
   const every = opts.every && opts.every > 0 ? opts.every : pickEvery(last)
@@ -129,7 +137,11 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   const initialRes = s.players.map((p) => ({ ...p.resources }))
   const deaths: Death[] = []
   const spent = Array.from({ length: n }, () => new Map<string, number>())
-  const events: { t: number; p: number; text: string }[] = []
+  /** cat：depleted 是资源点采完（太多时先省略），key 是"第一次……"、换主人这些（太多时也保留） */
+  const events: { t: number; p: number; text: string; cat?: "depleted" | "key" }[] = []
+  /** 第一次有兵的时间 */
+  const firstArmy = new Array<number>(n).fill(-1)
+  for (const e of s.ents.values()) if (e.owner >= 0 && e.owner < n && isArmy(e.type)) firstArmy[e.owner] = 0
   const firstMade = Array.from({ length: n }, () => new Set<string>())
   const firstHitTaken = new Array<number>(n).fill(-1)
   const firstHitDealt = new Array<number>(n).fill(-1)
@@ -140,14 +152,28 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   /** 工人闲着的开始时间 */
   const idleFrom = new Map<number, number>()
   const idleSpans: IdleSpan[] = []
+  /** 工人最后一个不是 idle 的命令；闲下来时记下当时在做什么 */
+  const lastOrd = new Map<number, string>()
+  const idleBefore = new Map<number, string>()
   const at = (e: { x: number; y: number }) => `(${e.x}, ${e.y})`
   const closeIdle = (e: EntSnap, t: number) => {
     const from = idleFrom.get(e.id)
     if (from === undefined) return
     idleFrom.delete(e.id)
-    if (t - from >= LONG_IDLE) idleSpans.push({ id: e.id, type: e.type, owner: e.owner, from, to: t, x: e.x, y: e.y })
+    if (t - from >= LONG_IDLE) idleSpans.push({ id: e.id, type: e.type, owner: e.owner, from, to: t, x: e.x, y: e.y, before: idleBefore.get(e.id) ?? "" })
   }
-  for (const e of s.ents.values()) if (e.owner >= 0 && isWorker(e.type) && e.ord === "idle") idleFrom.set(e.id, 0)
+  const startIdle = (id: number, t: number, born: string) => {
+    if (idleFrom.has(id)) return
+    idleFrom.set(id, t)
+    const o = lastOrd.get(id)
+    const m = o ? /#(\d+)/.exec(o) : null
+    idleBefore.set(id, o ? `闲下来之前在 ${o}${m && !s.ents.has(Number(m[1])) ? `（#${m[1]} 这时已经没了）` : ""}` : born)
+  }
+  for (const e of s.ents.values()) {
+    if (e.owner < 0 || !isWorker(e.type)) continue
+    if (e.ord === "idle") startIdle(e.id, 0, "开局就闲着")
+    else lastOrd.set(e.id, e.ord)
+  }
 
   for (const f of replay.frames) {
     // 交火、挨打：用这一帧之前的局面查归属（这一帧死的也还在）
@@ -160,13 +186,13 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       if (!enemies(a.owner, tg.owner)) continue
       if (firstContact < 0) {
         firstContact = f.t
-        events.push({ t: f.t, p: -1, text: `第一次交火：P${a.owner} 的 ${a.type} 打 P${tg.owner} 的 ${tg.type}，在 ${at(tg)}` })
+        events.push({ t: f.t, p: -1, text: `第一次交火：P${a.owner} 的 ${a.type} 打 P${tg.owner} 的 ${tg.type}，在 ${at(tg)}`, cat: "key" })
       }
       if (firstHitTaken[tg.owner] < 0) firstHitTaken[tg.owner] = f.t
       if (firstHitDealt[a.owner] < 0) firstHitDealt[a.owner] = f.t
       if (kind(tg.type) === "building" && firstBuildingHit[tg.owner] < 0) {
         firstBuildingHit[tg.owner] = f.t
-        events.push({ t: f.t, p: tg.owner, text: `${who(tg.owner)}的建筑第一次挨打：${tg.type} ${at(tg)}，打它的是 P${a.owner} 的 ${a.type}` })
+        events.push({ t: f.t, p: tg.owner, text: `${who(tg.owner)}的建筑第一次挨打：${tg.type} ${at(tg)}，打它的是 P${a.owner} 的 ${a.type}`, cat: "key" })
       }
     }
     for (const id of f.die ?? []) {
@@ -174,7 +200,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       if (!e) continue
       closeIdle(e, f.t)
       if (kind(e.type) === "resource") {
-        events.push({ t: f.t, p: -1, text: `${at(e)} 的 ${e.type} 采完了` })
+        events.push({ t: f.t, p: -1, text: `${at(e)} 的 ${e.type} 采完了`, cat: "depleted" })
         continue
       }
       const by = lastHit.get(id) ?? -1
@@ -183,7 +209,14 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       if (e.owner < 0) events.push({ t: f.t, p: -1, text: `中立的 ${e.type} 死了 ${at(e)}${byText}` })
       else if (kind(e.type) === "building") events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}失去 ${e.type}${e.bp !== undefined ? "（还没建好）" : ""} ${at(e)}${byText}` })
     }
-    applyFrame(s, f)
+    const delta = applyFrame(s, f)
+    for (const o of delta.owned) {
+      const e = s.ents.get(o.id)!
+      const to = e.owner < 0 ? "中立" : e.owner === me ? "你" : " " + who0(e.owner)
+      events.push({ t: f.t, p: -1, text: `${o.from < 0 ? "中立" : who(o.from)}的 ${e.type} #${e.id} ${at(e)} 换主人，归了${to}`, cat: "key" })
+      if (e.owner >= 0 && e.owner < n && isArmy(e.type) && firstArmy[e.owner] < 0) firstArmy[e.owner] = f.t
+      if (e.owner < 0) idleFrom.delete(e.id)
+    }
     for (const e of f.spawn ?? []) {
       if (initialIds.has(e.id) || e.owner < 0 || e.owner >= n) continue
       const cost = types[e.type]?.cost ?? {}
@@ -191,19 +224,25 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
         spent[e.owner].set(r, (spent[e.owner].get(r) ?? 0) + (c ?? 0))
         spentTotal[e.owner] += c ?? 0
       }
-      if (isWorker(e.type) && e.ord === "idle") idleFrom.set(e.id, f.t)
+      if (isWorker(e.type)) {
+        if (e.ord === "idle") startIdle(e.id, f.t, "造出来就闲着")
+        else lastOrd.set(e.id, e.ord)
+      }
+      if (isArmy(e.type) && firstArmy[e.owner] < 0) firstArmy[e.owner] = f.t
       if (kind(e.type) === "building") events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}放下 ${e.type} 的地基 ${at(e)}` })
       else if (kind(e.type) === "unit" && !firstMade[e.owner].has(e.type)) {
         firstMade[e.owner].add(e.type)
-        events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}第一次造出 ${e.type}` })
+        events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}第一次造出 ${e.type}`, cat: "key" })
       }
     }
     for (const [id, ord] of f.ord ?? []) {
       const e = s.ents.get(id)
       if (!e || e.owner < 0 || !isWorker(e.type)) continue
-      if (ord === "idle") {
-        if (!idleFrom.has(id)) idleFrom.set(id, f.t)
-      } else closeIdle(e, f.t)
+      if (ord === "idle") startIdle(id, f.t, "造出来就闲着")
+      else {
+        closeIdle(e, f.t)
+        lastOrd.set(id, ord)
+      }
     }
     const bp = f.bp ?? []
     for (let i = 0; i < bp.length; i += 2) {
@@ -242,15 +281,30 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
 
   out.push("## 关键事件")
   const shown = events.filter((e) => me === undefined || e.p === -1 || e.p === me || enemies(e.p, me) || team(e.p) === team(me))
-  // 太多时保留开头和结尾（结尾往往是输掉的那几下）
+  // 太多时：先把资源点采完的合成一行；还多就保留开头和结尾（结尾往往是输掉的那几下），中间只留"第一次……"、换主人这些
   const HEAD = 15
   const TAIL = 30
-  const list = shown.length > HEAD + TAIL ? [...shown.slice(0, HEAD), null, ...shown.slice(-TAIL)] : shown
-  for (const e of list) out.push(e ? `t${e.t}  ${e.text}` : `（中间略去 ${shown.length - HEAD - TAIL} 条）`)
+  const line = (e: (typeof events)[number]) => `t${e.t}  ${e.text}`
+  if (opts.full || shown.length <= HEAD + TAIL) for (const e of shown) out.push(line(e))
+  else {
+    const dep = shown.filter((e) => e.cat === "depleted")
+    const rest = shown.filter((e) => e.cat !== "depleted")
+    if (rest.length <= HEAD + TAIL) for (const e of rest) out.push(line(e))
+    else {
+      const mid = rest.slice(HEAD, -TAIL)
+      const keep = mid.filter((e) => e.cat === "key").slice(0, 20)
+      for (const e of rest.slice(0, HEAD)) out.push(line(e))
+      for (const e of keep) out.push(line(e))
+      out.push(`（t${mid[0].t}～t${mid[mid.length - 1].t} 之间略去 ${mid.length - keep.length} 条：放地基、建好、失去建筑这些）`)
+      for (const e of rest.slice(-TAIL)) out.push(line(e))
+    }
+    if (dep.length) out.push(`资源点采完了 ${dep.length} 处（t${dep[0].t}～t${dep[dep.length - 1].t}）`)
+    out.push("（加 --full 列出全部事件）")
+  }
   if (firstContact < 0) out.push("整局双方没有交过火")
   out.push("")
 
-  // 战斗：时间上挨着（60 tick 内）、地点挨着（15 格内）的死亡算一场，3 个以上才列
+  // 战斗：时间上挨着（60 tick 内）、地点挨着（15 格内）的死亡算一场，3 个以上才列；一场最长 300 tick，再长就算下一场
   const battles: Death[][] = []
   for (const d of deaths) {
     const b = battles[battles.length - 1]
@@ -259,13 +313,13 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       const cy = g.reduce((a, x) => a + x.y, 0) / g.length
       return Math.abs(d.x - cx) + Math.abs(d.y - cy) <= 15
     }
-    if (b && d.t - b[b.length - 1].t <= 60 && near(b)) b.push(d)
+    if (b && d.t - b[b.length - 1].t <= 60 && d.t - b[0].t <= 300 && near(b)) b.push(d)
     else battles.push([d])
   }
   const big = battles.filter((b) => b.length >= 3)
   out.push(`## 战斗（死 3 个以上的）`)
   if (big.length === 0) out.push("没有")
-  const shownBattles = big.length > 15 ? [...big.slice(0, 5), null, ...big.slice(-10)] : big
+  const shownBattles = big.length > 15 && !opts.full ? [...big.slice(0, 5), null, ...big.slice(-10)] : big
   for (const b of shownBattles) {
     if (!b) {
       out.push(`（中间略去 ${big.length - 15} 场）`)
@@ -278,7 +332,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       .map((p) => {
         const m = new Map<string, number>()
         for (const d of b) if (d.owner === p) m.set(d.type, (m.get(d.type) ?? 0) + 1)
-        return `${p < 0 ? "中立" : who0(p)}损失 ${countList(m)}`
+        return `${p < 0 ? "中立" : who(p)}损失 ${countList(m)}`
       })
     out.push(`t${b[0].t}～${b[b.length - 1].t} 在 (${cx}, ${cy}) 附近：${loss.join("；")}`)
   }
@@ -326,12 +380,56 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     if (avgIdle >= 1.5) hints.push(`抽样时平均有 ${avgIdle.toFixed(1)} 个工人闲着（命令是 idle）：没去采集、也没在建造`)
     const longest = idleSpans.filter((sp) => sp.owner === p).sort((a, b) => b.to - b.from - (a.to - a.from))
     for (const sp of longest.slice(0, 3))
-      hints.push(`${sp.type} #${sp.id} 从 t${sp.from} 闲到 t${sp.to}（${sp.to - sp.from} tick），${sp.to === last ? "最后" : "当时"}在 (${sp.x}, ${sp.y})`)
+      hints.push(`${sp.type} #${sp.id} 从 t${sp.from} 闲到 t${sp.to}（${sp.to - sp.from} tick），${sp.to === last ? "最后" : "当时"}在 (${sp.x}, ${sp.y})；${sp.before}`)
     if (longest.length > 3) hints.push(`另有 ${longest.length - 3} 段工人闲了 ${LONG_IDLE} tick 以上`)
     const cheapest = Math.min(...Object.values(types).map((t) => Object.values(t.cost ?? {}).reduce((a: number, c) => a + (c ?? 0), 0)).filter((c) => c > 0))
     const avgBank = after.reduce((a, smp) => a + sum(smp.players[p].res), 0) / Math.max(1, after.length)
     if (Number.isFinite(cheapest) && avgBank >= cheapest * 4) hints.push(`钱囤着没花：抽样时平均手上留着 ${Math.round(avgBank)}（最便宜的东西才 ${cheapest}）`)
     if (firstHitDealt[p] < 0 && firstHitTaken[p] >= 0) hints.push("整局没打到过敌人，只挨了打")
+    // 同一个位置的建筑反复被拆
+    const razed = new Map<string, { type: string; x: number; y: number; n: number }>()
+    for (const d of deaths) {
+      if (d.owner !== p || kind(d.type) !== "building") continue
+      const k = `${d.type}@${d.x},${d.y}`
+      const r = razed.get(k) ?? { type: d.type, x: d.x, y: d.y, n: 0 }
+      r.n++
+      razed.set(k, r)
+    }
+    const again = [...razed.values()].filter((r) => r.n >= 2).sort((a, b) => b.n - a.n)
+    if (again.length)
+      hints.push(`同一个位置的建筑反复被拆：${again.slice(0, 3).map((r) => `${r.type} (${r.x}, ${r.y}) ${r.n} 次`).join("、")}（拆了又在原地建；换个安全点的位置，或者先派兵守住）`)
+    if (hasWorkers) {
+      // 工人被卷进战斗：一场里死了 3 个以上工人的
+      const bad = big
+        .map((b) => ({ b, lost: b.filter((d) => d.owner === p), workers: b.filter((d) => d.owner === p && isWorker(d.type)).length }))
+        .filter((x) => x.workers >= 3)
+      if (bad.length) {
+        const where = bad.slice(0, 3).map(({ b, lost, workers }) => {
+          const cx = Math.round(b.reduce((a, x) => a + x.x, 0) / b.length)
+          const cy = Math.round(b.reduce((a, x) => a + x.y, 0) / b.length)
+          return `t${b[0].t} 在 (${cx}, ${cy}) 附近死了 ${workers} 个工人（这场一共损失 ${lost.length} 个）`
+        })
+        hints.push(`工人被卷进战斗：${where.join("；")}${bad.length > 3 ? `，另有 ${bad.length - 3} 场` : ""}。敌人打过来时可以让工人躲开，或者在采集的地方留兵`)
+      }
+    }
+    if (hasArmy) {
+      if (firstArmy[p] < 0 && firstHitTaken[p] >= 0) hints.push(`整局没有兵（只有工人），第 ${firstHitTaken[p]} tick 起挨打`)
+      else if (firstArmy[p] > 0 && firstHitTaken[p] >= 0 && firstArmy[p] > firstHitTaken[p]) hints.push(`第 ${firstHitTaken[p]} tick 就挨打了，第一个兵到 t${firstArmy[p]} 才有`)
+      // 第一场大战开打时的兵力
+      const first = big.find((b) => b.some((d) => d.owner === p))
+      if (first) {
+        const st = model.stateAt(Math.max(0, first[0].t - 1))
+        const army = new Array<number>(n).fill(0)
+        for (const e of st.ents.values()) if (e.owner >= 0 && e.owner < n && isArmy(e.type)) army[e.owner]++
+        const foes = [...new Set(first.map((d) => d.owner))].filter((q) => enemies(p, q))
+        const most = Math.max(0, ...foes.map((q) => army[q]))
+        if (foes.length && army[p] < most) {
+          const cx = Math.round(first.reduce((a, x) => a + x.x, 0) / first.length)
+          const cy = Math.round(first.reduce((a, x) => a + x.y, 0) / first.length)
+          hints.push(`第一场大战（t${first[0].t}，(${cx}, ${cy}) 附近）开打时兵数（不算工人）：${who0(p)} ${army[p]}，${foes.map((q) => `${who0(q)} ${army[q]}`).join("、")}`)
+        }
+      }
+    }
     if (!won.includes(p) && won.length > 0) {
       const best = Math.max(...won.map((w) => incomeOf[w]))
       if (best > 0 && incomeOf[p] < best * 0.6)

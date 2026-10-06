@@ -6,7 +6,7 @@ import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { resolveType, World } from "../core/world.ts"
-import type { Ruleset } from "../core/types.ts"
+import type { EntityState, Ruleset } from "../core/types.ts"
 import { PKG_ROOT } from "../paths.ts"
 
 /** 平台自带规则包的目录（RULES.md、objectives.ts 在这里）；别的规则包的目录由调用方给 */
@@ -142,7 +142,7 @@ export function mapSection(rules: Ruleset): string {
     out.push(`图例：${terrain}；\`$\` 资源点；大写字母是建筑（A 是 P0 的、B 是 P1 的……），小写字母是单位（a 是 P0 的……），\`n\` 是中立的非资源实体。`, "")
   } else out.push("（地图太大，不画字符图，只列实体）", "")
   const resources = ents.filter((e) => e.def.kind === "resource")
-  if (resources.length) out.push(`资源点（${resources.length} 个）：${resources.map((e) => `${e.type} (${e.x}, ${e.y}) 储量 ${e.amount}`).join("；")}`, "")
+  if (resources.length) out.push(...resourceGroups(resources, ents, n), "")
   for (let p = -1; p < n; p++) {
     const mine = ents.filter((e) => e.owner === p && e.def.kind !== "resource")
     if (!mine.length) continue
@@ -150,8 +150,54 @@ export function mapSection(rules: Ruleset): string {
     for (const e of mine) byType.set(e.type, [...(byType.get(e.type) ?? []), `(${e.x}, ${e.y})`])
     out.push(`${p < 0 ? "中立" : `P${p}`}：${[...byType].map(([t, at]) => `${t} ${at.join(" ")}`).join("；")}`)
   }
+  if (w.markers.length) {
+    out.push("", "开局的标记（规则包画在地图上的区域和文字，回放里看得到）：")
+    for (const m of w.markers) {
+      const who = (o: number | null | undefined) => (o === null || o === undefined || o < 0 ? "" : `，属于 P${o}`)
+      out.push(m.kind === "zone" ? `- 区域 (${m.x}, ${m.y}) ${m.w}×${m.h}${m.label ? ` 「${m.label}」` : ""}${who(m.owner)}` : `- 文字 (${m.x}, ${m.y})「${m.text}」${who(m.owner)}`)
+    }
+  }
   out.push("", "你不一定是 P0：开局看 `view.me` 和自己实体的位置。建筑的坐标是占地左上角。")
   return out.join("\n")
+}
+
+/** 资源点按挨着的（3 格以内）分成几片，每片标出离谁近 */
+function resourceGroups(resources: readonly EntityState[], ents: readonly EntityState[], n: number): string[] {
+  const parent = resources.map((_, i) => i)
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])))
+  const gap = (a: EntityState, b: EntityState) => Math.max(0, a.x - (b.x + b.w - 1), b.x - (a.x + a.w - 1)) + Math.max(0, a.y - (b.y + b.h - 1), b.y - (a.y + a.h - 1))
+  for (let i = 0; i < resources.length; i++) for (let j = 0; j < i; j++) if (gap(resources[i], resources[j]) <= 3) parent[find(i)] = find(j)
+  const groups = new Map<number, EntityState[]>()
+  resources.forEach((e, i) => groups.set(find(i), [...(groups.get(find(i)) ?? []), e]))
+  // 每个玩家的"家"：建筑的中心，没有建筑就用所有实体的中心
+  const home = [...Array(n).keys()].map((p) => {
+    const own = ents.filter((e) => e.owner === p && e.def.kind !== "resource")
+    const base = own.filter((e) => e.def.kind === "building")
+    const list = base.length ? base : own
+    if (!list.length) return null
+    return { x: list.reduce((a, e) => a + e.x + e.w / 2, 0) / list.length, y: list.reduce((a, e) => a + e.y + e.h / 2, 0) / list.length }
+  })
+  const out = [`资源点（${resources.length} 个，按挨在一起的分成 ${groups.size} 片；距离是到各家建筑中心的格数）：`]
+  for (const g of groups.values()) {
+    const cx = g.reduce((a, e) => a + e.x + e.w / 2, 0) / g.length
+    const cy = g.reduce((a, e) => a + e.y + e.h / 2, 0) / g.length
+    const d = home.map((h) => (h ? Math.round(Math.abs(h.x - cx) + Math.abs(h.y - cy)) : null))
+    const known = d.map((v, p) => ({ v, p })).filter((x): x is { v: number; p: number } => x.v !== null).sort((a, b) => a.v - b.v)
+    const where =
+      known.length === 0
+        ? ""
+        : known.length === 1 || known[0].v * 1.5 < known[1].v
+          ? `靠近 P${known[0].p}`
+          : known[known.length - 1].v <= known[0].v * 1.5
+            ? known[known.length - 1].v - known[0].v <= 2
+              ? "中间（各家差不多远）"
+              : `中间偏 P${known[0].p}`
+            : `在 ${known.filter((x) => x.v <= known[0].v * 1.5).map((x) => `P${x.p}`).join("、")} 之间`
+    const total = g.reduce((a, e) => a + e.amount, 0)
+    const dist = known.length ? `，距离 ${[...Array(n).keys()].map((p) => (d[p] === null ? "" : `P${p} ${d[p]}`)).filter(Boolean).join("、")}` : ""
+    out.push(`- ${where}${dist}：${g.map((e) => `${e.type} (${e.x}, ${e.y}) 储量 ${e.amount}`).join("；")}${g.length > 1 ? `（共 ${total}）` : ""}`)
+  }
+  return out
 }
 
 export function buildPrompt(rules: Ruleset, dir: string, dts: string): string {
@@ -282,12 +328,27 @@ export function rulesTsconfig(files: string[], paths?: { ruleset: string; standa
   )
 }
 
+/** 规则包沙箱里的全局（不是 Node，只有这些和 ES2022 自带的） */
+export const RULES_GLOBALS_DTS = `// 规则包沙箱里能用的全局（除了 ES2022 自带的 Math、JSON、Map 这些）。由 rts-arena new-rules 生成，不要改。
+// 没有 Date、网络、文件、定时器。
+
+/** 调试输出：打到命令行的标准错误（每次回调最多 20 行、每行 300 字，整局 2000 行） */
+declare const console: {
+  log(...args: unknown[]): void
+  info(...args: unknown[]): void
+  warn(...args: unknown[]): void
+  error(...args: unknown[]): void
+  debug(...args: unknown[]): void
+}
+`
+
 /** 对规则包目录做类型检查（index.ts 和它 import 的文件） */
 export function typecheckRuleset(rulesDir: string): string {
   const dir = join(tmpdir(), "rts-arena-check", `rules-${process.pid}-${randomBytes(3).toString("hex")}`)
   mkdirSync(dir, { recursive: true })
   try {
-    writeFileSync(join(dir, "tsconfig.json"), rulesTsconfig([resolve(rulesDir, "index.ts").split("\\").join("/")]))
+    writeFileSync(join(dir, "globals.d.ts"), RULES_GLOBALS_DTS)
+    writeFileSync(join(dir, "tsconfig.json"), rulesTsconfig([resolve(rulesDir, "index.ts").split("\\").join("/"), "globals.d.ts"]))
     return tsc(join(dir, "tsconfig.json"))
   } finally {
     rmSync(dir, { recursive: true, force: true })

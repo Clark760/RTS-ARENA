@@ -39,8 +39,10 @@ const HELP = `用法：rts-arena <命令> [参数]
   run [对手...] [选项]                  自己的 bot 打对手（不写就打 baseline），回放和日志写到 ./replays
   league [对手...] [选项]               联赛：自己的 bot 和对手循环对打，出排行榜（不写对手就和所有现成的 bot 打）
   view [回放目录] [--port N] [--open]   网页播放器（默认看 ./replays，端口 5180；--open 起来后打开浏览器）
-  report [回放] [--player N] [--every T] 文字战报：每隔 T tick 双方的经济、兵力、建筑，关键事件、战斗、损失、可能的问题
-                                        （不写回放就看 ./replays 里最新的一局；不写 --player 就按你的 bot 坐的座位写）
+  report [回放] [--player N] [--every T] [--full]
+                                        文字战报：每隔 T tick 双方的经济、兵力、建筑，关键事件、战斗、损失、可能的问题
+                                        （不写回放就看 ./replays 里最新的一局；不写 --player 就按你的 bot 坐的座位写；
+                                        事件太多时会省略中间的，--full 全部列出）
 
 在任何目录：
   list                                  列出规则包和现成的 bot
@@ -61,6 +63,7 @@ run 的选项：
         --teams 2v2   分队（规则包要支持），按给出的 bot 顺序分组：2v2 就是前 2 个一队、后 2 个一队
         --out 路径    回放目录，默认 ./replays；单局时也可以给 .json 文件名
         --no-check    跳过类型检查
+        --quiet       每局只打一行（结果、谁出了错），最后的胜率照常打印
         --json        每行输出一个 JSON 事件（start / game / summary / warning / error），给程序读
 league 的选项：
         --size K      每局几个人（默认 2；规则包不能两个人打时是它的最少人数）
@@ -72,6 +75,24 @@ league 的选项：
                       名次分：第一名 1 分、最后一名 0 分、中间平分（两人局就是胜 1 平 0.5）；
                       等级分（1500 起）把名次拆成两两比较，按全部对局一起算，和打的先后顺序无关
 `
+
+/** HELP 里某个命令的那几行（命令行和续行、"xx 的选项"那一段）；没有这个命令返回 null */
+function helpFor(cmd: string): string | null {
+  const lines = HELP.split("\n")
+  const out: string[] = []
+  const head = new RegExp(`^  ${cmd.replace(/[^a-z-]/g, "")}(\\s|$)`)
+  for (let i = 0; i < lines.length; i++) {
+    if (head.test(lines[i])) {
+      out.push(lines[i])
+      while (i + 1 < lines.length && /^ {20,}\S/.test(lines[i + 1])) out.push(lines[++i])
+    } else if (lines[i].startsWith(`${cmd} 的选项`)) {
+      out.push("", lines[i])
+      while (i + 1 < lines.length && /^ {6,}\S/.test(lines[i + 1])) out.push(lines[++i])
+    }
+  }
+  if (!out.length) return null
+  return `用法：rts-arena ${cmd} …（全部命令：rts-arena help）\n\n${out.join("\n")}`
+}
 
 /** --json：输出改成每行一个 JSON 事件（给网页对战页和 agent 用），人看的文字不再打印 */
 let jsonMode = false
@@ -99,11 +120,11 @@ function say(msg: string): void {
 /** 各命令接受的选项；值为 true 的是开关，不带值 */
 const OPTIONS: Record<string, Record<string, boolean>> = {
   docs: { out: false },
-  run: { seed: false, games: false, out: false, teams: false, "no-check": true, json: true },
+  run: { seed: false, games: false, out: false, teams: false, "no-check": true, json: true, quiet: true },
   league: { seed: false, size: false, teams: false, partners: false, "per-table": false, "per-pair": false, tables: false, out: false, "no-check": true, json: true },
   check: { ticks: false },
   view: { port: false, open: true },
-  report: { player: false, every: false },
+  report: { player: false, every: false, full: true },
 }
 
 function parseArgs(command: string | undefined, argv: string[]): { pos: string[]; opt: Record<string, string | true> } {
@@ -268,10 +289,12 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
   if (!opt["no-check"]) {
     const out = typecheck(rules, src.dir, [...new Set(files)])
     if (out) fail(`类型检查没通过（加 --no-check 可以跳过）：\n${out}`)
+    rulesetTypeWarning(src)
   }
   for (const w of checkLimits(rules)) warn(w)
   const games = opt.games ? Number(opt.games) : 1
   if (!Number.isInteger(games) || games < 1) fail("--games 要是正整数")
+  const quiet = opt.quiet === true
   const baseSeed = typeof opt.seed === "string" ? Number(opt.seed) : Math.floor(Math.random() * 1e9)
   if (!Number.isInteger(baseSeed)) fail("--seed 要是整数")
   const outOpt = typeof opt.out === "string" ? opt.out : undefined
@@ -332,10 +355,21 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
       k === n
         ? order.map((f, p) => `P${p}=${names.get(f)}`).join("  ")
         : rotated.map((members, t) => `队${t + 1}[${members.map((i) => `P${seats.indexOf(i)}=${names.get(files[i])}`).join(" ")}]`).join(" 对 ")
-    say(`第 ${g + 1} 局  种子 ${seed}  ${lineup}  用时 ${(ms / 1000).toFixed(1)} 秒`)
-    if (!jsonMode) printResult(replay)
-    say(`  回放：${relative(process.cwd(), file)}`)
-    for (const l of logs) say(`  P${l.seat} 的日志：${relative(process.cwd(), join(dirname(file), l.file))}`)
+    if (quiet) {
+      const r = replay.result
+      const w = r.winners ?? []
+      const trouble = replay.bots
+        .filter((b) => b.status === "dead" || b.errors || b.fuelOuts)
+        .map((b) => `P${b.player} ${b.status === "dead" ? "已停止" : `报错 ${b.errors}、燃料耗尽 ${b.fuelOuts}`}`)
+      say(
+        `第 ${g + 1}/${games} 局  种子 ${seed}  ${lineup}：${w.length ? `${w.map((p) => `P${p}`).join("、")} 赢` : "平局"}（第 ${r.tick} tick，${r.reason}）${trouble.length ? `  ！${trouble.join("；")}` : ""}  ${basename(file)}`,
+      )
+    } else {
+      say(`第 ${g + 1} 局  种子 ${seed}  ${lineup}  用时 ${(ms / 1000).toFixed(1)} 秒`)
+      if (!jsonMode) printResult(replay)
+      say(`  回放：${relative(process.cwd(), file)}`)
+      for (const l of logs) say(`  P${l.seat} 的日志：${relative(process.cwd(), join(dirname(file), l.file))}`)
+    }
     const ranking = replay.result.ranking!
     const won = replay.result.winners ?? []
     if (won.length === 0) draws++
@@ -377,7 +411,7 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
   }
   saveSeries()
   emit0(series.summary)
-  say("（每个 bot 的日志开头附了一份它视角的战报；任何回放都可以用 rts-arena report <回放> --player N 看）")
+  say(`（回放和日志在 ${relative(process.cwd(), dirname(seriesFile)) || "."}；每个 bot 的日志开头附了一份它视角的战报；任何回放都可以用 rts-arena report <回放> --player N 看）`)
   if (games > 1 && !jsonMode) {
     const parts =
       k === n
@@ -488,13 +522,19 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
     )
   if (N > 16) fail("联赛最多 16 个 bot")
   const files = resolveBots(rules, src, args)
-  const dup = files.find((f, i) => files.findIndex((g) => resolve(g) === resolve(f)) !== i)
-  if (dup) fail(`${dup} 写了两次`)
   const names = botNames(files)
-  const labels = files.map((f) => names.get(f)!)
+  // 同一个 bot 可以写好几次（看看它和自己的副本打得怎样、给排行榜当参照）：和 run 一样带上编号
+  const twice = (f: string) => files.filter((g) => resolve(g) === resolve(f)).length > 1
+  const labels = files.map((f, i) => (twice(f) ? `${names.get(f)}#${i + 1}` : names.get(f)!))
+  // 名字和文件名对不上的（bot.ts 用的是目录名），说一声哪个名字是哪个文件
+  const renamed = [...new Set(files)].filter((f) => names.get(f) !== basename(f).replace(/\.ts$/, ""))
+  if (renamed.length) say(`（名字对应的文件：${renamed.map((f) => `${names.get(f)} = ${displayFile(f)}`).join("，")}）`)
+  if (mode === "mixed" && files.some((f) => botName(f) === "idle"))
+    warn("轮换搭档的分队联赛里有 idle：分到它当队友的 bot 等于少一个人打，排名会受分到谁的运气影响；想要参照物可以换成 baseline")
   if (!opt["no-check"]) {
-    const out = typecheck(rules, src.dir, files)
+    const out = typecheck(rules, src.dir, [...new Set(files)])
     if (out) fail(`类型检查没通过（加 --no-check 可以跳过）：\n${out}`)
+    rulesetTypeWarning(src)
   }
   for (const w of checkLimits(rules)) warn(w)
   const tablesOpt = intOpt("tables")
@@ -646,6 +686,16 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
     console.log("\n" + statsText(stats.toJSON(), st))
   }
   say(`\n回放和每个 bot 的日志在 ${outDir}；排名和统计记在 ${relative(process.cwd(), seriesFile)}；看某一局：rts-arena report <回放>`)
+}
+
+/** 自己写的规则包没通过类型检查：只提醒（比赛照打），详情让规则包作者用 check 看 */
+function rulesetTypeWarning(src: RulesetRef): void {
+  if (src.builtin) return
+  const out = typecheckRuleset(src.dir)
+  if (!out) return
+  const at = relative(process.cwd(), src.dir) || "."
+  const lines = out.trim().split("\n")
+  warn(`规则包 ${at} 没通过类型检查（不影响这次比赛；规则包作者用 rts-arena check ${at} 看详情）：\n${lines.slice(0, 3).join("\n")}${lines.length > 3 ? `\n…还有 ${lines.length - 3} 行` : ""}`)
 }
 
 /** 只在 --json 时输出的事件 */
@@ -982,7 +1032,7 @@ async function main(): Promise<void> {
       const every = typeof opt.every === "string" ? Number(opt.every) : undefined
       if (every !== undefined && !(Number.isInteger(every) && every > 0)) fail("--every 要是正整数")
       if (!pos[0]) console.log(`（最新的一局：${file}）`)
-      process.stdout.write(buildReport(replay, { player, every }))
+      process.stdout.write(buildReport(replay, { player, every, full: opt.full === true }))
       return
     }
     case "league": {
@@ -999,9 +1049,13 @@ async function main(): Promise<void> {
       serveViewer(pos[0] ?? "replays", port, process.argv[1], opt.open === true)
       return
     }
-    default:
+    default: {
+      // help <命令>：只看这个命令的那几行
+      const only = command === "help" && pos[0] ? helpFor(pos[0]) : null
+      if (only) return void console.log(only)
       console.log(HELP)
       if (command && command !== "help") process.exit(1)
+    }
   }
 }
 

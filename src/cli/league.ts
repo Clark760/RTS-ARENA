@@ -161,10 +161,7 @@ export function leagueStandings(names: string[], games: LeagueGame[]): LeagueRes
   const table: Standing[] = names.map((name, i) => {
     const s = st[i]
     const rate = s.games ? s.points / s.games : 0
-    // 得分率的 95% 区间：名次分在 0～1 之间，方差不超过同样得分率的胜负局；
-    // 再像 Agresti-Coull 那样加 2 胜 2 负往 50% 收缩，局数少（甚至全胜）时区间不会窄得离谱
-    const shrunk = (s.points + 2) / (s.games + 4)
-    const half = 1.96 * Math.sqrt((shrunk * (1 - shrunk)) / (s.games + 4))
+    const half = rateCi(s.points, s.games)
     return {
       index: i,
       name,
@@ -187,6 +184,16 @@ export function leagueStandings(names: string[], games: LeagueGame[]): LeagueRes
   const result: LeagueResult = teamed ? { table, matrix, partners } : { table, matrix }
   result.confidence = adjacentConfidence(result)
   return result
+}
+
+/**
+ * 得分率（points / games，每局 0～1 分）95% 区间的半宽：名次分在 0～1 之间，方差不超过同样得分率的胜负局；
+ * 再像 Agresti-Coull 那样加 2 胜 2 负往 50% 收缩，局数少（甚至全胜）时区间不会窄得离谱
+ */
+export function rateCi(points: number, games: number): number {
+  if (!games) return 0
+  const shrunk = (points + 2) / (games + 4)
+  return 1.96 * Math.sqrt((shrunk * (1 - shrunk)) / (games + 4))
 }
 
 /** 误差函数（Abramowitz-Stegun 7.1.26，误差 < 1.5e-7） */

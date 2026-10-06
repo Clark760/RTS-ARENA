@@ -269,7 +269,7 @@ export class World implements SetupContext, RuleContext {
     this.events.push({ kind: "died", id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, killer, ...(e.construction ? { unfinished: true as const } : {}) })
     for (const p of this.players) {
       if (p.id === e.owner || this.visibleTo(p.id, e))
-        this.pushEvent(p.id, { kind: "died", tick: this.tick, id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y })
+        this.pushEvent(p.id, { kind: "died", tick: this.tick, id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, ...(e.construction ? { unfinished: true as const } : {}) })
     }
   }
 

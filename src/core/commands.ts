@@ -165,22 +165,31 @@ function pay(w: World, p: number, def: TypeDef): string | null {
 }
 
 /**
- * 地基能不能放在 (x, y)。先查每一格都在视野里，再查地形和实体：
- * 看不见的格子里有没有东西不会从拒绝原因里漏出去。
+ * 地基能不能放在 (x, y)。顺序：超出地图 → 地形、资源点（这两样整局都看得见）→ 每一格都在视野里 → 其他实体。
+ * 看不见的格子里有没有单位、建筑不会从拒绝原因里漏出去。
  */
 function placeProblem(w: World, p: number, def: TypeDef, x: number, y: number): string | null {
   if (x + def.w > w.width || y + def.h > w.height) return `${def.name}（${def.w}×${def.h}）左上角放在 (${x}, ${y}) 会超出地图`
-  for (let yy = y; yy < y + def.h; yy++)
-    for (let xx = x; xx < x + def.w; xx++)
-      if (w.rules.fog && !w.vis[p][yy * w.width + xx]) return `(${xx}, ${yy}) 不在你方视野里，只能在看得见的地方建造`
-  for (let yy = y; yy < y + def.h; yy++)
-    for (let xx = x; xx < x + def.w; xx++) {
-      const i = yy * w.width + xx
+  const each = (fn: (xx: number, yy: number, i: number) => string | null) => {
+    for (let yy = y; yy < y + def.h; yy++)
+      for (let xx = x; xx < x + def.w; xx++) {
+        const r = fn(xx, yy, yy * w.width + xx)
+        if (r) return r
+      }
+    return null
+  }
+  return (
+    each((xx, yy, i) => {
       if (!w.walk[i]) return `(${xx}, ${yy}) 的地形不能建造`
+      const o = w.ents.get(w.staticOcc[i])
+      return o && o.def.kind === "resource" ? `(${xx}, ${yy}) 有 #${o.id}（${o.type}）挡着` : null
+    }) ??
+    each((xx, yy, i) => (w.rules.fog && !w.vis[p][i] ? `(${xx}, ${yy}) 不在你方视野里，只能在看得见的地方建造` : null)) ??
+    each((xx, yy, i) => {
       const o = w.ents.get(w.staticOcc[i] || w.unitOcc[i])
-      if (o) return `(${xx}, ${yy}) 有 #${o.id}（${o.type}）挡着`
-    }
-  return null
+      return o ? `(${xx}, ${yy}) 有 #${o.id}（${o.type}）挡着` : null
+    })
+  )
 }
 
 function checkXY(w: World, x: unknown, y: unknown): string | null {
