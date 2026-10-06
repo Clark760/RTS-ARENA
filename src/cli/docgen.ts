@@ -9,7 +9,7 @@ import { resolveType } from "../core/world.ts"
 import type { Ruleset } from "../core/types.ts"
 import { PKG_ROOT } from "../paths.ts"
 
-/** 规则包的文本资源（RULES.md、objectives.ts）所在目录 */
+/** 平台自带规则包的目录（RULES.md、objectives.ts 在这里）；别的规则包的目录由调用方给 */
 export function rulesetDir(id: string): string {
   return join(PKG_ROOT, "rulesets", id)
 }
@@ -23,10 +23,11 @@ function literalUnion(names: string[]): string {
   return names.length === 0 ? "never" : names.map((n) => JSON.stringify(n)).join(" | ")
 }
 
-export function buildDts(rules: Ruleset): string {
+/** dir 是规则包目录（读它的 objectives.ts） */
+export function buildDts(rules: Ruleset, dir: string): string {
   const api = readFileSync(join(PKG_ROOT, "src", "api", "bot-api.ts"), "utf8")
   const globals = readFileSync(join(PKG_ROOT, "src", "api", "bot-globals.d.ts"), "utf8")
-  const objPath = join(rulesetDir(rules.id), "objectives.ts")
+  const objPath = join(dir, "objectives.ts")
   if (!existsSync(objPath)) throw new Error(`规则包 ${rules.id} 缺少 objectives.ts`)
   const objectives = readFileSync(objPath, "utf8")
   if (!/\b(interface|type)\s+Objectives\b/.test(objectives)) throw new Error(`${objPath} 里要定义 Objectives`)
@@ -104,8 +105,8 @@ export function unitTable(rules: Ruleset): string {
   return rows.join("\n")
 }
 
-export function buildPrompt(rules: Ruleset, dts: string): string {
-  const rulesMd = readFileSync(join(rulesetDir(rules.id), "RULES.md"), "utf8").trim()
+export function buildPrompt(rules: Ruleset, dir: string, dts: string): string {
+  const rulesMd = readFileSync(join(dir, "RULES.md"), "utf8").trim()
   const platform = readFileSync(join(PKG_ROOT, "src", "api", "PLATFORM.md"), "utf8").trim()
   const terrain = Object.entries(rules.terrain)
     .map(([ch, t]) => `\`${ch}\` ${t.walkable ? "可通行" : "不可通行"}`)
@@ -174,22 +175,69 @@ export function botTsconfig(files: string[]): string {
 }
 
 /** 用 tsc 检查 bot；返回错误输出，没有错误返回空字符串 */
-export function typecheck(rules: Ruleset, files: string[]): string {
+export function typecheck(rules: Ruleset, rulesDir: string, files: string[]): string {
   // 每次一个临时目录：几个 agent 同时跑 check / run 不会互相覆盖
   const dir = join(tmpdir(), "rts-arena-check", `${rules.id}-${process.pid}-${randomBytes(3).toString("hex")}`)
   mkdirSync(dir, { recursive: true })
   try {
-    return runTsc(rules, files, dir)
+    return runTsc(rules, rulesDir, files, dir)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 }
 
-function runTsc(rules: Ruleset, files: string[], dir: string): string {
-  writeFileSync(join(dir, "arena.d.ts"), buildDts(rules))
+function runTsc(rules: Ruleset, rulesDir: string, files: string[], dir: string): string {
+  writeFileSync(join(dir, "arena.d.ts"), buildDts(rules, rulesDir))
   writeFileSync(join(dir, "tsconfig.json"), botTsconfig(["arena.d.ts", ...files.map((f) => resolve(f))]))
-  // typescript 装在哪都行（平台的 node_modules 里，或者被提升到上层）
-  const tsc = join(dirname(createRequire(import.meta.url).resolve("typescript/package.json")), "bin", "tsc")
-  const r = spawnSync(process.execPath, [tsc, "-p", join(dir, "tsconfig.json"), "--pretty", "false"], { encoding: "utf8" })
+  return tsc(join(dir, "tsconfig.json"))
+}
+
+/** 跑 tsc -p，返回错误输出（没有错误返回空字符串）。typescript 装在哪都行（平台的 node_modules 里，或者被提升到上层） */
+function tsc(project: string): string {
+  const bin = join(dirname(createRequire(import.meta.url).resolve("typescript/package.json")), "bin", "tsc")
+  const r = spawnSync(process.execPath, [bin, "-p", project, "--pretty", "false"], { encoding: "utf8" })
   return r.status === 0 ? "" : (r.stdout + r.stderr).trim()
+}
+
+/**
+ * 写规则包用的 tsconfig：类型从 "rts-arena/ruleset" 导入（就是 src/core/types.ts），
+ * 共用工具从 "rts-arena/standard" 导入（rulesets/common/standard.ts）。路径是这台机器上平台的绝对路径，平台挪了位置要重新生成
+ */
+export function rulesTsconfig(files: string[]): string {
+  return JSON.stringify(
+    {
+      compilerOptions: {
+        target: "ES2022",
+        lib: ["ES2022"],
+        types: [],
+        strict: true,
+        noEmit: true,
+        erasableSyntaxOnly: true,
+        verbatimModuleSyntax: true,
+        allowImportingTsExtensions: true,
+        module: "preserve",
+        moduleResolution: "bundler",
+        moduleDetection: "force",
+        paths: {
+          "rts-arena/ruleset": [join(PKG_ROOT, "src", "core", "types.ts").split("\\").join("/")],
+          "rts-arena/standard": [join(PKG_ROOT, "rulesets", "common", "standard.ts").split("\\").join("/")],
+        },
+      },
+      files,
+    },
+    null,
+    2,
+  )
+}
+
+/** 对规则包目录做类型检查（index.ts 和它 import 的文件） */
+export function typecheckRuleset(rulesDir: string): string {
+  const dir = join(tmpdir(), "rts-arena-check", `rules-${process.pid}-${randomBytes(3).toString("hex")}`)
+  mkdirSync(dir, { recursive: true })
+  try {
+    writeFileSync(join(dir, "tsconfig.json"), rulesTsconfig([resolve(rulesDir, "index.ts").split("\\").join("/")]))
+    return tsc(join(dir, "tsconfig.json"))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 }

@@ -1,17 +1,32 @@
 // 命令行入口：rts-arena <命令> ...（在平台仓库里开发时等价于 npm run arena -- <命令> ...）
 import { randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { basename, dirname, join, relative, resolve } from "node:path"
+import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import { checkLimits } from "../core/limits.ts"
 import { runMatch, type MatchBot } from "../core/match.ts"
 import { mixSeed } from "../core/rng.ts"
 import type { Replay, Ruleset } from "../core/types.ts"
 import { compileBot, createBot } from "../sandbox/quickjs.ts"
-import { botTsconfig, buildDts, buildPrompt, typecheck } from "./docgen.ts"
+import { botTsconfig, buildDts, buildPrompt, typecheck, typecheckRuleset } from "./docgen.ts"
 import { serveViewer } from "./serve.ts"
-import { importRuleset, knownBotFile, knownBots, listRulesets, readWorkspaceIn, WORKSPACE_FILE, type Workspace } from "./catalog.ts"
+import {
+  findRuleset,
+  knownBotFile,
+  knownBots,
+  listRulesets,
+  loadRulesetRef,
+  looksLikePath,
+  readWorkspaceIn,
+  rulesetHint,
+  WORKSPACE_FILE,
+  type RulesetRef,
+  type Workspace,
+} from "./catalog.ts"
+import { writeRulesTemplate } from "./rules-template.ts"
 
 const HELP = `用法：rts-arena <命令> [参数]
+
+<规则包> 是平台自带规则包的名字（见 list），或者自己写的规则包目录（如 ./my-rules，在沙箱里跑）。
 
 在 bot 目录里（有 arena.json 的目录，用 init 建）：
   init <规则包> [目录]                   建 bot 目录（默认当前目录）：arena.json、bot.ts 模板、PROMPT.md、arena.d.ts、tsconfig.json
@@ -25,6 +40,10 @@ const HELP = `用法：rts-arena <命令> [参数]
   docs  <规则包> [--out 目录]            生成 arena.d.ts 和 PROMPT.md（默认 ./out/<规则包>/）
   check <规则包> <bot>... [--ticks N]    检查指定的 bot
   run   <规则包> <bot>... [选项]         指定所有参赛 bot 打一局（或多局）
+
+写规则包：
+  new-rules <目录>                      建一个规则包目录：能直接跑的示例规则包、写法说明 RULESET.md、tsconfig.json
+  check <规则包> [--ticks N]             检查规则包本身：类型检查、加载、各种人数试打 N tick、打一整局看结束判定
 
   <bot> 可以是文件路径，也可以是现成 bot 的名字：baseline（每个规则包的基准 bot）、idle（不动）等，见 list
 run 的选项：
@@ -92,10 +111,12 @@ function parseArgs(command: string | undefined, argv: string[]): { pos: string[]
   return { pos, opt }
 }
 
-async function loadRuleset(id: string | undefined): Promise<Ruleset> {
-  if (!id) fail("缺少规则包名。可用的：" + listRulesets().join("、"))
+/** 认出并加载规则包；base 是相对路径的起点 */
+async function loadRuleset(ref: string | undefined, base = "."): Promise<{ rules: Ruleset; src: RulesetRef }> {
+  if (!ref) fail("缺少规则包。平台自带的：" + listRulesets().join("、") + "；自己写的规则包写目录路径")
+  const src = findRuleset(ref, base) ?? fail(rulesetHint(ref))
   try {
-    return await importRuleset(id)
+    return { rules: await loadRulesetRef(src), src }
   } catch (e) {
     fail((e as Error).message)
   }
@@ -113,24 +134,26 @@ function readWorkspace(): Workspace | null {
  * check / run 的两种写法：第一个参数是规则包名，就是"指定所有 bot"；
  * 否则在 bot 目录里，规则包和自己的 bot 从 arena.json 读，参数是对手。
  */
-async function target(pos: string[], command: string): Promise<{ rules: Ruleset; bots: string[]; mine: boolean }> {
-  if (pos[0] !== undefined && listRulesets().includes(pos[0])) return { rules: await loadRuleset(pos[0]), bots: pos.slice(1), mine: false }
+async function target(pos: string[], command: string): Promise<{ rules: Ruleset; src: RulesetRef; bots: string[]; mine: boolean }> {
+  // 第一个参数是规则包（名字，或者里面有 index.ts 的目录）；bot 文件不会被当成规则包
+  if (pos[0] !== undefined && findRuleset(pos[0])) return { ...(await loadRuleset(pos[0])), bots: pos.slice(1), mine: false }
   const ws = readWorkspace()
   if (!ws)
     fail(
       pos.length === 0
         ? `当前目录不是 bot 目录（没有 ${WORKSPACE_FILE}）。先 rts-arena init <规则包>，或者写成 rts-arena ${command} <规则包> <bot>...`
-        : `"${pos[0]}" 不是规则包名，当前目录也不是 bot 目录（没有 ${WORKSPACE_FILE}）。可用的规则包：${listRulesets().join("、")}`,
+        : `"${pos[0]}" 不是规则包，当前目录也不是 bot 目录（没有 ${WORKSPACE_FILE}）。${rulesetHint(pos[0])}`,
     )
   if (!existsSync(ws.bot)) fail(`${WORKSPACE_FILE} 里写的 bot 文件 ${ws.bot} 不存在`)
-  return { rules: await loadRuleset(ws.ruleset), bots: [ws.bot, ...pos], mine: true }
+  return { ...(await loadRuleset(ws.ruleset)), bots: [ws.bot, ...pos], mine: true }
 }
 
-function writeDocs(rules: Ruleset, dir: string): void {
-  mkdirSync(dir, { recursive: true })
-  const dts = buildDts(rules)
-  writeFileSync(join(dir, "arena.d.ts"), dts)
-  writeFileSync(join(dir, "PROMPT.md"), buildPrompt(rules, dts))
+/** rulesDir 是规则包目录，out 是写到哪 */
+function writeDocs(rules: Ruleset, rulesDir: string, out: string): void {
+  mkdirSync(out, { recursive: true })
+  const dts = buildDts(rules, rulesDir)
+  writeFileSync(join(out, "arena.d.ts"), dts)
+  writeFileSync(join(out, "PROMPT.md"), buildPrompt(rules, rulesDir, dts))
 }
 
 /** 显示名：文件名去掉 .ts；init 建出来的都叫 bot.ts，改用所在目录名 */
@@ -152,12 +175,12 @@ function botNames(files: string[]): Map<string, string> {
 }
 
 /** bot 参数可以是文件路径，也可以是现成 bot 的名字（如 baseline、idle） */
-function resolveBots(rules: Ruleset, args: string[]): string[] {
+function resolveBots(rules: Ruleset, src: RulesetRef, args: string[]): string[] {
   return args.map((a) => {
     if (existsSync(a)) return a
-    const known = knownBotFile(rules.id, a)
+    const known = knownBotFile(src, a)
     if (known) return relative(process.cwd(), known)
-    fail(`找不到 bot "${a}"：既不是文件，也不是「${rules.name}」的现成 bot（${knownBots(rules.id).join("、")}）`)
+    fail(`找不到 bot "${a}"：既不是文件，也不是「${rules.name}」的现成 bot（${knownBots(src).join("、")}）`)
   })
 }
 
@@ -211,13 +234,13 @@ function printResult(replay: Replay): void {
   }
 }
 
-async function cmdRun(rules: Ruleset, args: string[], opt: Record<string, string | true>): Promise<void> {
+async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Record<string, string | true>): Promise<void> {
   if (args.length < rules.players.min || args.length > rules.players.max)
     fail(`「${rules.name}」需要 ${rules.players.min}~${rules.players.max} 个 bot，给了 ${args.length} 个`)
-  const files = resolveBots(rules, args)
+  const files = resolveBots(rules, src, args)
   const names = botNames(files)
   if (!opt["no-check"]) {
-    const out = typecheck(rules, [...new Set(files)])
+    const out = typecheck(rules, src.dir, [...new Set(files)])
     if (out) fail(`类型检查没通过（加 --no-check 可以跳过）：\n${out}`)
   }
   for (const w of checkLimits(rules)) warn(w)
@@ -273,7 +296,13 @@ async function cmdRun(rules: Ruleset, args: string[], opt: Record<string, string
     const order = seats.map((i) => files[i])
     const bots = await makeBots(rules, order, seed, names)
     const t0 = performance.now()
-    const replay = runMatch({ ruleset: rules, bots, seed, teams })
+    let replay: Replay
+    try {
+      replay = runMatch({ ruleset: rules, bots, seed, teams })
+    } catch (e) {
+      // 规则包出错（沙箱规则包的燃料、超时、返回值不对等）：这一局作废，后面的也不打了
+      fail(`第 ${g + 1} 局（种子 ${seed}）没打完：${(e as Error).message}`)
+    }
     const ms = performance.now() - t0
     for (const w of checkLimits(rules, replay)) warn(w)
     let file: string
@@ -414,12 +443,12 @@ function botLog(replay: Replay, p: number, game: number): string {
   return lines.join("\n") + "\n"
 }
 
-async function cmdCheck(rules: Ruleset, args: string[], opt: Record<string, string | true>): Promise<void> {
-  const files = resolveBots(rules, args)
+async function cmdCheck(rules: Ruleset, src: RulesetRef, args: string[], opt: Record<string, string | true>): Promise<void> {
+  const files = resolveBots(rules, src, args)
   const checkTicks = typeof opt.ticks === "string" ? Number(opt.ticks) : CHECK_TICKS
   if (!Number.isInteger(checkTicks) || checkTicks < 1) fail("--ticks 要是正整数")
   let ok = true
-  const out = typecheck(rules, files)
+  const out = typecheck(rules, src.dir, files)
   if (out) {
     ok = false
     console.log(`类型检查没通过：\n${out}`)
@@ -439,7 +468,14 @@ async function cmdCheck(rules: Ruleset, args: string[], opt: Record<string, stri
         const code = p === seat ? compiled.code : IDLE_CODE
         bots.push({ name: p === seat ? botName(file) : "idle", file, runner: await createBot(code, mixSeed(1, "bot", p), { fuel: rules.fuel }) })
       }
-      const replay = runMatch({ ruleset: { ...rules, maxTicks: Math.min(rules.maxTicks, checkTicks) }, bots, seed: 1 })
+      let replay: Replay
+      try {
+        replay = runMatch({ ruleset: { ...rules, maxTicks: Math.min(rules.maxTicks, checkTicks) }, bots, seed: 1 })
+      } catch (e) {
+        ok = false
+        console.log(`${file}（位置 P${seat}）：试打时规则包出错：${(e as Error).message}`)
+        continue
+      }
       const st = replay.bots[seat]
       const errs = replay.frames.flatMap((f) => (f.errs ?? []).filter((e) => e.p === seat).map((e) => `第 ${f.t} tick：${e.msg}`))
       const where = `${file}（位置 P${seat}）`
@@ -454,6 +490,86 @@ async function cmdCheck(rules: Ruleset, args: string[], opt: Record<string, stri
     }
   }
   if (!ok) process.exit(1)
+}
+
+/**
+ * 检查规则包本身：类型检查（自己写的规则包）、加载和格式、说明书能生成、bots/ 里的 bot 过类型检查，
+ * 每种人数（支持分队时再加 2v2）试打 N tick，最后用不动的 bot 打一整局，看 result / timeUp 能不能正常给出结果
+ */
+async function cmdCheckRules(src: RulesetRef, opt: Record<string, string | true>): Promise<void> {
+  const checkTicks = typeof opt.ticks === "string" ? Number(opt.ticks) : CHECK_TICKS
+  if (!Number.isInteger(checkTicks) || checkTicks < 1) fail("--ticks 要是正整数")
+  let ok = true
+  const bad = (msg: string) => {
+    ok = false
+    console.log(msg)
+  }
+  if (!src.builtin) {
+    const out = typecheckRuleset(src.dir)
+    if (out) bad(`规则包类型检查没通过：\n${out}`)
+    else console.log("规则包类型检查通过")
+  }
+  let rules: Ruleset
+  try {
+    rules = await loadRulesetRef(src)
+  } catch (e) {
+    console.log(`加载失败：${(e as Error).message}`)
+    process.exit(1)
+  }
+  console.log(`加载通过：「${rules.name}」（${rules.id}），${rules.players.min}～${rules.players.max} 人${rules.teams ? "，支持分队" : ""}${src.builtin ? "" : "（在沙箱里跑）"}`)
+  for (const w of checkLimits(rules)) console.log(`提醒：${w}`)
+  try {
+    buildPrompt(rules, src.dir, buildDts(rules, src.dir))
+    console.log("说明书（PROMPT.md、arena.d.ts）能生成")
+  } catch (e) {
+    bad(`说明书生成不了：${(e as Error).message}`)
+  }
+  const botFiles = knownBots(src).map((n) => knownBotFile(src, n)!)
+  const tc = typecheck(rules, src.dir, botFiles)
+  if (tc) bad(`现成 bot 的类型检查没通过：\n${tc}`)
+  else console.log(`现成 bot 类型检查通过：${knownBots(src).join("、")}`)
+
+  const baseline = knownBotFile(src, "baseline")
+  const lineup = async (n: number, seed: number): Promise<MatchBot[]> => {
+    const bots: MatchBot[] = []
+    for (let p = 0; p < n; p++) {
+      const file = p === 0 && baseline ? baseline : "idle"
+      const code = file === "idle" ? IDLE_CODE : (compileBot(readFileSync(file, "utf8")) as { code: string }).code ?? IDLE_CODE
+      bots.push({ name: file === "idle" ? "idle" : "baseline", file, runner: await createBot(code, mixSeed(seed, "bot", p), { fuel: rules.fuel }) })
+    }
+    return bots
+  }
+  const configs: { n: number; teams?: number[] }[] = []
+  for (let n = rules.players.min; n <= rules.players.max; n++) configs.push({ n })
+  if (rules.teams && rules.players.max >= 4) configs.push({ n: 4, teams: [0, 0, 1, 1] })
+  const who = baseline ? "P0 是 baseline、其余不动" : "都是不动的 bot"
+  for (const c of configs) {
+    const label = c.teams ? "2v2" : `${c.n} 人`
+    try {
+      const t0 = performance.now()
+      const replay = runMatch({ ruleset: { ...rules, maxTicks: Math.min(rules.maxTicks, checkTicks) }, bots: await lineup(c.n, 1), seed: 1, teams: c.teams })
+      const st = replay.bots[0]
+      const botTrouble = baseline && (st.status === "dead" || st.errors > 0 || st.fuelOuts > 0)
+      if (botTrouble) bad(`${label}（${who}）试打 ${replay.result.tick} tick：baseline 出了问题${st.deadReason ? `：${st.deadReason}` : `，报错 ${st.errors}、燃料耗尽 ${st.fuelOuts}`}`)
+      else
+        console.log(
+          `${label}（${who}）试打 ${replay.result.tick} tick 通过，用时 ${((performance.now() - t0) / 1000).toFixed(1)} 秒，实体峰值 ${replay.perf.peakEntities}${baseline ? `，baseline 被拒命令 ${st.rejected}` : ""}`,
+        )
+    } catch (e) {
+      bad(`${label} 试打时规则包出错：${(e as Error).message}`)
+    }
+  }
+  // 整局：不动的 bot 打到底，看结束判定（多半是 timeUp）
+  try {
+    const t0 = performance.now()
+    const replay = runMatch({ ruleset: rules, bots: await lineup(rules.players.min, 2), seed: 2 })
+    const r = replay.result
+    console.log(`整局（${who}）：第 ${r.tick} tick 结束，${r.winners?.length ? `赢家 ${r.winners.map((p) => `P${p}`).join("、")}` : "平局"}——${r.reason}（用时 ${((performance.now() - t0) / 1000).toFixed(1)} 秒）`)
+  } catch (e) {
+    bad(`整局打不完，规则包出错：${(e as Error).message}`)
+  }
+  if (!ok) process.exit(1)
+  console.log("规则包检查通过")
 }
 
 /** check 试打的长度 */
@@ -475,21 +591,23 @@ export function onTick(view: View, cmd: Commands): void {
 
 /** 建 bot 目录，或者在已有的 bot 目录里更新说明书 */
 async function cmdInit(pos: string[]): Promise<void> {
-  let id = pos[0]
+  let ref = pos[0]
   let dir = pos[1] ?? "."
-  if (id === undefined) {
+  if (ref === undefined) {
     // 不带参数：更新当前 bot 目录
-    const ws = readWorkspace() ?? fail(`用法：rts-arena init <规则包> [目录]。可用的规则包：${listRulesets().join("、")}`)
-    id = ws.ruleset
+    const ws = readWorkspace() ?? fail(`用法：rts-arena init <规则包> [目录]。平台自带的规则包：${listRulesets().join("、")}`)
+    ref = ws.ruleset
     dir = "."
   }
-  const rules = await loadRuleset(id)
+  const { rules, src } = await loadRuleset(ref)
   mkdirSync(dir, { recursive: true })
   const wsFile = join(dir, WORKSPACE_FILE)
   const old = existsSync(wsFile) ? (JSON.parse(readFileSync(wsFile, "utf8")) as Partial<Workspace>) : {}
   const bot = old.bot ?? "bot.ts"
-  writeFileSync(wsFile, JSON.stringify({ ruleset: rules.id, bot }, null, 2) + "\n")
-  writeDocs(rules, dir)
+  // 自己写的规则包记相对 bot 目录的路径（正斜杠，换台机器、换系统也能用）
+  const rulesetField = src.builtin ? rules.id : relative(resolve(dir), src.dir).split(sep).join("/") || "."
+  writeFileSync(wsFile, JSON.stringify({ ruleset: looksLikePath(rulesetField) || src.builtin ? rulesetField : `./${rulesetField}`, bot }, null, 2) + "\n")
+  writeDocs(rules, src.dir, dir)
   writeFileSync(join(dir, "tsconfig.json"), botTsconfig(["arena.d.ts", bot]))
   const created = !existsSync(join(dir, bot))
   if (created) writeFileSync(join(dir, bot), BOT_TEMPLATE)
@@ -511,16 +629,26 @@ async function main(): Promise<void> {
   switch (command) {
     case "list": {
       for (const id of listRulesets()) {
-        const r = await loadRuleset(id)
-        console.log(`${id}\t${r.name}\t${r.players.min}~${r.players.max} 人\t现成 bot：${knownBots(id).join("、")}`)
+        const { rules: r, src } = await loadRuleset(id)
+        console.log(`${id}\t${r.name}\t${r.players.min}~${r.players.max} 人\t现成 bot：${knownBots(src).join("、")}`)
       }
+      console.log("（自己写的规则包用目录路径，比如 rts-arena run ./my-rules a.ts b.ts；rts-arena new-rules <目录> 建一个）")
       return
     }
     case "docs": {
-      const rules = await loadRuleset(pos[0])
+      const { rules, src } = await loadRuleset(pos[0])
       const dir = typeof opt.out === "string" ? opt.out : join("out", rules.id)
-      writeDocs(rules, dir)
+      writeDocs(rules, src.dir, dir)
       console.log(`已生成 ${relative(process.cwd(), join(dir, "arena.d.ts"))} 和 PROMPT.md`)
+      return
+    }
+    case "new-rules": {
+      if (!pos[0]) fail("用法：rts-arena new-rules <目录>")
+      try {
+        writeRulesTemplate(pos[0], listRulesets())
+      } catch (e) {
+        fail((e as Error).message)
+      }
       return
     }
     case "init": {
@@ -528,16 +656,19 @@ async function main(): Promise<void> {
       return
     }
     case "check": {
+      // 只写了规则包、没写 bot：检查规则包本身
+      const only = pos.length === 1 ? findRuleset(pos[0]) : null
+      if (only) return cmdCheckRules(only, opt)
       const t = await target(pos, "check")
       if (t.bots.length === 0) fail("缺少 bot 文件")
-      await cmdCheck(t.rules, t.bots, opt)
+      await cmdCheck(t.rules, t.src, t.bots, opt)
       return
     }
     case "run": {
       const t = await target(pos, "run")
       // bot 目录里不写对手：打基准 bot，人数不够就都补基准
       if (t.mine && t.bots.length === 1) while (t.bots.length < t.rules.players.min) t.bots.push("baseline")
-      await cmdRun(t.rules, t.bots, opt)
+      await cmdRun(t.rules, t.src, t.bots, opt)
       return
     }
     case "view": {

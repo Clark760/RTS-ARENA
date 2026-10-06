@@ -73,19 +73,25 @@ export function compileBot(source: string): { code: string } | { error: string }
   }
 }
 
+/** 新建一个独立的 QuickJS 运行时：自己的 WebAssembly 实例和内存（maxBytes 是硬上限） */
+export async function newSandboxRuntime(maxBytes: number): Promise<{ rt: QuickJSRuntime; memory: WebAssembly.Memory }> {
+  const memory = new WebAssembly.Memory({ initial: Math.min(256, maxBytes / PAGE), maximum: Math.ceil(maxBytes / PAGE) })
+  const qjs = await newQuickJSWASMModuleFromVariant(newVariant(RELEASE_SYNC, { wasmModule: await wasmModule(), wasmMemory: memory }))
+  return { rt: qjs.newRuntime(), memory }
+}
+
 /** 建一个 bot：独立的 WebAssembly 实例 + 内存 */
 export async function createBot(code: string, seed: number, limits: SandboxLimits): Promise<QuickJSBot> {
   const maxBytes = limits.memoryBytes ?? DEFAULT_MEMORY_BYTES
-  const memory = new WebAssembly.Memory({ initial: Math.min(256, maxBytes / PAGE), maximum: Math.ceil(maxBytes / PAGE) })
-  const qjs = await newQuickJSWASMModuleFromVariant(newVariant(RELEASE_SYNC, { wasmModule: await wasmModule(), wasmMemory: memory }))
-  return new QuickJSBot(qjs.newRuntime(), memory, maxBytes, code, seed, limits)
+  const { rt, memory } = await newSandboxRuntime(maxBytes)
+  return new QuickJSBot(rt, memory, maxBytes, code, seed, limits)
 }
 
-function clip(s: string, n: number): string {
+export function clip(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + "…" : s
 }
 
-function errorText(dumped: unknown): string {
+export function errorText(dumped: unknown): string {
   if (dumped && typeof dumped === "object") {
     const d = dumped as { name?: unknown; message?: unknown; stack?: unknown }
     const head = `${String(d.name ?? "Error")}: ${String(d.message ?? "")}`

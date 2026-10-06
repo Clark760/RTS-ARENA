@@ -102,15 +102,15 @@ export interface RuleContext {
   readonly height: number
   readonly rng: Rng
   /** 全部实体，按创建顺序 */
-  entities(): readonly EntityState[]
-  get(id: number): EntityState | undefined
-  readonly players: readonly PlayerState[]
+  entities(): readonly RuleEntity[]
+  get(id: number): RuleEntity | undefined
+  readonly players: readonly RulePlayer[]
   /** 本 tick 发生的事 */
   readonly events: readonly RuleEvent[]
   /** 两个占地矩形之间的曼哈顿距离（贴着 = 1） */
   dist(a: Rect, b: Rect): number
   /** 和矩形区域重叠的实体 */
-  entitiesIn(x: number, y: number, w: number, h: number): EntityState[]
+  entitiesIn(x: number, y: number, w: number, h: number): RuleEntity[]
   addScore(player: number, n: number): void
   setScore(player: number, n: number): void
   addResource(player: number, resource: string, n: number): void
@@ -154,6 +154,8 @@ export interface Ruleset {
   result(ctx: RuleContext): MatchResult | null
   /** 到 maxTicks 还没分出胜负时调用 */
   timeUp(ctx: RuleContext): MatchResult
+  /** 平台内部用：一局结束后调用（沙箱里的规则包在这里释放这一局的沙箱），规则包作者不用写 */
+  release?(): void
 }
 
 // ---------- 内部状态 ----------
@@ -173,7 +175,8 @@ export interface Rng {
   shuffle<T>(arr: T[]): void
 }
 
-export interface EntityState extends Rect {
+/** 规则包看到的实体。沙箱里的规则包拿到的是调用时的快照：改字段没有用，存起来下次再看也不会更新 */
+export interface RuleEntity extends Rect {
   id: number
   type: string
   def: TypeDef
@@ -186,6 +189,19 @@ export interface EntityState extends Rect {
   queue: { type: string; ticksLeft: number }[]
   /** 没建好的建筑：已完成和总工作量；建好的、规则包直接放的都是 null */
   construction: { done: number; total: number } | null
+  alive: boolean
+}
+
+/** 规则包看到的玩家 */
+export interface RulePlayer {
+  id: number
+  name: string
+  alive: boolean
+  score: number
+  resources: Record<string, number>
+}
+
+export interface EntityState extends RuleEntity {
   attackCd: number
   moveCd: number
   gatherCd: number
@@ -201,15 +217,9 @@ export interface EntityState extends Rect {
   stuck: number
   /** 上次被挡住时想走进的格子（-1 表示没有）；两个自己人互相想进对方的格就交换位置 */
   want: number
-  alive: boolean
 }
 
-export interface PlayerState {
-  id: number
-  name: string
-  alive: boolean
-  score: number
-  resources: Record<string, number>
+export interface PlayerState extends RulePlayer {
   /** 等着交给 bot 的事件 */
   pending: GameEvent[]
 }

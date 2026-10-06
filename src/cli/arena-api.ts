@@ -4,7 +4,7 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { join, resolve } from "node:path"
-import { importRuleset, knownBots, listRulesets, localBots, readWorkspaceIn } from "./catalog.ts"
+import { findRuleset, knownBots, listRulesets, loadRulesetRef, localBots, readWorkspaceIn, type RulesetRef } from "./catalog.ts"
 
 export interface ArenaApiOptions {
   /** 回放和日志目录 */
@@ -27,6 +27,28 @@ interface Run {
   stderr: string
   exitCode: number | null
   cancelled: boolean
+}
+
+/** 对战页列表里要的规则包信息；自己写的规则包要在沙箱里加载才知道，按 index.ts 的修改时间缓存 */
+const metaCache = new Map<string, { mtime: number; meta: { name: string; players: { min: number; max: number }; teams: boolean } }>()
+
+async function rulesetMeta(src: RulesetRef) {
+  const mtime = src.builtin ? 0 : statSync(join(src.dir, "index.ts")).mtimeMs
+  const hit = metaCache.get(src.dir)
+  if (hit && hit.mtime === mtime) return hit.meta
+  const r = await loadRulesetRef(src)
+  const meta = { name: r.name, players: r.players, teams: r.teams === true }
+  metaCache.set(src.dir, { mtime, meta })
+  return meta
+}
+
+/** 读 bot 目录的 arena.json；坏了就当没有 */
+function workspaceIn(dir: string) {
+  try {
+    return readWorkspaceIn(dir)
+  } catch {
+    return null
+  }
 }
 
 export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
@@ -84,18 +106,21 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
     }
 
     if (path === "/api/arena" && req.method === "GET") {
+      const workspace = workspaceIn(cwd)
+      const refs: RulesetRef[] = listRulesets().map((id) => findRuleset(id)!)
+      // bot 目录用的是自己写的规则包：也列出来（id 是 arena.json 里写的路径，命令行在 bot 目录里认得它）
+      const own = workspace ? findRuleset(workspace.ruleset, cwd) : null
+      if (own && !own.builtin) refs.push(own)
       const rulesets = []
-      for (const id of listRulesets()) {
-        const r = await importRuleset(id)
-        rulesets.push({ id, name: r.name, players: r.players, teams: r.teams === true, bots: knownBots(id) })
+      const broken: string[] = []
+      for (const src of refs) {
+        try {
+          rulesets.push({ id: src.ref, ...(await rulesetMeta(src)), bots: knownBots(src), sandboxed: !src.builtin })
+        } catch (e) {
+          broken.push(`${src.ref}：${(e as Error).message}`)
+        }
       }
-      let workspace = null
-      try {
-        workspace = readWorkspaceIn(cwd)
-      } catch {
-        // arena.json 坏了就当没有
-      }
-      send(res, 200, { rulesets, workspace, localBots: localBots(cwd), running: run !== null && run.exitCode === null })
+      send(res, 200, { rulesets, broken, workspace, localBots: localBots(cwd), running: run !== null && run.exitCode === null })
       return true
     }
 
@@ -133,7 +158,9 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
         return send(res, 400, { error: "请求不是 JSON" }), true
       }
       const { ruleset, bots, games, seed, teams } = body
-      if (typeof ruleset !== "string" || !listRulesets().includes(ruleset)) return send(res, 400, { error: "规则包不对" }), true
+      // 只认平台自带的规则包，和这个 bot 目录 arena.json 里写的规则包
+      const allowed = typeof ruleset === "string" && (listRulesets().includes(ruleset) || workspaceIn(cwd)?.ruleset === ruleset)
+      if (!allowed) return send(res, 400, { error: "规则包不对" }), true
       if (!Array.isArray(bots) || bots.length === 0 || bots.some((b) => typeof b !== "string" || b === "" || b.startsWith("-")))
         return send(res, 400, { error: "bot 列表不对" }), true
       if (!Number.isInteger(games) || (games as number) < 1 || (games as number) > MAX_GAMES) return send(res, 400, { error: `局数要是 1~${MAX_GAMES} 的整数` }), true

@@ -65,7 +65,18 @@ rts-arena view                     # 网页播放器：看 ./replays 里的回�
 
 ## 写一个规则包
 
-在平台仓库的 `rulesets/<id>/` 下放 `index.ts`（默认导出 `Ruleset`）、`objectives.ts`（导出 `Objectives` 类型）、`RULES.md`（玩法说明）。可以照着 `rulesets/koth/` 改。建议上限见 [doc/设计.md](doc/设计.md#7-建议上限)。
+规则包可以放在任意目录，用路径引用（`./my-rules`），平台在沙箱里跑它，所以大模型写的、别人发来的规则包也可以放心跑。写法见 [src/api/RULESET.md](src/api/RULESET.md)（`new-rules` 会复制一份到目录里）。
+
+```bash
+rts-arena new-rules my-rules                       # 建一个能直接跑的示例规则包（采金赛），从它改起
+rts-arena check ./my-rules                         # 检查：类型、格式、各种人数试打、打一整局看结束判定
+rts-arena run ./my-rules baseline baseline --games 4
+rts-arena init ./my-rules my-bot                   # 给它建 bot 目录，之后在 my-bot 里照常 check / run / view
+```
+
+- 目录里要有 `index.ts`（默认导出规则包对象）、`objectives.ts`（导出 `Objectives` 类型）、`RULES.md`（玩法说明），现成 bot 放 `bots/`（`baseline.ts` 是基准 bot）。
+- 能用平台的类型（`import type { Ruleset } from "rts-arena/ruleset"`）和共用代码（`"rts-arena/standard"`：标准单位、对称地图工具），不能 import 别的。燃料、墙钟、内存、地图和实体数都有上限，超了这一局作废并说明原因。
+- 平台自带的规则包在仓库的 `rulesets/<id>/`，是可信代码，直接在 Node 里跑（比沙箱快 2～3 倍）；想加进平台就照着 `rulesets/koth/` 写，用名字引用。建议上限见 [doc/设计.md](doc/设计.md#7-建议上限)。
 
 ## 开发平台
 

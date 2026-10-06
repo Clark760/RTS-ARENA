@@ -56,12 +56,18 @@ export function runMatch(opts: MatchOptions): Replay {
   const n = opts.bots.length
   if (n < rules.players.min || n > rules.players.max)
     throw new Error(`规则包 ${rules.id} 需要 ${rules.players.min}~${rules.players.max} 个玩家，给了 ${n} 个`)
-  const w = new World(
-    rules,
-    opts.bots.map((b) => b.name),
-    opts.seed,
-    opts.teams,
-  )
+  try {
+    return play(opts, new World(rules, opts.bots.map((b) => b.name), opts.seed, opts.teams))
+  } finally {
+    // 正常结束、出错都要释放：bot 的沙箱，以及沙箱规则包这一局的上下文
+    for (const b of opts.bots) b.runner?.dispose()
+    rules.release?.()
+  }
+}
+
+function play(opts: MatchOptions, w: World): Replay {
+  const rules = opts.ruleset
+  const n = opts.bots.length
   rules.setup(w)
   if (w.width === 0) throw new Error(`规则包 ${rules.id} 的 setup 没有调用 setTerrain`)
   w.computeVisibility()
@@ -166,8 +172,6 @@ export function runMatch(opts: MatchOptions): Replay {
     errCount.fill(0)
     opts.onTick?.(w.tick)
   }
-  for (const r of runners) r?.dispose()
-
   const types: Replay["types"] = {}
   for (const [name, def] of Object.entries(w.types))
     types[name] = { kind: def.kind, w: def.w, h: def.h, maxHp: def.maxHp, moveTicks: def.moveTicks, sight: def.sight, look: rules.types[name].look }

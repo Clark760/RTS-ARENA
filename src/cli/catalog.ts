@@ -1,10 +1,12 @@
 // 平台里有哪些规则包、现成 bot，当前目录是不是 bot 目录。命令行和播放器服务共用
-import { existsSync, readdirSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { isAbsolute, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { Ruleset } from "../core/types.ts"
 import { CODE_EXT, CODE_ROOT, PKG_ROOT } from "../paths.ts"
+import { loadSandboxedRuleset } from "../sandbox/ruleset.ts"
 
+/** 平台自带的规则包 */
 export function listRulesets(): string[] {
   const dir = join(PKG_ROOT, "rulesets")
   return readdirSync(dir, { withFileTypes: true })
@@ -12,28 +14,75 @@ export function listRulesets(): string[] {
     .map((d) => d.name)
 }
 
-/** 按 id 加载规则包；没有这个规则包时抛错 */
+/**
+ * 一个规则包在哪：平台自带的（按名字，可信代码，直接在 Node 里跑），
+ * 或者某个目录（别人写的，在沙箱里跑）。
+ */
+export interface RulesetRef {
+  /** 用户写的名字或路径（原样，传给子进程时用） */
+  ref: string
+  /** 规则包目录（index.ts、objectives.ts、RULES.md 所在） */
+  dir: string
+  builtin: boolean
+}
+
+/** 写的是路径（带斜杠、以 . 开头或者是绝对路径），不是规则包名 */
+export function looksLikePath(ref: string): boolean {
+  return ref.includes("/") || ref.includes("\\") || ref.startsWith(".") || isAbsolute(ref)
+}
+
+/** 认出一个规则包；base 是相对路径的起点（bot 目录的 arena.json 里的路径相对 bot 目录）。认不出返回 null */
+export function findRuleset(ref: string, base = "."): RulesetRef | null {
+  if (!looksLikePath(ref)) return listRulesets().includes(ref) ? { ref, dir: join(PKG_ROOT, "rulesets", ref), builtin: true } : null
+  const dir = resolve(base, ref)
+  return existsSync(join(dir, "index.ts")) && statSync(dir).isDirectory() ? { ref, dir, builtin: false } : null
+}
+
+/** 认不出时的说明 */
+export function rulesetHint(ref: string): string {
+  if (looksLikePath(ref)) return `${ref} 不是规则包目录（里面要有 index.ts、objectives.ts、RULES.md；可以用 rts-arena new-rules <目录> 建一个）`
+  return `没有规则包 "${ref}"。平台自带的：${listRulesets().join("、")}；自己写的规则包写目录路径（如 ./my-rules）`
+}
+
+/** 按名字加载平台自带的规则包；没有时抛错 */
 export async function importRuleset(id: string): Promise<Ruleset> {
-  if (!listRulesets().includes(id)) throw new Error(`没有规则包 "${id}"。可用的：${listRulesets().join("、")}`)
+  if (!listRulesets().includes(id)) throw new Error(rulesetHint(id))
   const file = join(CODE_ROOT, "rulesets", id, `index${CODE_EXT}`)
   const mod = (await import(pathToFileURL(file).href)) as { default: Ruleset }
   return mod.default
 }
 
-/** 规则包能用的现成 bot：bots/<规则包>/*.ts 和通用的 bots/*.ts */
-export function knownBots(id: string): string[] {
-  const list = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".ts")).map((f) => f.slice(0, -3)) : [])
-  return [...new Set([...list(join(PKG_ROOT, "bots", id)), ...list(join(PKG_ROOT, "bots"))])]
+/** 加载规则包：自带的直接导入，目录里的在沙箱里加载 */
+export async function loadRulesetRef(r: RulesetRef): Promise<Ruleset> {
+  if (r.builtin) return importRuleset(r.ref)
+  for (const f of ["objectives.ts", "RULES.md"]) if (!existsSync(join(r.dir, f))) throw new Error(`规则包目录 ${r.ref} 里缺少 ${f}`)
+  const rules = await loadSandboxedRuleset(r.dir)
+  if (listRulesets().includes(rules.id)) throw new Error(`规则包 ${r.ref} 的 id "${rules.id}" 和平台自带的规则包重名，换一个 id`)
+  return rules
+}
+
+/** 现成 bot 所在的目录：规则包自己的 bots/，再加平台通用的 bots/（idle 等） */
+function botDirs(r: RulesetRef): string[] {
+  return [r.builtin ? join(PKG_ROOT, "bots", r.ref) : join(r.dir, "bots"), join(PKG_ROOT, "bots")]
+}
+
+/** 规则包能用的现成 bot 的名字 */
+export function knownBots(r: RulesetRef): string[] {
+  const list = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts")).map((f) => f.slice(0, -3)) : [])
+  return [...new Set(botDirs(r).flatMap(list))]
 }
 
 /** 现成 bot 的文件路径；不是现成 bot 返回 null */
-export function knownBotFile(id: string, name: string): string | null {
+export function knownBotFile(r: RulesetRef, name: string): string | null {
   if (!/^[\w-]+$/.test(name)) return null
-  for (const f of [join(PKG_ROOT, "bots", id, `${name}.ts`), join(PKG_ROOT, "bots", `${name}.ts`)]) if (existsSync(f)) return f
+  for (const dir of botDirs(r)) {
+    const f = join(dir, `${name}.ts`)
+    if (existsSync(f)) return f
+  }
   return null
 }
 
-/** bot 目录里的 arena.json */
+/** bot 目录里的 arena.json。ruleset 是平台自带规则包的名字，或者规则包目录（相对这个 bot 目录） */
 export interface Workspace {
   ruleset: string
   bot: string

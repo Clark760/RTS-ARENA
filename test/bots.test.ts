@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { test } from "node:test"
-import { typecheck } from "../src/cli/docgen.ts"
+import { rulesetDir, typecheck } from "../src/cli/docgen.ts"
 import { runMatch } from "../src/core/match.ts"
 import type { Ruleset } from "../src/core/types.ts"
 import { compileBot, createBot } from "../src/sandbox/quickjs.ts"
@@ -24,7 +24,7 @@ for (const rules of [annihilation, koth, harvest, melee, frontier] as Ruleset[])
   test(`示例 bot 能通过「${rules.name}」生成的 arena.d.ts 类型检查`, () => {
     const dir = join(ROOT, "bots", rules.id)
     const files = [join(ROOT, "bots", "idle.ts"), ...readdirSync(dir).map((f) => join(dir, f))]
-    assert.equal(typecheck(rules, files), "")
+    assert.equal(typecheck(rules, rulesetDir(rules.id), files), "")
   })
 
   test(`「${rules.name}」的基准 bot 在沙箱里能打赢不动的对手`, async () => {
@@ -61,7 +61,7 @@ test("拓荒：基准 bot 自己建兵营、箭塔、仓库，打赢速攻", asy
 
 test("类型不对的 bot 过不了检查", () => {
   const bad = join(ROOT, "test", "fixtures", "bad-bot.ts")
-  const out = typecheck(harvest, [bad])
+  const out = typecheck(harvest, rulesetDir("harvest"), [bad])
   assert.match(out, /enemyBases/)
 })
 

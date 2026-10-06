@@ -7,10 +7,14 @@ interface RulesetInfo {
   players: { min: number; max: number }
   teams: boolean
   bots: string[]
+  /** 自己写的规则包（在沙箱里跑）；id 是 arena.json 里写的路径 */
+  sandboxed?: boolean
 }
 
 interface ArenaInfo {
   rulesets: RulesetInfo[]
+  /** 加载失败的规则包和原因 */
+  broken?: string[]
   workspace: { ruleset: string; bot: string } | null
   localBots: string[]
   running: boolean
@@ -311,7 +315,10 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       $("arena-page").innerHTML = '<div class="panel muted">对战页需要用 <code>rts-arena view</code>（或开发时的 <code>npm run viewer</code>）打开</div>'
       return
     }
-    rulesetSel.innerHTML = info.rulesets.map((r) => `<option value="${r.id}">${esc(r.name)}（${r.id}）</option>`).join("")
+    rulesetSel.innerHTML = info.rulesets
+      .map((r) => `<option value="${esc(r.id)}">${esc(r.name)}（${esc(r.id)}${r.sandboxed ? "，沙箱" : ""}）</option>`)
+      .join("")
+    if (info.broken?.length) $("ar-msg").textContent = `有规则包加载失败：${info.broken.join("；")}`
     if (info.workspace && info.rulesets.some((r) => r.id === info!.workspace!.ruleset)) rulesetSel.value = info.workspace.ruleset
     renderSetup()
     loadHistory()
