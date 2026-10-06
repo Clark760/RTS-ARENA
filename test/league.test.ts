@@ -9,6 +9,8 @@ import { join } from "node:path"
 import { test } from "node:test"
 import { createArenaApi } from "../src/cli/arena-api.ts"
 import { leagueStandings, leagueTables, los, teamSplits, type LeagueGame } from "../src/cli/league.ts"
+import { excitement, gameFacts, pickHighlights } from "../src/cli/highlights.ts"
+import type { Replay } from "../src/core/types.ts"
 
 const ROOT = join(import.meta.dirname, "..")
 const CLI = join(ROOT, "src", "cli", "arena.ts")
@@ -60,6 +62,7 @@ test("命令行 league：两两循环、换边，写汇总和每局回放；bot 
     assert.match(out, /共 6 局/)
     assert.match(out, /名次 +bot/)
     assert.match(out, /对阵（行对列的 胜-平-负）/)
+    assert.match(out, /## 精彩对局/)
     const files = readdirSync(join(dir, "lg"))
     assert.equal(files.filter((f) => /-g\d+\.json$/.test(f)).length, 6)
     const series = JSON.parse(readFileSync(join(dir, "lg", files.find((f) => f.endsWith(".series.json"))!), "utf8"))
@@ -67,6 +70,7 @@ test("命令行 league：两两循环、换边，写汇总和每局回放；bot 
     assert.equal(series.results.length, 6)
     assert.equal(series.summary.standings.length, 3)
     assert.equal(series.summary.standings.at(-1).name, "idle")
+    assert.ok(Array.isArray(series.summary.highlights))
     // 每对两局换边
     const pair01 = series.results.filter((g: { table: number[] }) => g.table[0] === 0 && g.table[1] === 1)
     assert.deepEqual(
@@ -114,6 +118,57 @@ test("命令行：联赛里同一个 bot 可以报名两次（带编号）；统
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test("精彩对局：落后又反超算逆转，主基地差点被拆算险胜；挑的时候同一组对手最多 2 局，太平淡的不要", () => {
+  const unit = (id: number, owner: number, x: number) => ({ id, type: "u", owner, x, y: 5, hp: 10, ord: "idle" })
+  const frames: Record<string, unknown>[] = Array.from({ length: 100 }, (_, i) => ({ t: i + 1 }))
+  frames[39].hp = [1, 20] // P0 的主基地挨打，剩 20%
+  frames[49].spawn = Array.from({ length: 10 }, (_, i) => unit(100 + i, 0, i)) // P0 补了 10 个兵，反超
+  frames[59].die = [20, 21, 22, 23, 24] // P1 的兵全死了
+  const replay = JSON.parse(
+    JSON.stringify({
+      format: "rts-arena-replay",
+      players: [
+        { name: "a", bot: "a.ts", team: 0 },
+        { name: "b", bot: "b.ts", team: 1 },
+      ],
+      types: {
+        u: { kind: "unit", w: 1, h: 1, maxHp: 10, cost: { gold: 10 } },
+        base: { kind: "building", w: 2, h: 2, maxHp: 100 },
+      },
+      initial: {
+        entities: [{ id: 1, type: "base", owner: 0, x: 0, y: 0, hp: 100, ord: "idle" }, { id: 2, type: "base", owner: 1, x: 20, y: 0, hp: 100, ord: "idle" }, unit(10, 0, 1), ...[20, 21, 22, 23, 24].map((id) => unit(id, 1, id))],
+        players: [
+          { resources: {}, score: 0, alive: true },
+          { resources: {}, score: 0, alive: true },
+        ],
+        markers: [],
+        status: "",
+      },
+      frames,
+      result: { winner: 0, winners: [0], reason: "摧毁了对方主基地", tick: 100, ranking: [[0], [1]] },
+      bots: [0, 1].map((p) => ({ player: p, status: "ok", errors: 0, fuelOuts: 0 })),
+    }),
+  ) as Replay
+  const f = gameFacts(replay)
+  assert.equal(f.winner, 0)
+  assert.ok(f.materialLow && Math.abs(f.materialLow.ratio - 0.2) < 1e-9, JSON.stringify(f.materialLow))
+  assert.equal(f.leadChanges, 1)
+  assert.equal(f.winnerBaseMin, 0.2)
+  const names = ["甲", "乙"]
+  const ex = excitement(f, { level: 1, text: "爆冷：……" }, (s) => names[s])
+  assert.match(ex.reasons.join("；"), /逆转：t\d+ 时 甲 的兵力和建筑只有 乙 的 20%/)
+  assert.match(ex.reasons.join("；"), /险胜：甲 的主基地一度只剩 20% 血/)
+  assert.ok(ex.score > 60 && ex.score <= 100, String(ex.score))
+  // bot 出错扣分
+  assert.ok(excitement({ ...f, trouble: true }, null, (s) => names[s]).score < ex.score - 25)
+  // 挑：同一组对手最多 2 局，不到 20 分的不要
+  const h = (index: number, key: string, score: number) => ({ index, seed: 1, replay: `g${index}.json`, who: key, winner: null, tick: 1, score, reasons: [], key })
+  assert.deepEqual(
+    pickHighlights([h(1, "a|b", 90), h(2, "a|b", 80), h(3, "a|b", 70), h(4, "a|c", 60), h(5, "b|c", 10)], 5).map((x) => x.index),
+    [1, 2, 4],
+  )
 })
 
 test("对战接口开联赛：事件里有最新排名和最后的汇总；参数不对被拒", async () => {

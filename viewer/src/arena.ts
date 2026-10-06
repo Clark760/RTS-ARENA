@@ -55,10 +55,23 @@ interface GameEvent {
   bots: { seat: number; errors: number; fuelOuts: number; rejected: number; status: string; deadReason?: string }[]
 }
 
+/** 联赛的精彩对局 */
+interface Highlight {
+  index: number
+  seed: number
+  replay: string
+  who: string
+  winner: string | null
+  tick: number
+  score: number
+  reasons: string[]
+}
+
 interface Summary {
   games: number
   draws: number
   league?: boolean
+  highlights?: Highlight[]
   standings?: Standing[]
   matrix?: Standings["matrix"]
   partnersMatrix?: Standings["partners"]
@@ -672,6 +685,22 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     </details>`
   }
 
+  /** 联赛的精彩对局：按精彩度挑的几局，带看点和回放 */
+  const highlightsHtml = (list: Highlight[] | undefined) =>
+    list === undefined
+      ? ""
+      : `<details open><summary>精彩对局</summary>${
+          list.length === 0
+            ? '<div class="muted small">这次没有特别精彩的：大多是一边倒，或者没怎么打起来</div>'
+            : `<div class="muted small">按逆转、优势换手、大战、险胜、爆冷打的精彩度挑的</div>${list
+                .map(
+                  (h, i) => `<div class="game"><div><b>${i + 1}. 第 ${h.index} 局</b> ${esc(h.who)} → ${h.winner ? `${esc(h.winner)} 赢` : "平局"} <span class="muted">（第 ${h.tick} tick，精彩度 ${h.score}）</span>
+                  <button class="link" data-replay="${esc(h.replay)}">看回放</button></div>
+                  <div class="small">${h.reasons.map(esc).join("；")}</div></div>`,
+                )
+                .join("")}`
+        }</details>`
+
   /** 联赛的对局多：折叠起来 */
   const leagueGames = (games: GameEvent[], open = false, teamed = false) =>
     games.length ? `<details${open ? " open" : ""}><summary>每一局（${games.length}）</summary>${games.map((g) => gameRow(g, teamed)).join("")}</details>` : ""
@@ -681,7 +710,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       const st = s.summary?.standings && s.summary.matrix ? { table: s.summary.standings, matrix: s.summary.matrix } : s.standings
       const full = st && (s.summary?.partnersMatrix || s.standings?.partners) ? { ...st, partners: s.summary?.partnersMatrix ?? s.standings?.partners, confidence: s.standings?.confidence } : st && { ...st, confidence: s.standings?.confidence }
       const multi = (s.size ?? 2) > 2 || s.partners === "mixed"
-      return (full ? standingsHtml(full, multi) + partnersHtml(full) + statsHtml(s.summary?.stats ?? s.stats, full) : "") + leagueGames(s.results, false, !!s.teams)
+      return highlightsHtml(s.summary?.highlights) + (full ? standingsHtml(full, multi) + partnersHtml(full) + statsHtml(s.summary?.stats ?? s.stats, full) : "") + leagueGames(s.results, false, !!s.teams)
     }
     const teamed = s.teams !== null
     return s.results.map((g) => gameRow(g, teamed)).join("") + (s.summary ? summaryTable(s.summary) : "")
@@ -740,7 +769,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       head +
       errors.map((m) => `<div class="err">${esc(m)}</div>`).join("") +
       warnings.map((m) => `<div class="warn">提醒：${esc(m)}</div>`).join("") +
-      (start?.league ? (standings ? standingsHtml(standings, lmulti) + partnersHtml(standings) + statsHtml(standings.stats, standings) : "") + leagueGames(games, r.running, teamed) : games.map((g) => gameRow(g, teamed)).join("") + (summary ? summaryTable(summary) : "")) +
+      (start?.league ? highlightsHtml(summary?.highlights) + (standings ? standingsHtml(standings, lmulti) + partnersHtml(standings) + statsHtml(standings.stats, standings) : "") + leagueGames(games, r.running, teamed) : games.map((g) => gameRow(g, teamed)).join("") + (summary ? summaryTable(summary) : "")) +
       (!r.running && r.exitCode && !errors.length && r.stderr ? `<pre class="err">${esc(r.stderr)}</pre>` : "")
     $<HTMLButtonElement>("ar-start").disabled = r.running
     $<HTMLButtonElement>("ar-stop").disabled = !r.running

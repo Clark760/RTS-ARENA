@@ -27,6 +27,7 @@ import { PKG_ROOT } from "../paths.ts"
 import { buildReport } from "./report.ts"
 import { leagueStandings, leagueTables, standingsText, teamSplits, type LeagueGame, type LeagueResult } from "./league.ts"
 import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
+import { excitement, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
 import { BASELINE as TEMPLATE_BASELINE, GREEDY as TEMPLATE_GREEDY, INDEX as TEMPLATE_INDEX, RUSH as TEMPLATE_RUSH, writeRulesTemplate } from "./rules-template.ts"
 
 const HELP = `用法：rts-arena <命令> [参数]
@@ -610,6 +611,8 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
   say(`联赛：${rules.name}（${rules.id}），${N} 个 bot（${labels.join("、")}），${how}，共 ${total} 局，种子从 ${baseSeed} 起`)
 
   const record: LeagueGame[] = []
+  /** 每局的看点，打完再按最终排名算爆冷、挑精彩对局 */
+  const played: { index: number; seed: number; replay: string; tick: number; seats: number[]; sideOf: number[]; facts: GameFacts }[] = []
   let index = 0
   for (let g = 0; g < perTable; g++)
     for (const [ti, table] of tables.entries()) {
@@ -631,6 +634,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
         .filter((group) => group.length > 0)
       record.push(mode === "mixed" ? { players: seats, ranking, teams: slots } : mode === "same" ? { players: slots.map((s) => s[0]), ranking } : { players: seats, ranking })
       stats.add(seats, replay)
+      played.push({ index, seed, replay: basename(file), tick: replay.result.tick, seats, sideOf: replay.players.map((pl, p) => pl.team ?? p), facts: gameFacts(replay) })
       const won = replay.result.winners ?? []
       let lineup: string
       let outcome: string
@@ -668,6 +672,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
       emit0({ type: "standings", ...series.standings, stats: series.stats })
     }
   const st = leagueStandings(labels, record)
+  const highlights = leagueHighlights(played, st, labels)
   series.summary = {
     type: "summary",
     league: true,
@@ -681,6 +686,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
     matrix: st.matrix,
     partnersMatrix: st.partners ?? null,
     stats: stats.toJSON(),
+    highlights,
     // 和普通比赛的汇总一样的字段，老的显示方式也能看
     participants: st.table.map((s) => ({ name: s.name, file: files[s.index], wins: s.wins, avgPlace: s.avgPlace })),
   }
@@ -689,6 +695,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
   if (!jsonMode) {
     console.log("\n" + standingsText(labels, st, { multi: sides > 2 || mode === "mixed", teams: mode === "mixed" }))
     console.log("\n" + statsText(stats.toJSON(), st))
+    console.log("\n" + highlightsText(highlights))
   }
   say(`\n回放和每个 bot 的日志在 ${outDir}；排名和统计记在 ${relative(process.cwd(), seriesFile)}；看某一局：rts-arena report <回放>`)
 }
@@ -703,6 +710,65 @@ function rulesetTypeWarning(src: RulesetRef): void {
   const at = rel.startsWith(".") || rel.startsWith("/") || /^[a-zA-Z]:/.test(rel) ? rel : `./${rel}`
   const lines = out.trim().split("\n")
   warn(`规则包 ${at} 没通过类型检查（不影响这次比赛；规则包作者用 rts-arena check ${at} 看详情）：\n${lines.slice(0, 3).join("\n")}${lines.length > 3 ? `\n…还有 ${lines.length - 3} 行` : ""}`)
+}
+
+/**
+ * 联赛的精彩对局：每局的看点（逆转、优势换手、大战、险胜）加上按最终排名算的爆冷（得分率低的赢了高的），
+ * 挑精彩度最高的几局（同一组对手最多 2 局）
+ */
+function leagueHighlights(
+  played: { index: number; seed: number; replay: string; tick: number; seats: number[]; sideOf: number[]; facts: GameFacts }[],
+  st: LeagueResult,
+  labels: string[],
+): Highlight[] {
+  const rate = new Map(st.table.map((s) => [s.index, s.rate]))
+  const all = played.map((g) => {
+    const members = (side: number) => [...new Set(g.seats.filter((_, p) => g.sideOf[p] === side))]
+    const name = (side: number) => members(side).map((i) => labels[i]).join("+")
+    const sideRate = (side: number) => {
+      const m = members(side)
+      return m.reduce((a, i) => a + (rate.get(i) ?? 0), 0) / Math.max(1, m.length)
+    }
+    const f = g.facts
+    let upset: { level: number; text: string } | null = null
+    if (f.winner !== null) {
+      const foe = f.sides.filter((x) => x !== f.winner).sort((a, b) => sideRate(b) - sideRate(a))[0]
+      if (foe !== undefined) {
+        const gap = sideRate(foe) - sideRate(f.winner)
+        upset = {
+          level: Math.max(0, Math.min(1, gap / 0.4)),
+          text: `爆冷：联赛得分率 ${Math.round(sideRate(f.winner) * 100)}% 的 ${name(f.winner)} 赢了 ${Math.round(sideRate(foe) * 100)}% 的 ${name(foe)}`,
+        }
+      }
+    }
+    const { score, reasons } = excitement(f, upset, name)
+    return {
+      index: g.index,
+      seed: g.seed,
+      replay: g.replay,
+      who: f.sides.map(name).join(" 对 "),
+      winner: f.winner === null ? null : name(f.winner),
+      tick: g.tick,
+      score,
+      reasons,
+      key: f.sides
+        .map((x) => members(x).sort((a, b) => a - b).join(","))
+        .sort()
+        .join("|"),
+    }
+  })
+  return pickHighlights(all, Math.min(5, Math.max(1, Math.round(played.length / 4))))
+}
+
+function highlightsText(list: Highlight[]): string {
+  const lines = ["## 精彩对局（按逆转、优势换手、大战、险胜、爆冷打的精彩度挑的）"]
+  if (list.length === 0) lines.push("  这次没有特别精彩的：大多是一边倒，或者没怎么打起来")
+  list.forEach((h, i) => {
+    lines.push(`  ${i + 1}. 第 ${h.index} 局 ${h.who}，${h.winner ? `${h.winner} 赢` : "平局"}（第 ${h.tick} tick，精彩度 ${h.score}）`)
+    lines.push(`     ${h.reasons.join("；")}`)
+    lines.push(`     回放 ${h.replay}`)
+  })
+  return lines.join("\n")
 }
 
 /** 只在 --json 时输出的事件 */
