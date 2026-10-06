@@ -37,7 +37,7 @@ rts-arena check                    # 类型检查 + 在每个位置上和不动�
 rts-arena run                      # 和基准 bot 打一局
 rts-arena run --games 10           # 打 10 局看胜率（每个种子换边各打一次）
 rts-arena run 对手.ts              # 和别的 bot 打（写文件路径或现成 bot 的名字）
-rts-arena view                     # 网页播放器看 ./replays 里的回放
+rts-arena view                     # 网页播放器：看 ./replays 里的回放，也能在「对战」页开比赛
 ```
 
 - `arena.json` 记着这个目录用哪个规则包、bot 是哪个文件；`check`、`run` 会自动带上你的 bot。
@@ -45,9 +45,13 @@ rts-arena view                     # 网页播放器看 ./replays 里的回放
 - 回放和日志写在 `./replays`：每局一个 JSON 回放，外加每个 bot 一份只含它自己信息的日志（`<回放>.P<座位>-<bot 名>.log`），几个 agent 同时跑也分得清。
 - 现成的对手：`baseline` 是每个规则包的基准 bot（多数对局能打赢该规则包的其他示例 bot，是衡量新 bot 的标准对手），`idle` 什么都不做；`rts-arena list` 列出全部。
 - 多方混战：`rts-arena run 对手1.ts 对手2.ts 对手3.ts --games 8`，同一个种子把座位轮换一遍，报胜场和平均名次。分队加 `--teams 2v2`（按 自己、参数里的顺序 前两个一队、后两个一队），盟友共享视野、按队伍判胜负。
+- `rts-arena run ... --json` 每行输出一个 JSON 事件（start / game / summary / warning / error），方便程序或 agent 读结果；每次 run 还会在回放目录写一份 `*.series.json` 汇总。
 - 不在 bot 目录里也能用完整写法：`rts-arena run melee a.ts b.ts --games 4`、`rts-arena check koth a.ts`。
 
-播放器：空格播放/暂停，←/→ 单步（Shift 一次 50），拖动平移、滚轮缩放，点实体看它的命令，右侧看 bot 日志和报错。
+播放器有两个页签：
+
+- **回放**：空格播放/暂停，←/→ 单步（Shift 一次 50），拖动平移、滚轮缩放，点实体看它的命令，右侧看 bot 日志和报错。
+- **对战**：选规则包、每个座位的 bot（自己目录里的 .ts、现成 bot，或者填路径）、分队、局数和种子，点开始就在后台跑（就是 `rts-arena run`）。每局显示赢家，带回放和每个 bot 日志的链接，最后出汇总；历史比赛也能翻看。同一时间只跑一场，可以中途停止。
 
 ## 写一个规则包
 

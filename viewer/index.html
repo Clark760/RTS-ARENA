@@ -3,22 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RTS Arena 回放</title>
+    <title>RTS Arena</title>
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
     <header>
       <strong class="brand">RTS Arena</strong>
-      <select id="replay-select" title="选择回放"></select>
-      <button id="refresh" title="刷新回放列表">刷新</button>
-      <label class="file-btn">打开文件<input id="file-input" type="file" accept=".json" hidden /></label>
-      <span id="match-title" class="muted"></span>
+      <nav class="tabs">
+        <button data-tab="replay" class="on">回放</button>
+        <button data-tab="arena">对战</button>
+      </nav>
+      <span class="replay-only">
+        <select id="replay-select" title="选择回放"></select>
+        <button id="refresh" title="刷新回放列表">刷新</button>
+        <label class="file-btn">打开文件<input id="file-input" type="file" accept=".json" hidden /></label>
+        <span id="match-title" class="muted"></span>
+      </span>
     </header>
-    <main>
+    <main id="replay-page">
       <section id="stage">
         <div id="status-line"></div>
         <div id="result-banner" hidden></div>
-        <div id="empty" class="muted">还没有回放。先跑一局：<code>npm run arena -- run annihilation bots/annihilation/rush.ts bots/idle.ts</code></div>
+        <div id="empty" class="muted">还没有回放。到「对战」页开一场，或者在 bot 目录里 <code>rts-arena run</code></div>
       </section>
       <aside>
         <div class="panel">
@@ -42,7 +48,32 @@
         </details>
       </aside>
     </main>
-    <footer>
+    <section id="arena-page" hidden>
+      <div class="panel arena-setup">
+        <h3>开一场比赛</h3>
+        <label class="field">规则包 <select id="ar-ruleset"></select></label>
+        <div class="muted" id="ar-players-hint"></div>
+        <div id="ar-seats"></div>
+        <div class="row"><button id="ar-add">加一个</button><button id="ar-remove">减一个</button></div>
+        <label class="field" id="ar-teams-row">分队 <select id="ar-teams"></select></label>
+        <label class="field">局数 <input id="ar-games" type="number" min="1" max="1000" value="10" /></label>
+        <label class="field">种子 <input id="ar-seed" type="number" placeholder="留空随机" /></label>
+        <div class="muted small">同一个种子会把各方的位置轮换一遍（两人就是换边各打一次）。回放和每个 bot 的日志写在回放目录里。</div>
+        <div class="row"><button id="ar-start" class="primary">开始</button><button id="ar-stop" disabled>停止</button></div>
+        <div id="ar-msg" class="err"></div>
+      </div>
+      <div class="arena-results">
+        <div class="panel">
+          <h3>当前比赛 <span id="ar-progress"></span></h3>
+          <div id="ar-current" class="muted">还没开始</div>
+        </div>
+        <div class="panel grow">
+          <h3>历史比赛 <button id="ar-history-refresh">刷新</button></h3>
+          <div id="ar-history"></div>
+        </div>
+      </div>
+    </section>
+    <footer id="replay-footer">
       <button id="to-start" title="回到开头 (Home)">⏮</button>
       <button id="step-back" title="后退 1 tick (←)">◀</button>
       <button id="play" title="播放 / 暂停 (空格)">▶</button>

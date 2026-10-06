@@ -96,7 +96,7 @@ rts-arena check                    # 类型检查 + 在每个位置上和不动�
 rts-arena run                      # 和基准 bot 打一局
 rts-arena run --games 10           # 打 10 局看胜率（每个种子换边各打一次）
 rts-arena run 对手.ts              # 和别的 bot 打（文件路径或现成 bot 的名字）
-rts-arena view                     # 网页播放器看回放
+rts-arena view                     # 网页播放器看回放，「对战」页也能开比赛
 ```
 
 - `baseline` 是每个规则包的基准 bot：经济、防守、集火都做全了的标准对手，多数对局能打赢这个规则包的其他示例 bot。先打赢它，再谈更强的对手。`idle` 是什么都不做的对手。其他现成 bot 用 `rts-arena list` 查看，对手位置写名字或文件路径都行。
@@ -104,5 +104,6 @@ rts-arena view                     # 网页播放器看回放
 - `run` 每局会打印胜负、燃料，以及报错和被拒命令按种类汇总的次数和第一次出现的 tick。每局还给每个 bot 写一份只有它自己信息的日志 `<回放>.P<座位>-<bot 名>.log`（你的日志、报错、被拒命令、统计和胜负），找自己的那份看就行，不会和对手的混在一起。
 - 多人局（规则包允许 3 人以上时）：`--games` 会在同一个种子上把座位轮换一遍，最后报平均名次。
 - 分队：`rts-arena run 队友.ts 对手1.ts 对手2.ts --teams 2v2`，按 你、参数 的顺序分组（你和队友一队）；`--games` 会轮换两队的位置。
-- 回放默认写在 bot 目录的 `replays/`（`--out` 可以改），每局一个 JSON 文件。网页播放器能拖进度条、点实体看它当前的命令、对着画面看你的日志和每条被拒命令。
+- 想用程序读结果：`rts-arena run ... --json` 每行一个 JSON 事件，`type` 是 start（参赛者）、game（每局：赢家座位 winners、名次 ranking、回放和日志文件名）、summary（胜场、平均名次）、warning、error。
+- 回放默认写在 bot 目录的 `replays/`（`--out` 可以改），每局一个 JSON 文件；每次 run 另有一份 `*.series.json` 汇总。网页播放器能拖进度条、点实体看它当前的命令、对着画面看你的日志和每条被拒命令。
 - 回放 JSON 的结构：`initial` 是开局快照，`frames[i]` 是第 i+1 tick 的变化，字段有 `spawn`（新实体）、`move`（`[id, x, y, id, x, y, …]`）、`hp`（`[id, 生命, …]`，资源点是剩余量）、`die`（死亡 id）、`shots`（`[攻击者, 目标, …]`）、`ord`（`[id, 命令文字]`）、`players`（资源和分数）、`logs`（你的日志）、`errs`（报错和被拒命令）。

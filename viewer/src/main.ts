@@ -1,6 +1,7 @@
 // 回放播放器：选回放、播放控制、侧栏（玩家、选中实体、bot 日志）
 import type { Replay } from "../../src/core/types.ts"
 import { applyFrame, ReplayModel, type State } from "./model.ts"
+import { initArena } from "./arena.ts"
 import { playerColor, Renderer } from "./render.ts"
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
@@ -282,6 +283,33 @@ window.addEventListener("keydown", (ev) => {
     setPlaying(false)
     seek(model.lastTick)
   }
+})
+
+// ---------- 页签 ----------
+
+function showTab(tab: "replay" | "arena"): void {
+  for (const b of document.querySelectorAll<HTMLButtonElement>(".tabs button")) b.classList.toggle("on", b.dataset.tab === tab)
+  $("replay-page").hidden = tab !== "replay"
+  $("replay-footer").hidden = tab !== "replay"
+  for (const el of document.querySelectorAll<HTMLElement>(".replay-only")) el.hidden = tab !== "replay"
+  $("arena-page").hidden = tab !== "arena"
+  if (tab === "replay") {
+    setPlaying(false)
+    // 画布在隐藏时尺寸是 0，切回来要重新铺满
+    requestAnimationFrame(() => model && renderer.fit())
+  }
+}
+
+document.querySelector(".tabs")!.addEventListener("click", (ev) => {
+  const b = (ev.target as HTMLElement).closest("button")
+  if (b?.dataset.tab === "replay" || b?.dataset.tab === "arena") showTab(b.dataset.tab)
+})
+
+initArena({
+  openReplay: async (name) => {
+    showTab("replay")
+    await refreshList(name)
+  },
 })
 
 // ---------- 主循环 ----------

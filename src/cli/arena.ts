@@ -1,8 +1,7 @@
 // 命令行入口：rts-arena <命令> ...（在平台仓库里开发时等价于 npm run arena -- <命令> ...）
 import { randomBytes } from "node:crypto"
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { basename, dirname, join, relative, resolve } from "node:path"
-import { pathToFileURL } from "node:url"
 import { checkLimits } from "../core/limits.ts"
 import { runMatch, type MatchBot } from "../core/match.ts"
 import { mixSeed } from "../core/rng.ts"
@@ -10,7 +9,7 @@ import type { Replay, Ruleset } from "../core/types.ts"
 import { compileBot, createBot } from "../sandbox/quickjs.ts"
 import { botTsconfig, buildDts, buildPrompt, typecheck } from "./docgen.ts"
 import { serveViewer } from "./serve.ts"
-import { CODE_EXT, CODE_ROOT, PKG_ROOT } from "../paths.ts"
+import { importRuleset, knownBotFile, knownBots, listRulesets, readWorkspaceIn, WORKSPACE_FILE, type Workspace } from "./catalog.ts"
 
 const HELP = `用法：rts-arena <命令> [参数]
 
@@ -34,17 +33,36 @@ run 的选项：
         --teams 2v2   分队（规则包要支持），按给出的 bot 顺序分组：2v2 就是前 2 个一队、后 2 个一队
         --out 路径    回放目录，默认 ./replays；单局时也可以给 .json 文件名
         --no-check    跳过类型检查
+        --json        每行输出一个 JSON 事件（start / game / summary / warning / error），给程序读
 `
 
+/** --json：输出改成每行一个 JSON 事件（给网页对战页和 agent 用），人看的文字不再打印 */
+let jsonMode = false
+
+function emit(event: Record<string, unknown>): void {
+  console.log(JSON.stringify(event))
+}
+
 function fail(msg: string): never {
-  console.error(msg)
+  if (jsonMode) emit({ type: "error", message: msg })
+  else console.error(msg)
   process.exit(1)
+}
+
+function warn(msg: string): void {
+  if (jsonMode) emit({ type: "warning", message: msg })
+  else console.warn(`提醒：${msg}`)
+}
+
+/** 普通输出；--json 时不打印 */
+function say(msg: string): void {
+  if (!jsonMode) console.log(msg)
 }
 
 /** 各命令接受的选项；值为 true 的是开关，不带值 */
 const OPTIONS: Record<string, Record<string, boolean>> = {
   docs: { out: false },
-  run: { seed: false, games: false, out: false, teams: false, "no-check": true },
+  run: { seed: false, games: false, out: false, teams: false, "no-check": true, json: true },
   check: { ticks: false },
   view: { port: false },
 }
@@ -74,35 +92,18 @@ function parseArgs(command: string | undefined, argv: string[]): { pos: string[]
   return { pos, opt }
 }
 
-function listRulesets(): string[] {
-  const dir = join(PKG_ROOT, "rulesets")
-  return readdirSync(dir, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && existsSync(join(dir, d.name, "RULES.md")))
-    .map((d) => d.name)
-}
-
 async function loadRuleset(id: string | undefined): Promise<Ruleset> {
   if (!id) fail("缺少规则包名。可用的：" + listRulesets().join("、"))
-  if (!listRulesets().includes(id)) fail(`没有规则包 "${id}"。可用的：${listRulesets().join("、")}`)
-  const file = join(CODE_ROOT, "rulesets", id, `index${CODE_EXT}`)
-  const mod = (await import(pathToFileURL(file).href)) as { default: Ruleset }
-  return mod.default
+  try {
+    return await importRuleset(id)
+  } catch (e) {
+    fail((e as Error).message)
+  }
 }
-
-/** bot 目录里的 arena.json */
-interface Workspace {
-  ruleset: string
-  bot: string
-}
-
-const WORKSPACE_FILE = "arena.json"
 
 function readWorkspace(): Workspace | null {
-  if (!existsSync(WORKSPACE_FILE)) return null
   try {
-    const w = JSON.parse(readFileSync(WORKSPACE_FILE, "utf8")) as Partial<Workspace>
-    if (typeof w.ruleset !== "string" || typeof w.bot !== "string") fail(`${WORKSPACE_FILE} 里要有 ruleset 和 bot 两个字符串字段`)
-    return w as Workspace
+    return readWorkspaceIn(".")
   } catch (e) {
     fail(`${WORKSPACE_FILE} 读不出来：${(e as Error).message}`)
   }
@@ -150,20 +151,12 @@ function botNames(files: string[]): Map<string, string> {
   return out
 }
 
-/** 规则包能用的现成 bot：bots/<规则包>/*.ts 和通用的 bots/*.ts */
-function knownBots(id: string): string[] {
-  const list = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".ts")).map((f) => f.slice(0, -3)) : [])
-  return [...new Set([...list(join(PKG_ROOT, "bots", id)), ...list(join(PKG_ROOT, "bots"))])]
-}
-
 /** bot 参数可以是文件路径，也可以是现成 bot 的名字（如 baseline、idle） */
 function resolveBots(rules: Ruleset, args: string[]): string[] {
   return args.map((a) => {
     if (existsSync(a)) return a
-    if (/^[\w-]+$/.test(a)) {
-      for (const f of [join(PKG_ROOT, "bots", rules.id, `${a}.ts`), join(PKG_ROOT, "bots", `${a}.ts`)])
-        if (existsSync(f)) return relative(process.cwd(), f)
-    }
+    const known = knownBotFile(rules.id, a)
+    if (known) return relative(process.cwd(), known)
     fail(`找不到 bot "${a}"：既不是文件，也不是「${rules.name}」的现成 bot（${knownBots(rules.id).join("、")}）`)
   })
 }
@@ -227,7 +220,7 @@ async function cmdRun(rules: Ruleset, args: string[], opt: Record<string, string
     const out = typecheck(rules, [...new Set(files)])
     if (out) fail(`类型检查没通过（加 --no-check 可以跳过）：\n${out}`)
   }
-  for (const w of checkLimits(rules)) console.warn(`提醒：${w}`)
+  for (const w of checkLimits(rules)) warn(w)
   const games = opt.games ? Number(opt.games) : 1
   if (!Number.isInteger(games) || games < 1) fail("--games 要是正整数")
   const baseSeed = typeof opt.seed === "string" ? Number(opt.seed) : Math.floor(Math.random() * 1e9)
@@ -243,8 +236,33 @@ async function cmdRun(rules: Ruleset, args: string[], opt: Record<string, string
   // 本次运行的编号：几个 agent 同一秒用同一个种子跑也不会写到同一个文件
   const runId = randomBytes(3).toString("hex")
   const k = groups.length
-  if (k > 2 && games > 1 && games % k !== 0) console.warn(`提醒：--games ${games} 不是 ${k} 的倍数，最后一个种子没轮完所有位置`)
-  if (k === 2 && games > 1 && games % 2 === 1) console.warn(`提醒：--games ${games} 是奇数，最后一个种子只打了一边`)
+  if (k > 2 && games > 1 && games % k !== 0) warn(`--games ${games} 不是 ${k} 的倍数，最后一个种子没轮完所有位置`)
+  if (k === 2 && games > 1 && games % 2 === 1) warn(`--games ${games} 是奇数，最后一个种子只打了一边`)
+  const label = (i: number) => (files.indexOf(files[i]) === i && files.lastIndexOf(files[i]) === i ? names.get(files[i])! : `${names.get(files[i])}#${i + 1}`)
+  const participants = files.map((f, i) => ({ name: label(i), file: f }))
+  // 本次比赛的汇总文件：每打完一局更新一次，网页对战页的历史记录读它
+  const startStamp = stamp()
+  const seriesFile =
+    games === 1 && outOpt?.endsWith(".json")
+      ? outOpt.replace(/\.json$/, ".series.json")
+      : join(outOpt ?? "replays", `${rules.id}-${startStamp}-${runId}.series.json`)
+  const series = {
+    format: "rts-arena-series",
+    version: 1,
+    ruleset: { id: rules.id, name: rules.name },
+    startedAt: new Date().toISOString(),
+    seed: baseSeed,
+    games,
+    teams: typeof opt.teams === "string" ? opt.teams : null,
+    participants,
+    results: [] as Record<string, unknown>[],
+    summary: null as Record<string, unknown> | null,
+  }
+  const saveSeries = () => {
+    mkdirSync(dirname(seriesFile), { recursive: true })
+    writeFileSync(seriesFile, JSON.stringify(series, null, 1))
+  }
+  emit0({ type: "start", ruleset: rules.id, name: rules.name, games, seed: baseSeed, teams: series.teams, participants, series: basename(seriesFile) })
   for (let g = 0; g < games; g++) {
     // 同一个种子把各队的位置轮换一遍（两边就是换边各打一次），抵消地图和随机数的影响。
     // seats[p] 是坐在 P{p} 的参赛者编号，teams[p] 是这个座位的队伍编号
@@ -257,7 +275,7 @@ async function cmdRun(rules: Ruleset, args: string[], opt: Record<string, string
     const t0 = performance.now()
     const replay = runMatch({ ruleset: rules, bots, seed, teams })
     const ms = performance.now() - t0
-    for (const w of checkLimits(rules, replay)) console.warn(`提醒：${w}`)
+    for (const w of checkLimits(rules, replay)) warn(w)
     let file: string
     // --out 以 .json 结尾是单局的回放文件名，否则是目录
     if (games === 1 && outOpt?.endsWith(".json")) file = outOpt
@@ -268,15 +286,17 @@ async function cmdRun(rules: Ruleset, args: string[], opt: Record<string, string
       k === n
         ? order.map((f, p) => `P${p}=${names.get(f)}`).join("  ")
         : rotated.map((members, t) => `队${t + 1}[${members.map((i) => `P${seats.indexOf(i)}=${names.get(files[i])}`).join(" ")}]`).join(" 对 ")
-    console.log(`第 ${g + 1} 局  种子 ${seed}  ${lineup}  用时 ${(ms / 1000).toFixed(1)} 秒`)
-    printResult(replay)
-    console.log(`  回放：${relative(process.cwd(), file)}`)
+    say(`第 ${g + 1} 局  种子 ${seed}  ${lineup}  用时 ${(ms / 1000).toFixed(1)} 秒`)
+    if (!jsonMode) printResult(replay)
+    say(`  回放：${relative(process.cwd(), file)}`)
     // 每个 bot 一份只有它自己信息的日志
     const stem = file.replace(/\.json$/, "")
+    const logs: { seat: number; name: string; file: string }[] = []
     for (let p = 0; p < n; p++) {
       const logFile = `${stem}.P${p}-${safeName(names.get(order[p])!)}.log`
       writeFileSync(logFile, botLog(replay, p, g + 1))
-      console.log(`  P${p} 的日志：${relative(process.cwd(), logFile)}`)
+      say(`  P${p} 的日志：${relative(process.cwd(), logFile)}`)
+      logs.push({ seat: p, name: names.get(order[p])!, file: basename(logFile) })
     }
     const ranking = replay.result.ranking!
     const won = replay.result.winners ?? []
@@ -286,20 +306,52 @@ async function cmdRun(rules: Ruleset, args: string[], opt: Record<string, string
       seatStats[seats[p]].places.push(place)
       if (won.includes(p)) seatStats[seats[p]].wins++
     }
+    const entry = {
+      type: "game",
+      index: g + 1,
+      seed,
+      seats,
+      names: order.map((f) => names.get(f)),
+      teams,
+      winners: won,
+      ranking,
+      reason: replay.result.reason,
+      tick: replay.result.tick,
+      ms: Math.round(ms),
+      replay: basename(file),
+      logs,
+      bots: replay.bots.map((b) => ({ seat: b.player, calls: b.calls, errors: b.errors, fuelOuts: b.fuelOuts, rejected: b.rejected, status: b.status, deadReason: b.deadReason })),
+    }
+    series.results.push(entry)
+    saveSeries()
+    emit0(entry)
   }
-  if (games > 1) {
-    const avg = (xs: number[]) => (xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(2)
-    const label = (i: number) => (files.indexOf(files[i]) === i && files.lastIndexOf(files[i]) === i ? names.get(files[i])! : `${names.get(files[i])}#${i + 1}`)
+  const avg = (xs: number[]) => Number((xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(2))
+  series.summary = {
+    type: "summary",
+    games,
+    draws,
+    participants: seatStats.map((st, i) => ({ name: label(i), file: files[i], wins: st.wins, avgPlace: avg(st.places) })),
+    teams: k === n ? null : groups.map((members) => ({ members: members.map(label), wins: seatStats[members[0]].wins, avgPlace: avg(seatStats[members[0]].places) })),
+  }
+  saveSeries()
+  emit0(series.summary)
+  if (games > 1 && !jsonMode) {
     const parts =
       k === n
-        ? seatStats.map((s, i) => `${label(i)} 赢 ${s.wins}${n > 2 ? `（平均名次 ${avg(s.places)}）` : ""}`)
+        ? seatStats.map((st, i) => `${label(i)} 赢 ${st.wins}${n > 2 ? `（平均名次 ${avg(st.places).toFixed(2)}）` : ""}`)
         : groups.map((members, t) => {
             // 同队的人胜场相同，名次也相同
             const st = seatStats[members[0]]
-            return `队${t + 1}（${members.map(label).join("、")}）赢 ${st.wins}${k > 2 ? `（平均名次 ${avg(st.places)}）` : ""}`
+            return `队${t + 1}（${members.map(label).join("、")}）赢 ${st.wins}${k > 2 ? `（平均名次 ${avg(st.places).toFixed(2)}）` : ""}`
           })
     console.log(`\n共 ${games} 局：${parts.join("，")}，平 ${draws}`)
   }
+}
+
+/** 只在 --json 时输出的事件 */
+function emit0(event: Record<string, unknown>): void {
+  if (jsonMode) emit(event)
 }
 
 /** "2v2"、"1v1v1v1"、"3v1" → 按顺序分组的参赛者编号；不给就每人一队 */
@@ -454,6 +506,7 @@ async function cmdInit(pos: string[]): Promise<void> {
 
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2)
+  jsonMode = command === "run" && rest.includes("--json")
   const { pos, opt } = parseArgs(command, rest)
   switch (command) {
     case "list": {
@@ -490,7 +543,8 @@ async function main(): Promise<void> {
     case "view": {
       const port = typeof opt.port === "string" ? Number(opt.port) : 5180
       if (!Number.isInteger(port) || port < 1 || port > 65535) fail("--port 要是 1~65535 的整数")
-      serveViewer(pos[0] ?? "replays", port)
+      // 对战页在后台用 node 执行同一个命令入口来跑比赛
+      serveViewer(pos[0] ?? "replays", port, process.argv[1])
       return
     }
     default:
