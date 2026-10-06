@@ -89,7 +89,8 @@ class RulesBox {
   private vm: QuickJSContext | null = null
   private fns: Record<"bind" | "describe" | "begin" | "call", QuickJSHandle> | null = null
   private ctx: Ctx | null = null
-  private phase: "load" | "setup" | "tick" = "load"
+  /** command 是对局中执行玩家命令的时候（buildCheck）：局面和上一次回调之后不一样了，快照不能共用 */
+  private phase: "load" | "setup" | "tick" | "command" = "load"
   private used = 0
   private budget = 0
   private deadline = 0
@@ -153,7 +154,7 @@ class RulesBox {
   }
 
   private fail(what: string, msg: string): never {
-    const tick = this.phase === "tick" && this.ctx ? `，第 ${this.ctx.tick} tick` : ""
+    const tick = (this.phase === "tick" || this.phase === "command") && this.ctx ? `，第 ${this.ctx.tick} tick` : ""
     throw new Error(`规则包「${this.name}」出错（${what}${tick}）：${msg}`)
   }
 
@@ -267,7 +268,7 @@ class RulesBox {
   }
 
   /** 调规则包的一个回调，返回它的返回值（已经过 JSON） */
-  call(ctx: Ctx, name: string, args: unknown[], fuel: number, phase: "setup" | "tick"): unknown {
+  call(ctx: Ctx, name: string, args: unknown[], fuel: number, phase: "setup" | "tick" | "command"): unknown {
     if (!this.vm || !this.fns) this.fail(name, "这一局还没开始（没有调用 setup）")
     this.ctx = ctx
     this.phase = phase
@@ -314,7 +315,7 @@ class RulesBox {
     if (typeof dropped === "number" && dropped > 0) text.push(`（另有 ${dropped} 行超出每次 ${RULES_LIMITS.logLines} 行的上限）`)
     this.logged += text.length
     if (this.logged >= RULES_LIMITS.matchLogLines) text.push(`（规则包日志已达整局上限 ${RULES_LIMITS.matchLogLines} 行，之后不再输出）`)
-    this.onLog(this.phase === "tick" && this.ctx ? this.ctx.tick : 0, text)
+    this.onLog(this.phase !== "setup" && this.ctx ? this.ctx.tick : 0, text)
   }
 
   close(): void {
@@ -449,6 +450,20 @@ class RulesBox {
         w().eliminate(player(p))
         return undefined
       },
+      orderNeutral: (id, h) => {
+        const o = json(h, "命令", 1000) as Record<string, unknown> | null
+        if (o === null || typeof o !== "object") throw new Error("orderNeutral 的命令要写成 { kind: ... }")
+        w().orderNeutral(int(id, "id"), o as never)
+        return undefined
+      },
+      setHp: (id, hp) => {
+        w().setHp(int(id, "id"), num(hp, "生命"))
+        return undefined
+      },
+      setOwner: (id, owner) => {
+        w().setOwner(int(id, "id"), int(owner, "owner"))
+        return undefined
+      },
     }
   }
 }
@@ -459,13 +474,14 @@ function checkMarkers(m: unknown): Marker[] {
   const num = (v: unknown) => typeof v === "number" && Number.isFinite(v)
   const owner = (v: unknown) => v === null || v === undefined || (Number.isInteger(v) && (v as number) >= -1)
   const text = (v: unknown, opt: boolean) => (opt && v === undefined) || (typeof v === "string" && v.length <= 40)
+  const color = (v: unknown) => v === undefined || (typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v))
   for (const x of m) {
     const ok =
       x !== null &&
       typeof x === "object" &&
-      ((x.kind === "zone" && num(x.x) && num(x.y) && num(x.w) && num(x.h) && owner(x.owner) && text(x.label, true)) ||
+      ((x.kind === "zone" && num(x.x) && num(x.y) && num(x.w) && num(x.h) && owner(x.owner) && text(x.label, true) && color(x.color)) ||
         (x.kind === "label" && num(x.x) && num(x.y) && text(x.text, false) && owner(x.owner)))
-    if (!ok) throw new Error(`叠加层格式不对：${clip(JSON.stringify(x) ?? "", 200)}（zone 要 x、y、w、h、owner，label 要 x、y、text，文字最多 40 字）`)
+    if (!ok) throw new Error(`叠加层格式不对：${clip(JSON.stringify(x) ?? "", 200)}（zone 要 x、y、w、h、owner，可选 label、color: "#rrggbb"；label 要 x、y、text，可选 owner；文字最多 40 字）`)
   }
   return m as Marker[]
 }
@@ -519,6 +535,13 @@ export async function loadSandboxedRuleset(dir: string, opts: { onLog?: (tick: n
     },
     result: (ctx) => result(box.call(ctx as Ctx, "result", [], RULES_LIMITS.tickFuel, "tick"), ctx.playerCount, true, "result"),
     timeUp: (ctx) => result(box.call(ctx as Ctx, "timeUp", [], RULES_LIMITS.timeUpFuel, "tick"), ctx.playerCount, false, "timeUp")!,
+    buildCheck: desc.f.includes("buildCheck")
+      ? (ctx, player, type, x, y) => {
+          const v = box.call(ctx as Ctx, "buildCheck", [player, type, x, y], RULES_LIMITS.objectivesFuel, "command")
+          if (v !== null && typeof v !== "string") throw new Error(`规则包「${d.name}」的 buildCheck 要返回 null（允许）或字符串（拒绝原因）`)
+          return v === null || v === "" ? null : clip(v, 200)
+        }
+      : undefined,
     release: () => box.close(),
   }
 }

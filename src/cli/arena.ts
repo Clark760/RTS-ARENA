@@ -22,6 +22,7 @@ import {
   type RulesetRef,
   type Workspace,
 } from "./catalog.ts"
+import { PKG_ROOT } from "../paths.ts"
 import { buildReport } from "./report.ts"
 import { writeRulesTemplate } from "./rules-template.ts"
 
@@ -36,7 +37,7 @@ const HELP = `用法：rts-arena <命令> [参数]
   run [对手...] [选项]                  自己的 bot 打对手（不写就打 baseline），回放和日志写到 ./replays
   view [回放目录] [--port N] [--open]   网页播放器（默认看 ./replays，端口 5180；--open 起来后打开浏览器）
   report [回放] [--player N] [--every T] 文字战报：每隔 T tick 双方的经济、兵力、建筑，关键事件、战斗、损失、可能的问题
-                                        （不写回放就看 ./replays 里最新的一局；--player 从这个座位的角度写）
+                                        （不写回放就看 ./replays 里最新的一局；不写 --player 就按你的 bot 坐的座位写）
 
 在任何目录：
   list                                  列出规则包和现成的 bot
@@ -45,7 +46,8 @@ const HELP = `用法：rts-arena <命令> [参数]
   run   <规则包> <bot>... [选项]         指定所有参赛 bot 打一局（或多局）
 
 写规则包：
-  new-rules <目录>                      建一个规则包目录：能直接跑的示例规则包、写法说明 RULESET.md、tsconfig.json
+  new-rules <目录>                      建一个规则包目录：能直接跑的示例规则包、写法说明 RULESET.md、接口副本 api/、tsconfig.json
+                                        （对已有的规则包目录运行：只刷新 RULESET.md、api/ 这些平台提供的文件）
   check <规则包> [--ticks N]             检查规则包本身：类型检查、加载、各种人数试打 N tick、打一整局看结束判定
 
   <bot> 可以是文件路径，也可以是现成 bot 的名字：baseline（每个规则包的基准 bot）、idle（不动）等，见 list
@@ -194,13 +196,19 @@ function stamp(): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
 }
 
+/** 回放和日志里显示的 bot 文件：平台自带的写成"平台自带 bots/xxx.ts"，不写一长串相对路径 */
+function displayFile(file: string): string {
+  const abs = resolve(file)
+  return abs.startsWith(PKG_ROOT + sep) ? `平台自带 ${relative(PKG_ROOT, abs).split(sep).join("/")}` : file
+}
+
 async function makeBots(rules: Ruleset, files: string[], seed: number, names: Map<string, string>): Promise<MatchBot[]> {
   const bots: MatchBot[] = []
   for (const [p, file] of files.entries()) {
     const name = names.get(file) ?? botName(file)
     const compiled = compileBot(readFileSync(file, "utf8"))
-    if ("error" in compiled) bots.push({ name, file, runner: null, loadError: compiled.error })
-    else bots.push({ name, file, runner: await createBot(compiled.code, mixSeed(seed, "bot", p), { fuel: rules.fuel }) })
+    if ("error" in compiled) bots.push({ name, file: displayFile(file), runner: null, loadError: compiled.error })
+    else bots.push({ name, file: displayFile(file), runner: await createBot(compiled.code, mixSeed(seed, "bot", p), { fuel: rules.fuel }) })
   }
   return bots
 }
@@ -263,8 +271,13 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
   // 本次运行的编号：几个 agent 同一秒用同一个种子跑也不会写到同一个文件
   const runId = randomBytes(3).toString("hex")
   const k = groups.length
-  if (k > 2 && games > 1 && games % k !== 0) warn(`--games ${games} 不是 ${k} 的倍数，最后一个种子没轮完所有位置`)
-  if (k === 2 && games > 1 && games % 2 === 1) warn(`--games ${games} 是奇数，最后一个种子只打了一边`)
+  // 所有座位都是同一个 bot：换边打出来和原来一模一样，没有意义，改成每局换一个种子
+  const mirror = n > 1 && new Set(files.map((f) => resolve(f))).size === 1
+  if (mirror && games > 1) say("（所有座位是同一个 bot：每局换一个种子，不换边）")
+  if (!mirror && k > 2 && games > 1 && games % k !== 0) warn(`--games ${games} 不是 ${k} 的倍数，最后一个种子没轮完所有位置`)
+  if (!mirror && k === 2 && games > 1 && games % 2 === 1) warn(`--games ${games} 是奇数，最后一个种子只打了一边`)
+  /** 每个座位赢了几局（看出地图或规则包是不是偏向某一边） */
+  const seatWins = new Array<number>(n).fill(0)
   const label = (i: number) => (files.indexOf(files[i]) === i && files.lastIndexOf(files[i]) === i ? names.get(files[i])! : `${names.get(files[i])}#${i + 1}`)
   const participants = files.map((f, i) => ({ name: label(i), file: f }))
   // 本次比赛的汇总文件：每打完一局更新一次，网页对战页的历史记录读它
@@ -293,7 +306,7 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
   for (let g = 0; g < games; g++) {
     // 同一个种子把各队的位置轮换一遍（两边就是换边各打一次），抵消地图和随机数的影响。
     // seats[p] 是坐在 P{p} 的参赛者编号，teams[p] 是这个座位的队伍编号
-    const seed = baseSeed + Math.floor(g / k)
+    const seed = mirror ? baseSeed + g : baseSeed + Math.floor(g / k)
     const rotated = [...Array(k).keys()].map((t) => groups[(t + g) % k])
     const seats = rotated.flat()
     const teams = rotated.flatMap((members, t) => members.map(() => t))
@@ -312,7 +325,7 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
     let file: string
     // --out 以 .json 结尾是单局的回放文件名，否则是目录
     if (games === 1 && outOpt?.endsWith(".json")) file = outOpt
-    else file = join(outOpt ?? "replays", `${rules.id}-${stamp()}-${runId}-s${seed}${games > 1 ? `-g${g + 1}` : ""}.json`)
+    else file = join(outOpt ?? "replays", `${rules.id}-${stamp()}-${runId}-s${seed}-g${g + 1}.json`)
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, JSON.stringify(replay))
     const lineup =
@@ -338,6 +351,7 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
       const place = 1 + ranking.findIndex((group) => group.includes(p))
       seatStats[seats[p]].places.push(place)
       if (won.includes(p)) seatStats[seats[p]].wins++
+      if (won.includes(p)) seatWins[p]++
     }
     const entry = {
       type: "game",
@@ -366,6 +380,8 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
     draws,
     participants: seatStats.map((st, i) => ({ name: label(i), file: files[i], wins: st.wins, avgPlace: avg(st.places) })),
     teams: k === n ? null : groups.map((members) => ({ members: members.map(label), wins: seatStats[members[0]].wins, avgPlace: avg(seatStats[members[0]].places) })),
+    /** seatWins[p]：坐在 P{p} 的赢了几局 */
+    seatWins,
   }
   saveSeries()
   emit0(series.summary)
@@ -380,6 +396,7 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
             return `队${t + 1}（${members.map(label).join("、")}）赢 ${st.wins}${k > 2 ? `（平均名次 ${avg(st.places).toFixed(2)}）` : ""}`
           })
     console.log(`\n共 ${games} 局：${parts.join("，")}，平 ${draws}`)
+    console.log(`按座位：${seatWins.map((w, p) => `P${p} 赢 ${w}`).join("，")}${mirror ? "（自己打自己时这一行就是看地图和规则包偏不偏向某一边）" : ""}`)
   }
 }
 
@@ -546,10 +563,11 @@ async function cmdCheckRules(src: RulesetRef, opt: Record<string, string | true>
   else console.log(`现成 bot 类型检查通过：${knownBots(src).join("、")}`)
 
   const baseline = knownBotFile(src, "baseline")
-  const lineup = async (n: number, seed: number): Promise<MatchBot[]> => {
+  /** baselineSeats：哪些座位坐 baseline（没有 baseline 就都不动） */
+  const lineup = async (n: number, seed: number, baselineSeats: number[] = [0]): Promise<MatchBot[]> => {
     const bots: MatchBot[] = []
     for (let p = 0; p < n; p++) {
-      const file = p === 0 && baseline ? baseline : "idle"
+      const file = baselineSeats.includes(p) && baseline ? baseline : "idle"
       const code = file === "idle" ? IDLE_CODE : (compileBot(readFileSync(file, "utf8")) as { code: string }).code ?? IDLE_CODE
       bots.push({ name: file === "idle" ? "idle" : "baseline", file, runner: await createBot(code, mixSeed(seed, "bot", p), { fuel: rules.fuel }) })
     }
@@ -575,14 +593,24 @@ async function cmdCheckRules(src: RulesetRef, opt: Record<string, string | true>
       bad(`${label} 试打时规则包出错：${(e as Error).message}`)
     }
   }
-  // 整局：不动的 bot 打到底，看结束判定（多半是 timeUp）
-  try {
-    const t0 = performance.now()
-    const replay = runMatch({ ruleset: rules, bots: await lineup(rules.players.min, 2), seed: 2 })
-    const r = replay.result
-    console.log(`整局（${who}）：第 ${r.tick} tick 结束，${r.winners?.length ? `赢家 ${r.winners.map((p) => `P${p}`).join("、")}` : "平局"}——${r.reason}（用时 ${((performance.now() - t0) / 1000).toFixed(1)} 秒）`)
-  } catch (e) {
-    bad(`整局打不完，规则包出错：${(e as Error).message}`)
+  // 整局：打到底看结束判定。有 baseline 时它在第一个、最后一个座位各打一次不动的对手，再自己打自己一次
+  const m = rules.players.min
+  const full: { label: string; seats: number[] }[] = baseline
+    ? [
+        { label: "P0 是 baseline、其余不动", seats: [0] },
+        ...(m > 1 ? [{ label: `P${m - 1} 是 baseline、其余不动`, seats: [m - 1] }] : []),
+        { label: "全是 baseline", seats: [...Array(m).keys()] },
+      ]
+    : [{ label: "都是不动的 bot", seats: [] }]
+  for (const [i, c] of full.entries()) {
+    try {
+      const t0 = performance.now()
+      const replay = runMatch({ ruleset: rules, bots: await lineup(m, 2 + i, c.seats), seed: 2 + i })
+      const r = replay.result
+      console.log(`整局（${c.label}）：第 ${r.tick} tick 结束，${r.winners?.length ? `赢家 ${r.winners.map((p) => `P${p}`).join("、")}` : "平局"}——${r.reason}（用时 ${((performance.now() - t0) / 1000).toFixed(1)} 秒）`)
+    } catch (e) {
+      bad(`整局（${c.label}）打不完，规则包出错：${(e as Error).message}`)
+    }
   }
   if (!ok) process.exit(1)
   console.log("规则包检查通过")
@@ -661,7 +689,7 @@ async function main(): Promise<void> {
     case "new-rules": {
       if (!pos[0]) fail("用法：rts-arena new-rules <目录>")
       try {
-        writeRulesTemplate(pos[0], listRulesets())
+        await writeRulesTemplate(pos[0], listRulesets())
       } catch (e) {
         fail((e as Error).message)
       }
@@ -697,8 +725,22 @@ async function main(): Promise<void> {
       } catch (e) {
         fail(`${file} 读不出来：${(e as Error).message}`)
       }
-      const player = typeof opt.player === "string" ? Number(opt.player) : undefined
+      let player = typeof opt.player === "string" ? Number(opt.player) : undefined
       if (player !== undefined && !(Number.isInteger(player) && player >= 0 && player < replay.players.length)) fail(`--player 要是 0～${replay.players.length - 1}`)
+      // 在 bot 目录里：自己的 bot 坐在哪（--games 会换边，每局的座位不一样）
+      const ws = (() => {
+        try {
+          return readWorkspaceIn(".")
+        } catch {
+          return null
+        }
+      })()
+      const mySeats = ws ? replay.players.map((p, i) => (resolve(p.bot) === resolve(ws.bot) ? i : -1)).filter((i) => i >= 0) : []
+      if (player === undefined && mySeats.length > 0) {
+        player = mySeats[0]
+        console.log(`（你的 bot ${ws!.bot} 这局坐在 P${player}，按 P${player} 写；看别的座位用 --player N）`)
+      } else if (player !== undefined && mySeats.length > 0 && !mySeats.includes(player))
+        console.log(`（注意：P${player} 不是你的 bot，你的 ${ws!.bot} 这局坐在 ${mySeats.map((p) => `P${p}`).join("、")}）`)
       const every = typeof opt.every === "string" ? Number(opt.every) : undefined
       if (every !== undefined && !(Number.isInteger(every) && every > 0)) fail("--every 要是正整数")
       if (!pos[0]) console.log(`（最新的一局：${file}）`)

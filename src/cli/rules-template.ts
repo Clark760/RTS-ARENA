@@ -2,7 +2,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { basename, join, resolve } from "node:path"
 import { PKG_ROOT } from "../paths.ts"
-import { rulesTsconfig } from "./docgen.ts"
+import { loadSandboxedRuleset } from "../sandbox/ruleset.ts"
+import { buildDts, rulesTsconfig } from "./docgen.ts"
 
 const INDEX = `// 示例规则包「采金赛」：先累计交够 600 金的赢；主基地被摧毁直接输；到时间比交货量。从这里改起。
 // 写法见同目录的 RULESET.md。类型从 "rts-arena/ruleset" 导入（import type），共用的单位和地图工具从 "rts-arena/standard" 导入。
@@ -181,19 +182,56 @@ function idFrom(dir: string, builtin: string[]): string {
   return id
 }
 
-export function writeRulesTemplate(dir: string, builtin: string[]): void {
-  if (existsSync(dir) && readdirSync(dir).length > 0) throw new Error(`${dir} 不是空目录；换一个新目录名`)
+const API_HEAD = (what: string) =>
+  `// ${what}\n// 这是平台接口的只读副本，查字段、函数签名用；由 rts-arena new-rules 生成，平台升级后对这个目录再运行一次 new-rules 刷新。\n// 规则包代码照常写 import type { ... } from "rts-arena/ruleset"、import { ... } from "rts-arena/standard"，不要直接改这里。\n\n`
+
+/**
+ * 写规则包目录里平台提供的文件：接口副本 api/、写法说明 RULESET.md、tsconfig.json、bots/ 的 arena.d.ts 和 tsconfig.json。
+ * 规则包自己的文件（index.ts、objectives.ts、RULES.md、bots/*.ts）不动
+ */
+async function writePlatformFiles(dir: string): Promise<void> {
+  const api = join(dir, "api")
+  mkdirSync(api, { recursive: true })
+  mkdirSync(join(dir, "bots"), { recursive: true })
+  const read = (...p: string[]) => readFileSync(join(PKG_ROOT, ...p), "utf8")
+  writeFileSync(join(api, "ruleset.ts"), API_HEAD('"rts-arena/ruleset"：规则包对象 Ruleset、ctx（SetupContext、RuleContext）、实体类型 TypeSpec、实体、事件、叠加层、结果') + read("src", "core", "types.ts").replace('from "../api/bot-api.ts"', 'from "./bot-api.ts"'))
+  writeFileSync(join(api, "bot-api.ts"), API_HEAD("bot 接口（TypeDef、命令、事件等，ruleset.ts 引用了其中的类型）") + read("src", "api", "bot-api.ts"))
+  writeFileSync(join(api, "standard.ts"), API_HEAD('"rts-arena/standard"：几个规则包共用的标准单位、地形、对称地图工具') + read("rulesets", "common", "standard.ts").replace('from "../../src/core/types.ts"', 'from "./ruleset.ts"'))
+  writeFileSync(join(dir, "RULESET.md"), read("src", "api", "RULESET.md"))
+  // 编辑器用目录里的副本，整个目录拷到别处也能用；rts-arena check 用平台自己的文件检查
+  writeFileSync(join(dir, "tsconfig.json"), rulesTsconfig(["index.ts"], { ruleset: "./api/ruleset.ts", standard: "./api/standard.ts" }))
+  // bots/ 里的 bot 用的接口（和 init 给 bot 目录生成的 arena.d.ts 一样）
+  try {
+    const rules = await loadSandboxedRuleset(dir, { onLog: () => {} })
+    writeFileSync(join(dir, "bots", "arena.d.ts"), buildDts(rules, dir))
+    writeFileSync(
+      join(dir, "bots", "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { target: "ES2022", lib: ["ES2022"], types: [], strict: true, noEmit: true, erasableSyntaxOnly: true, module: "preserve", moduleDetection: "force" }, include: ["*.ts"] }, null, 2),
+    )
+  } catch (e) {
+    console.log(`（规则包现在加载不了，bots/arena.d.ts 没生成：${(e as Error).message.split("\n")[0]}；改好后再运行一次 new-rules ${dir}）`)
+  }
+}
+
+export async function writeRulesTemplate(dir: string, builtin: string[]): Promise<void> {
+  // 已经是规则包目录：只刷新平台提供的文件
+  if (existsSync(join(dir, "index.ts"))) {
+    await writePlatformFiles(dir)
+    console.log(`已刷新 ${dir} 里平台提供的文件：api/（接口副本）、RULESET.md、tsconfig.json、bots/arena.d.ts；index.ts 等你写的文件没动`)
+    return
+  }
+  if (existsSync(dir) && readdirSync(dir).length > 0) throw new Error(`${dir} 不是空目录，也不是规则包目录（没有 index.ts）；换一个新目录名`)
   mkdirSync(join(dir, "bots"), { recursive: true })
   const id = idFrom(dir, builtin)
   writeFileSync(join(dir, "index.ts"), INDEX.replace("__ID__", id))
   writeFileSync(join(dir, "objectives.ts"), OBJECTIVES)
   writeFileSync(join(dir, "RULES.md"), RULES)
   writeFileSync(join(dir, "bots", "baseline.ts"), BASELINE)
-  writeFileSync(join(dir, "RULESET.md"), readFileSync(join(PKG_ROOT, "src", "api", "RULESET.md"), "utf8"))
-  writeFileSync(join(dir, "tsconfig.json"), rulesTsconfig(["index.ts"]))
   writeFileSync(join(dir, ".gitignore"), "replays/\n")
+  await writePlatformFiles(dir)
   console.log(`已在 ${dir} 建好示例规则包「采金赛」（id：${id}）。先读 RULESET.md，改 index.ts、objectives.ts、RULES.md，然后：`)
   console.log(`  rts-arena check ${dir}                       检查规则包`)
   console.log(`  rts-arena run ${dir} baseline baseline       用基准 bot 打一局`)
   console.log(`  rts-arena init ${dir} <bot 目录>             给它建一个 bot 目录`)
+  console.log(`接口的字段和函数签名在 ${dir}/api/ 里（ruleset.ts、standard.ts）。平台升级后对这个目录再运行一次 new-rules 刷新它们`)
 }

@@ -253,7 +253,7 @@ export class Renderer {
     this.markerLayer.addChild(g)
     for (const m of markers) {
       if (m.kind === "zone") {
-        const color = playerColor(m.owner)
+        const color = typeof m.color === "string" && /^#[0-9a-fA-F]{6}$/.test(m.color) ? cssColor(m.color) : playerColor(m.owner)
         g.rect(m.x * TILE, m.y * TILE, m.w * TILE, m.h * TILE)
           .fill({ color, alpha: m.owner === null ? 0.12 : 0.25 })
           .stroke({ width: 2, color, alpha: 0.9 })

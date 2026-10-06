@@ -220,7 +220,8 @@ function moveGoal(w: World, e: EntityState): Goal | null {
     }
     case "build": {
       const site = w.ents.get(o.target)
-      if (!site || !site.construction) {
+      // 地基没了、建好了，或者被规则包改了归属
+      if (!site || !site.construction || site.owner !== e.owner) {
         setIdle(e)
         return null
       }
@@ -418,7 +419,7 @@ function construction(w: World): void {
     const o = e.order
     if (o.kind !== "build") continue
     const site = w.ents.get(o.target)
-    if (!site || !site.construction) {
+    if (!site || !site.construction || site.owner !== e.owner) {
       setIdle(e)
       continue
     }

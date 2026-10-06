@@ -68,26 +68,37 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
   }
   G.dist = dist;
 
-  // 和引擎放地基的检查一致：在地图内、地形可走、没有实体、每格都在己方（含盟友）某个实体的视野里
-  G.canBuild = function (view, type, x, y) {
+  // 和引擎放地基的检查一致，按同样的顺序：在地图内 → 每格都在己方（含盟友）某个实体的视野里 → 地形可走、没有实体。
+  // 放得下返回 null，放不下返回原因（和 build 被拒时的原因一样）
+  function buildProblem(view, type, x, y) {
     var g = G.game, d = g.types[type];
-    if (!d || d.kind !== "building" || x !== (x | 0) || y !== (y | 0)) return false;
-    if (x < 0 || y < 0 || x + d.w > g.width || y + d.h > g.height) return false;
-    var yy, xx, i, es = view.entities, team = view.players[view.me].team, r = { x: x, y: y, w: d.w, h: d.h };
-    for (yy = y; yy < y + d.h; yy++) for (xx = x; xx < x + d.w; xx++) if (!g.walkable[g.terrain[yy][xx]]) return false;
-    for (i = 0; i < es.length; i++) if (dist(es[i], r) === 0) return false;
-    if (!g.fog) return true;
+    if (!d) return "没有 " + String(type) + " 这种类型";
+    if (d.kind !== "building") return type + " 不是建筑";
+    if (x !== (x | 0) || y !== (y | 0)) return "x、y 要是整数";
+    if (x < 0 || y < 0 || x + d.w > g.width || y + d.h > g.height) return type + "（" + d.w + "×" + d.h + "）左上角放在 (" + x + ", " + y + ") 会超出地图";
+    var yy, xx, i, e, es = view.entities, team = view.players[view.me].team;
+    if (g.fog)
+      for (yy = y; yy < y + d.h; yy++)
+        for (xx = x; xx < x + d.w; xx++) {
+          var seen = false, cell = { x: xx, y: yy };
+          for (i = 0; i < es.length && !seen; i++) {
+            e = es[i];
+            if (e.owner >= 0 && view.players[e.owner].team === team && dist(e, cell) <= g.types[e.type].sight) seen = true;
+          }
+          if (!seen) return "(" + xx + ", " + yy + ") 不在你方视野里，只能在看得见的地方建造";
+        }
     for (yy = y; yy < y + d.h; yy++)
       for (xx = x; xx < x + d.w; xx++) {
-        var seen = false, cell = { x: xx, y: yy };
-        for (i = 0; i < es.length && !seen; i++) {
-          var e = es[i];
-          if (e.owner >= 0 && view.players[e.owner].team === team && dist(e, cell) <= g.types[e.type].sight) seen = true;
+        if (!g.walkable[g.terrain[yy][xx]]) return "(" + xx + ", " + yy + ") 的地形不能建造";
+        for (i = 0; i < es.length; i++) {
+          e = es[i];
+          if (dist(e, { x: xx, y: yy }) === 0) return "(" + xx + ", " + yy + ") 有 #" + e.id + "（" + e.type + "）挡着";
         }
-        if (!seen) return false;
       }
-    return true;
-  };
+    return null;
+  }
+  G.buildProblem = buildProblem;
+  G.canBuild = function (view, type, x, y) { return buildProblem(view, type, x, y) === null; };
 
   function flush(err) {
     var out = { c: cmds, l: logs, d: dropped, o: overflow };

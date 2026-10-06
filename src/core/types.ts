@@ -60,8 +60,16 @@ export interface MatchResult {
 
 /** 回放里的叠加层（区域、文字），由规则包每 tick 设置 */
 export type Marker =
-  | { kind: "zone"; x: number; y: number; w: number; h: number; owner: number | null; label?: string }
+  /** color 不写就按 owner 上色（null 为灰色） */
+  | { kind: "zone"; x: number; y: number; w: number; h: number; owner: number | null; label?: string; color?: string }
   | { kind: "label"; x: number; y: number; text: string; owner?: number | null }
+
+/** ctx.orderNeutral 能下的命令 */
+export type NeutralOrder =
+  | { kind: "move"; x: number; y: number }
+  | { kind: "attack"; target: number }
+  | { kind: "attackMove"; x: number; y: number }
+  | { kind: "stop" }
 
 /** ctx.entities 的筛选条件，不写的项不限 */
 export interface EntityFilter {
@@ -129,6 +137,18 @@ export interface RuleContext {
   remove(id: number): void
   /** 让玩家出局：不再调用他的 bot，实体留着（要清掉自己 remove） */
   eliminate(player: number): void
+  /**
+   * 指挥中立实体（owner 为 -1，比如野怪）：和 bot 的同名命令一样执行，命令会一直执行到完成或失效。
+   * 中立实体闲着时会自动打射程内的玩家实体；玩家不会自动打中立实体（要用 attack 命令）
+   */
+  orderNeutral(id: number, order: NeutralOrder): void
+  /** 改生命（不超过最大生命）；改到 0 或以下就死掉（击杀者算 -1）。资源点不能用（储量用不了这个改） */
+  setHp(id: number, hp: number): void
+  /**
+   * 改归属（占领、招降、变成中立）。实体的命令变成 idle，生产队列清空（不退钱）；不受单位上限限制。
+   * 没建好的建筑换了主人，原来去建它的工人会停下
+   */
+  setOwner(id: number, owner: number): void
   setMarkers(markers: Marker[]): void
   /** 回放顶部显示的一行状态文字 */
   setStatus(text: string): void
@@ -164,6 +184,11 @@ export interface Ruleset {
   result(ctx: RuleContext): MatchResult | null
   /** 到 maxTicks 还没分出胜负时调用 */
   timeUp(ctx: RuleContext): MatchResult
+  /**
+   * 可选：玩家用 build 放地基时，平台检查完位置、钱之前再问规则包一次。返回 null 是允许，返回字符串是拒绝原因
+   * （会原样告诉 bot）。比如"烽火台只能建在台址里"。bot 的 canBuild 不知道这条规则，要在 RULES.md 里写清楚
+   */
+  buildCheck?(ctx: RuleContext, player: number, type: string, x: number, y: number): string | null
   /** 平台内部用：一局结束后调用（沙箱里的规则包在这里释放这一局的沙箱），规则包作者不用写 */
   release?(): void
 }
@@ -331,8 +356,8 @@ export interface Replay {
   maxTicks: number
   players: { name: string; bot: string; team: number }[]
   map: { width: number; height: number; terrain: string[]; colors: Record<string, string> }
-  /** sight 是视野半径、cost 是造价（老回放没有）；按视野看回放、战报估算采集量时用 */
-  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; look: Look }>
+  /** sight 是视野半径、cost 是造价、worker 表示能采集或建造（老回放没有）；按视野看回放、战报用 */
+  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; worker?: boolean; look: Look }>
   /** 有没有战争迷雾（老回放没有） */
   fog?: boolean
   initial: Snapshot

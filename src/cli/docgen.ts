@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { resolveType } from "../core/world.ts"
+import { resolveType, World } from "../core/world.ts"
 import type { Ruleset } from "../core/types.ts"
 import { PKG_ROOT } from "../paths.ts"
 
@@ -77,7 +77,7 @@ export function unitTable(rules: Ruleset): string {
   const buildable = new Set(defs.flatMap(({ d }) => d.builds))
   for (const { spec, d } of defs) {
     const name = d.name
-    const res = d.kind === "resource" ? `（产 ${d.resource}，储量 ${spec.amount ?? 0}）` : ""
+    const res = d.kind === "resource" ? `（产 ${d.resource}，默认储量 ${spec.amount ?? 0}，地图上每个的实际储量见下面的地图）` : ""
     rows.push(
       [
         "",
@@ -103,6 +103,55 @@ export function unitTable(rules: Ruleset): string {
     rows.push("", `能被建造的建筑（${names}）的「建造工作量」：一个工人贴着地基每 tick 干 1，几个工人一起建按人数加快。`)
   }
   return rows.join("\n")
+}
+
+/**
+ * 开局地图：用最少人数跑一遍规则包的 setup，画成带坐标的字符图，再列出资源点和各家开局的实体。
+ * 开局由规则包决定，可能和种子、人数有关，这里画的是种子 1、最少人数时的样子
+ */
+export function mapSection(rules: Ruleset): string {
+  const n = rules.players.min
+  const w = new World(
+    rules,
+    [...Array(n).keys()].map((i) => `P${i}`),
+    1,
+  )
+  try {
+    rules.setup(w)
+  } catch (e) {
+    return `## 地图\n\n（画不出来：规则包的 setup 出错了：${(e as Error).message.split("\n")[0]}）`
+  } finally {
+    rules.release?.()
+  }
+  const W = w.width
+  const H = w.height
+  const ents = w.entities()
+  const out = [`## 开局地图（${n} 人、种子 1 时的样子；${W}×${H}，左上角是 (0, 0)，x 向右、y 向下）`, ""]
+  if (W * H <= 20_000) {
+    const g = w.terrain.map((row) => row.split(""))
+    for (const e of ents) {
+      const ch = e.def.kind === "resource" ? "$" : e.owner < 0 ? "n" : e.def.kind === "unit" ? String.fromCharCode(97 + e.owner) : String.fromCharCode(65 + e.owner)
+      for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) g[y][x] = ch
+    }
+    const tens = "    " + [...Array(W).keys()].map((x) => (x % 10 === 0 ? String(Math.floor(x / 10) % 10) : " ")).join("")
+    const ones = "    " + [...Array(W).keys()].map((x) => String(x % 10)).join("")
+    out.push("```", tens, ones, ...g.map((row, y) => String(y).padStart(3) + " " + row.join("")), "```", "")
+    const terrain = Object.entries(rules.terrain)
+      .map(([ch, t]) => `\`${ch}\` ${t.walkable ? "能走" : "不能走"}`)
+      .join("，")
+    out.push(`图例：${terrain}；\`$\` 资源点；大写字母是建筑（A 是 P0 的、B 是 P1 的……），小写字母是单位（a 是 P0 的……），\`n\` 是中立的非资源实体。`, "")
+  } else out.push("（地图太大，不画字符图，只列实体）", "")
+  const resources = ents.filter((e) => e.def.kind === "resource")
+  if (resources.length) out.push(`资源点（${resources.length} 个）：${resources.map((e) => `${e.type} (${e.x}, ${e.y}) 储量 ${e.amount}`).join("；")}`, "")
+  for (let p = -1; p < n; p++) {
+    const mine = ents.filter((e) => e.owner === p && e.def.kind !== "resource")
+    if (!mine.length) continue
+    const byType = new Map<string, string[]>()
+    for (const e of mine) byType.set(e.type, [...(byType.get(e.type) ?? []), `(${e.x}, ${e.y})`])
+    out.push(`${p < 0 ? "中立" : `P${p}`}：${[...byType].map(([t, at]) => `${t} ${at.join(" ")}`).join("；")}`)
+  }
+  out.push("", "你不一定是 P0：开局看 `view.me` 和自己实体的位置。建筑的坐标是占地左上角。")
+  return out.join("\n")
 }
 
 export function buildPrompt(rules: Ruleset, dir: string, dts: string): string {
@@ -138,6 +187,8 @@ export function buildPrompt(rules: Ruleset, dir: string, dts: string): string {
     "时间单位都是 tick。",
     "",
     unitTable(rules),
+    "",
+    mapSection(rules),
     "",
     "# 平台通用说明",
     "",
@@ -203,7 +254,8 @@ function tsc(project: string): string {
  * 写规则包用的 tsconfig：类型从 "rts-arena/ruleset" 导入（就是 src/core/types.ts），
  * 共用工具从 "rts-arena/standard" 导入（rulesets/common/standard.ts）。路径是这台机器上平台的绝对路径，平台挪了位置要重新生成
  */
-export function rulesTsconfig(files: string[]): string {
+/** paths：rts-arena/ruleset、rts-arena/standard 指到哪。不给就是这台机器上平台的文件 */
+export function rulesTsconfig(files: string[], paths?: { ruleset: string; standard: string }): string {
   return JSON.stringify(
     {
       compilerOptions: {
@@ -219,8 +271,8 @@ export function rulesTsconfig(files: string[]): string {
         moduleResolution: "bundler",
         moduleDetection: "force",
         paths: {
-          "rts-arena/ruleset": [join(PKG_ROOT, "src", "core", "types.ts").split("\\").join("/")],
-          "rts-arena/standard": [join(PKG_ROOT, "rulesets", "common", "standard.ts").split("\\").join("/")],
+          "rts-arena/ruleset": [paths?.ruleset ?? join(PKG_ROOT, "src", "core", "types.ts").split("\\").join("/")],
+          "rts-arena/standard": [paths?.standard ?? join(PKG_ROOT, "rulesets", "common", "standard.ts").split("\\").join("/")],
         },
       },
       files,

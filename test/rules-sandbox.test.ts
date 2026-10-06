@@ -86,7 +86,7 @@ test("自带规则包的定义都能通过沙箱规则包的格式检查", async
 
 test("new-rules 的模板：加载通过，基准 bot 打赢不动的对手", async () => {
   const dir = join(TMP, "gold-rush")
-  writeRulesTemplate(dir, ["koth"])
+  await writeRulesTemplate(dir, ["koth"])
   const rules = await loadSandboxedRuleset(dir)
   assert.equal(rules.id, "gold-rush")
   const replay = runMatch({ ruleset: rules, seed: 1, bots: [await sandboxBot(join(dir, "bots", "baseline.ts"), 0, rules), { name: "idle", file: "", runner: idle() }] })
@@ -98,7 +98,7 @@ test("new-rules 的模板：加载通过，基准 bot 打赢不动的对手", as
 
 let n = 0
 /** 写一个最小的规则包，parts 替换其中的片段 */
-function rules(parts: { top?: string; setup?: string; onTick?: string; result?: string; types?: string; players?: string; map?: string } = {}): string {
+function rules(parts: { top?: string; setup?: string; onTick?: string; result?: string; types?: string; players?: string; map?: string; extra?: string } = {}): string {
   const dir = join(TMP, `r${n++}`)
   mkdirSync(dir, { recursive: true })
   writeFileSync(
@@ -115,6 +115,7 @@ export default {
   objectives() { return {} },
   result(ctx) { ${parts.result ?? "return null"} },
   timeUp() { return { winner: null, reason: "到时间" } },
+  ${parts.extra ?? ""}
 }
 `,
   )
@@ -201,4 +202,86 @@ test("沙箱规则包：console.log 交给 onLog，带 tick", async () => {
   const r = await loadSandboxedRuleset(rules({ onTick: `if (ctx.tick === 3) console.log("hello", { a: 1 })` }), { onLog: (t, l) => lines.push(`${t}:${l.join("|")}`) })
   runMatch({ ruleset: r, seed: 1, bots: [{ name: "a", file: "", runner: fnBot(() => {}) }, { name: "b", file: "", runner: idle() }] })
   assert.deepEqual(lines, ['3:hello {"a":1}'])
+})
+
+// ---------- 规则包的新接口：指挥中立实体、改血、改归属、放置限制、区域颜色 ----------
+
+const CREEP_TYPES = `{
+  hq: { kind: "building", maxHp: 100, look },
+  creep: { kind: "unit", maxHp: 30, moveTicks: 1, sight: 3, attack: { damage: 5, range: 1, cooldown: 1 }, look },
+  peon: { kind: "unit", maxHp: 20, moveTicks: 1, sight: 4, builds: ["hut"], look },
+  hut: { kind: "building", maxHp: 50, cost: { gold: 10 }, buildTicks: 3, look },
+}`
+
+test("规则包指挥中立实体：野怪按命令走过去打玩家的主基地", async () => {
+  const dir = rules({
+    types: CREEP_TYPES,
+    setup: `ctx.spawn("creep", -1, 9, 0)`,
+    onTick: `if (ctx.tick === 1) { const c = ctx.entities({ type: "creep" })[0]; const hq = ctx.entities({ owner: 0, type: "hq" })[0]; ctx.orderNeutral(c.id, { kind: "attack", target: hq.id }) }
+      const hq = ctx.entities({ owner: 0, type: "hq" })[0]; if (hq) ctx.setStatus("hq " + hq.hp)`,
+  })
+  const replay = await play(dir)
+  const last = [...replay.frames].reverse().find((f) => f.status)?.status ?? ""
+  assert.ok(Number(last.split(" ")[1]) < 100, last)
+  // 不能指挥玩家的实体、命令不对
+  await assert.rejects(play(rules({ types: CREEP_TYPES, onTick: `ctx.orderNeutral(ctx.entities({ owner: 0 })[0].id, { kind: "stop" })` })), /只能指挥中立实体/)
+  await assert.rejects(play(rules({ types: CREEP_TYPES, setup: `ctx.spawn("creep", -1, 9, 0)`, onTick: `ctx.orderNeutral(ctx.entities({ type: "creep" })[0].id, { kind: "fly" })` })), /不认识的命令/)
+})
+
+test("规则包改血、改归属：bot 看到实体换了主人；生命改到 0 就死", async () => {
+  const dir = rules({
+    types: CREEP_TYPES,
+    setup: `ctx.spawn("creep", -1, 5, 5)`,
+    onTick: `if (ctx.tick === 2) { const c = ctx.entities({ type: "creep" })[0]; ctx.setOwner(c.id, 1); ctx.setHp(c.id, 7) }
+      if (ctx.tick === 6) ctx.setHp(ctx.entities({ owner: 0, type: "hq" })[0].id, 0)`,
+  })
+  let seen: { owner: number; hp: number } | undefined
+  const r = await loadSandboxedRuleset(dir, quiet)
+  const replay = runMatch({
+    ruleset: r,
+    seed: 1,
+    bots: [
+      { name: "a", file: "", runner: idle() },
+      { name: "b", file: "", runner: fnBot((v) => void (seen = v.entities.find((e) => e.type === "creep") ?? seen)) },
+    ],
+  })
+  assert.deepEqual(seen && { owner: seen.owner, hp: seen.hp }, { owner: 1, hp: 7 })
+  assert.ok(replay.frames.some((f) => f.t === 6 && (f.die?.length ?? 0) > 0), "主基地被改到 0 血死了")
+})
+
+test("规则包的 buildCheck：拒绝原因原样告诉 bot，允许的照常建", async () => {
+  const dir = rules({
+    types: CREEP_TYPES,
+    setup: `ctx.spawn("peon", 0, 3, 3); ctx.setResources(0, { gold: 100 })`,
+    extra: `buildCheck(ctx, player, type, x, y) { return x >= 5 ? "这里是禁建区（x 要小于 5）" : null },`,
+  })
+  const reasons: string[] = []
+  let huts = 0
+  const r = await loadSandboxedRuleset(dir, quiet)
+  runMatch({
+    ruleset: r,
+    seed: 1,
+    bots: [
+      {
+        name: "a",
+        file: "",
+        runner: fnBot((v, cmd) => {
+          for (const e of v.events) if (e.kind === "rejected") reasons.push(e.reason)
+          huts = v.entities.filter((e) => e.type === "hut").length
+          const peon = v.entities.find((e) => e.type === "peon")!
+          if (v.tick === 0) cmd.build(peon, "hut", 6, 3)
+          if (v.tick === 5) cmd.build(peon, "hut", 3, 5)
+        }),
+      },
+      { name: "b", file: "", runner: idle() },
+    ],
+  })
+  assert.deepEqual(reasons, ["这里是禁建区（x 要小于 5）"])
+  assert.equal(huts, 1)
+})
+
+test("区域叠加层可以自定颜色；颜色格式不对被拒", async () => {
+  const ok = await play(rules({ setup: `ctx.setMarkers([{ kind: "zone", x: 1, y: 1, w: 2, h: 2, owner: null, color: "#ff8800", label: "争夺中" }])` }))
+  assert.equal((ok.initial.markers[0] as { color?: string }).color, "#ff8800")
+  await assert.rejects(play(rules({ setup: `ctx.setMarkers([{ kind: "zone", x: 1, y: 1, w: 2, h: 2, owner: null, color: "red" }])` })), /叠加层格式不对/)
 })

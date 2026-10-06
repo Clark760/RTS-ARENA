@@ -1,5 +1,6 @@
 // 世界状态：地形、实体、占位、视野；同时实现规则包用的 SetupContext 和 RuleContext
 import type { Game, GameEvent, PlayerInfo, TypeDef } from "../api/bot-api.ts"
+import { resetOrder } from "./commands.ts"
 import { FlowCache } from "./nav.ts"
 import { PathFinder } from "./path.ts"
 import { markSight, rectSeen } from "./vision.ts"
@@ -9,6 +10,7 @@ import type {
   EntityState,
   Marker,
   MatchResult,
+  NeutralOrder,
   PlayerState,
   Rect,
   Rng,
@@ -367,7 +369,8 @@ export class World implements SetupContext, RuleContext {
 
   /** 资源点和地形一样始终可见（位置、储量都公开）；盟友的实体总是看得见，盟友看得见的你也看得见 */
   visibleTo(player: number, e: EntityState): boolean {
-    if (!this.rules.fog || this.isAlly(e.owner, player) || e.def.kind === "resource") return true
+    // 中立实体（规则包指挥的野怪）什么都看得见
+    if (player < 0 || !this.rules.fog || this.isAlly(e.owner, player) || e.def.kind === "resource") return true
     return rectSeen(this.vis[player], this.width, e)
   }
 
@@ -465,6 +468,59 @@ export class World implements SetupContext, RuleContext {
   remove(id: number): void {
     const e = this.ents.get(id)
     if (e) this.destroy(e, -1)
+  }
+
+  private mustGet(id: number, what: string): EntityState {
+    const e = this.ents.get(id)
+    if (!e) throw new Error(`${what}：没有 #${id} 这个实体`)
+    return e
+  }
+
+  orderNeutral(id: number, order: NeutralOrder): void {
+    const e = this.mustGet(id, "orderNeutral")
+    if (e.owner !== -1) throw new Error(`orderNeutral 只能指挥中立实体，#${id}（${e.type}）属于 P${e.owner}`)
+    const xy = (o: { x: unknown; y: unknown }) => {
+      if (!Number.isInteger(o.x) || !Number.isInteger(o.y) || !this.inBounds(o.x as number, o.y as number)) throw new Error(`orderNeutral：坐标 (${o.x}, ${o.y}) 不对`)
+    }
+    switch (order?.kind) {
+      case "move":
+      case "attackMove":
+        if (e.def.moveTicks <= 0) throw new Error(`orderNeutral：#${id}（${e.type}）不能移动`)
+        if (order.kind === "attackMove" && !e.def.attack) throw new Error(`orderNeutral：#${id}（${e.type}）不能攻击`)
+        xy(order)
+        resetOrder(e, { kind: order.kind, x: order.x, y: order.y })
+        return
+      case "attack": {
+        if (!e.def.attack) throw new Error(`orderNeutral：#${id}（${e.type}）不能攻击`)
+        const t = this.mustGet(order.target, "orderNeutral 的目标")
+        if (t.owner < 0 || !attackable(t)) throw new Error(`orderNeutral：#${t.id}（${t.type}）不能当目标（中立的、资源点、无敌的都不行）`)
+        resetOrder(e, { kind: "attack", target: t.id })
+        return
+      }
+      case "stop":
+        resetOrder(e, { kind: "idle" })
+        return
+      default:
+        throw new Error(`orderNeutral：不认识的命令 ${JSON.stringify(order)}（能用 move、attack、attackMove、stop）`)
+    }
+  }
+
+  setHp(id: number, hp: number): void {
+    const e = this.mustGet(id, "setHp")
+    if (!attackable(e)) throw new Error(`setHp：#${id}（${e.type}）是资源点或无敌的，没有生命`)
+    if (!Number.isFinite(hp)) throw new Error("setHp：生命要是数字")
+    if (hp <= 0) this.destroy(e, -1)
+    else e.hp = Math.min(e.def.maxHp, Math.round(hp))
+  }
+
+  setOwner(id: number, owner: number): void {
+    const e = this.mustGet(id, "setOwner")
+    if (e.def.kind === "resource") throw new Error(`setOwner：#${id} 是资源点，资源点只能是中立的`)
+    if (!Number.isInteger(owner) || owner < -1 || owner >= this.playerCount) throw new Error(`setOwner：玩家编号 ${owner} 不存在`)
+    if (e.owner === owner) return
+    e.owner = owner
+    resetOrder(e, { kind: "idle" })
+    e.queue.length = 0
   }
 
   eliminate(player: number): void {

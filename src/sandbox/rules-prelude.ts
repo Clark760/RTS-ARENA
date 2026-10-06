@@ -152,7 +152,10 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
       if (e) e.alive = false;
       entsChanged();
     },
-    eliminate: function (p) { H.eliminate(p); if (cache.players) cache.players[p].alive = false; }
+    eliminate: function (p) { H.eliminate(p); if (cache.players) cache.players[p].alive = false; },
+    orderNeutral: function (id, order) { H.orderNeutral(id, stringify(order)); entsChanged(); },
+    setHp: function (id, hp) { H.setHp(id, hp); entsChanged(); },
+    setOwner: function (id, owner) { H.setOwner(id, owner); entsChanged(); }
   });
 
   function errText(e) {
@@ -165,7 +168,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
 
   var R = null;
   var KEYS = ["id", "name", "players", "teams", "maxTicks", "tickRate", "decisionInterval", "fuel", "unitCap", "fog", "resources", "terrain", "types"];
-  var FNS = ["setup", "onTick", "objectives", "result", "timeUp"];
+  var FNS = ["setup", "onTick", "objectives", "result", "timeUp", "buildCheck"];
 
   G.__rules = {
     bind: function (ns) { R = ns !== null && typeof ns === "object" ? ns["default"] : null; },

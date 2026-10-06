@@ -259,14 +259,17 @@ test("canBuild：地图内、地形可走、没有实体、有迷雾时每格都
     export function onTick(view: View, cmd: Commands) {
       const spots: [string, number, number][] = [["hut", 0, 0], ["hut", 1, 0], ["hut", 0, 1], ["hut", 3, 2], ["hut", 5, 0], ["peon", 0, 2], ["hut", 0.5, 1], ["hut", 4, 2]]
       console.log(JSON.stringify(spots.map(([t, x, y]) => canBuild(view, t as TypeName, x, y))))
+      console.log(JSON.stringify(spots.map(([t, x, y]) => buildProblem(view, t as TypeName, x, y))))
       cmd.build(view.entities[0], "hut", 0, 1)
     }`
   const results: unknown[] = []
+  const reasons: (string | null)[][] = []
   for (const fog of [true, false]) {
     const b = await bot(src)
     b.start(game(fog))
     const r = b.tick(view)
     results.push(JSON.parse(r.logs[0]))
+    reasons.push(JSON.parse(r.logs[1]))
     assert.deepEqual(r.commands, [{ kind: "build", unit: 1, type: "hut", x: 0, y: 1 }])
     b.dispose()
   }
@@ -275,4 +278,14 @@ test("canBuild：地图内、地形可走、没有实体、有迷雾时每格都
     [false, false, true, false, false, false, false, false],
     [false, false, true, true, false, false, false, false],
   ])
+  // buildProblem：和 canBuild 判断一致，放不下时说原因
+  assert.deepEqual(
+    reasons.map((list) => list.map((x: string | null) => x === null)),
+    results,
+  )
+  assert.match(reasons[0][0] ?? "", /有 #1（peon）挡着/)
+  assert.match(reasons[0][1] ?? "", /地形不能建造/)
+  assert.match(reasons[0][3] ?? "", /不在你方视野里/)
+  assert.match(reasons[0][4] ?? "", /超出地图/)
+  assert.match(reasons[0][5] ?? "", /不是建筑/)
 })

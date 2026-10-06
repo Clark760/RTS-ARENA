@@ -16,7 +16,7 @@ function isInt(v: unknown): v is number {
 }
 
 /** 换命令；和当前命令完全相同时什么都不做（重复下命令不会打断进度或重新规划路线） */
-function resetOrder(e: EntityState, order: EntityState["order"]): void {
+export function resetOrder(e: EntityState, order: EntityState["order"]): void {
   const cur = e.order as Record<string, unknown>
   const next = order as Record<string, unknown>
   if (Object.keys(next).every((k) => k === "returning" || cur[k] === next[k]) && cur.kind === next.kind) return
@@ -141,6 +141,9 @@ function applyOne(w: World, p: number, c: unknown): string | null {
       const def = w.types[type]
       const why = placeProblem(w, p, def, x, y)
       if (why) return why
+      // 规则包自己的放置规则
+      const veto = w.rules.buildCheck?.(w, p, type, x, y)
+      if (veto) return veto
       const short = pay(w, p, def)
       if (short) return short
       resetOrder(e, { kind: "build", target: w.placeSite(type, p, x, y).id })
