@@ -67,3 +67,24 @@ test("混战：三家里基准 bot 把两个不动的对手打出局，名次按
   for (const owner of ents.values()) owners.add(owner)
   assert.ok(!owners.has(0) && !owners.has(2))
 })
+
+test("混战 2v2：按队伍判胜负，什么都不做的队友也算赢", async () => {
+  const idle = join(ROOT, "bots", "idle.ts")
+  const base = join(ROOT, "bots", "melee", "baseline.ts")
+  const replay = runMatch({
+    ruleset: melee,
+    seed: 3,
+    teams: [0, 0, 1, 1],
+    bots: [await load(melee, base, 0), await load(melee, idle, 1), await load(melee, idle, 2), await load(melee, idle, 3)],
+  })
+  const r = replay.result
+  assert.deepEqual(r.winners, [0, 1], r.reason)
+  assert.deepEqual(r.ranking, [
+    [0, 1],
+    [2, 3],
+  ])
+  assert.deepEqual(
+    replay.players.map((p) => p.team),
+    [0, 0, 1, 1],
+  )
+})

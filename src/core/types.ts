@@ -46,6 +46,8 @@ export interface TerrainSpec {
 /** winner 为 null 表示平局 */
 export interface MatchResult {
   winner: number | null
+  /** 获胜的所有玩家（队伍模式下是整个获胜队伍，含已出局的队友）；不填就是 [winner] */
+  winners?: number[]
   reason: string
   /**
    * 名次（多人局用）：ranking[i] 是第 i+1 名的玩家编号们，同一名次可以有多人。
@@ -70,6 +72,8 @@ export type RuleEvent =
 export interface SetupContext {
   readonly seed: number
   readonly playerCount: number
+  /** 每个玩家的队伍编号；不分队时每人一队（编号就是玩家编号） */
+  readonly teams: readonly number[]
   readonly rng: Rng
   /** 设置地形，每行一个字符串，字符必须在规则包的 terrain 里 */
   setTerrain(rows: string[]): void
@@ -86,6 +90,10 @@ export interface RuleContext {
   readonly tick: number
   readonly maxTicks: number
   readonly playerCount: number
+  /** 每个玩家的队伍编号；不分队时每人一队 */
+  readonly teams: readonly number[]
+  /** 两个玩家是否同队（自己和自己也算）；中立 -1 不和任何人同队 */
+  isAlly(a: number, b: number): boolean
   readonly width: number
   readonly height: number
   readonly rng: Rng
@@ -116,6 +124,8 @@ export interface Ruleset {
   id: string
   name: string
   players: { min: number; max: number }
+  /** 是否支持分队（规则包要自己按队伍摆位置、判胜负）；不支持时命令行拒绝 --teams */
+  teams?: boolean
   /** 一局最多多少 tick */
   maxTicks: number
   /** 回放每秒播放多少 tick（只影响观看） */
@@ -289,7 +299,7 @@ export interface Replay {
   seed: number
   tickRate: number
   maxTicks: number
-  players: { name: string; bot: string }[]
+  players: { name: string; bot: string; team: number }[]
   map: { width: number; height: number; terrain: string[]; colors: Record<string, string> }
   types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; look: Look }>
   initial: Snapshot

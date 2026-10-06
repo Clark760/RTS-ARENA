@@ -50,14 +50,14 @@ function production(w: World): void {
 
 // ---------- 战斗 ----------
 
-/** 敌人：属于别的玩家、能被攻击（中立的不会被自动攻击） */
-function isEnemy(e: EntityState, o: EntityState): boolean {
-  return o.owner >= 0 && o.owner !== e.owner && attackable(o)
+/** 敌人：属于别的队伍的玩家、能被攻击（中立的不会被自动攻击） */
+function isEnemy(w: World, e: EntityState, o: EntityState): boolean {
+  return o.owner >= 0 && !w.isAlly(e.owner, o.owner) && attackable(o)
 }
 
-/** 指定攻击的合法目标：不是自己的、能被攻击 */
-export function canHit(e: EntityState, o: EntityState): boolean {
-  return o.owner !== e.owner && attackable(o)
+/** 指定攻击的合法目标：不是自己和盟友的、能被攻击（中立的可以） */
+export function canHit(w: World, e: EntityState, o: EntityState): boolean {
+  return o.owner !== e.owner && !w.isAlly(e.owner, o.owner) && attackable(o)
 }
 
 /** radius 内最好打的敌人：最近 → 血最少 → id 最小（id 是随机分配的，所以最后这条等于随机） */
@@ -77,7 +77,7 @@ function bestEnemyWithin(w: World, e: EntityState, radius: number): EntityState 
       const id = w.unitOcc[i] || w.staticOcc[i]
       if (id === 0) continue
       const o = w.ents.get(id)!
-      if (!isEnemy(e, o)) continue
+      if (!isEnemy(w, e, o)) continue
       const d = rectDist(e, o)
       if (d > radius) continue
       if (!best || d < bestD || (d === bestD && (o.hp < best.hp || (o.hp === best.hp && o.id < best.id)))) {
@@ -96,7 +96,7 @@ function attackTarget(w: World, e: EntityState): EntityState | null {
     case "attack": {
       const t = w.ents.get(o.target)
       // 目标没了、看不见了，或者自己不能动而目标出了射程：命令结束，这一 tick 照常自动攻击
-      if (!t || !canHit(e, t) || !w.visibleTo(e.owner, t) || (e.def.moveTicks <= 0 && rectDist(e, t) > range)) {
+      if (!t || !canHit(w, e, t) || !w.visibleTo(e.owner, t) || (e.def.moveTicks <= 0 && rectDist(e, t) > range)) {
         setIdle(e)
         return bestEnemyWithin(w, e, range)
       }

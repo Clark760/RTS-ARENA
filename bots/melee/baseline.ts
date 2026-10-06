@@ -1,6 +1,8 @@
 // 混战的基准 bot：用来衡量新 bot 的标准对手。和歼灭的基准 bot 基本相同，区别是：
-// - 目标：每次都挑离自己主基地最近、还没出局的那一家；集结点朝地图中心。
-// - 出击时只拆目标那一家的兵营和主基地，路上碰到谁的兵都打。
+// - 认得盟友（view.players[i].team 相同的）：不当敌人、不当威胁。
+// - 目标：挑离"自己和盟友主基地的中心"最近、还没出局的敌人；队友算出来的是同一家，自然集火。集结点朝地图中心。
+// - 出击时只拆目标那一家的兵营和主基地，路上碰到敌人的兵都打。
+// - 自己家没事、在家集结时，盟友家门口来了敌人就去帮忙。
 // - 经济：工人补到 11 个，按"离主基地近、人少"分配到各个金矿（每矿最多 3 人），家门口采完自动去中间。
 // - 生产：工人优先补到 10 个，之后兵营不停地出兵，战士、弓手交替（战士在前面挡，弓手射程 4 在后面输出，混编比纯战士强）。
 // - 防守：主基地 12 格、兵营 9 格、工人 5 格内出现敌方单位就全军回防；兵不够时附近的工人也上。
@@ -90,6 +92,7 @@ function attackMove(cmd: Commands, u: Entity, p: Pos): void {
 }
 
 export function onTick(view: View, cmd: Commands): void {
+  const myTeam = view.players[view.me].team
   const mine: Entity[] = []
   const enemyUnits: Entity[] = []
   const enemyBuildings: Entity[] = []
@@ -97,7 +100,7 @@ export function onTick(view: View, cmd: Commands): void {
   for (const e of view.entities) {
     if (e.type === "goldmine") goldmines.push(e)
     else if (e.owner === view.me) mine.push(e)
-    else if (e.owner >= 0) (game.types[e.type].kind === "unit" ? enemyUnits : enemyBuildings).push(e)
+    else if (e.owner >= 0 && view.players[e.owner].team !== myTeam) (game.types[e.type].kind === "unit" ? enemyUnits : enemyBuildings).push(e)
   }
   for (const e of enemyUnits) if (isCombat(e)) enemySeen.set(e.id, view.tick)
   for (const ev of view.events) if (ev.kind === "died") enemySeen.delete(ev.id)
@@ -109,8 +112,9 @@ export function onTick(view: View, cmd: Commands): void {
   const barracks = mine.find((e) => e.type === "barracks")
   const workers = mine.filter((e) => e.type === "worker")
   const army = mine.filter(isCombat)
-  // 离自己最近、还没出局的对手
-  const targets = [...view.objectives.enemyBases].sort((a, b) => dist(a, base) - dist(b, base) || a.owner - b.owner)
+  // 离全队主基地中心最近、还没出局的敌人（队友算出来的是同一家）
+  const teamCenter = centroid([base, ...view.objectives.allyBases.map((b) => ({ x: b.x + 1, y: b.y + 1 }))])
+  const targets = [...view.objectives.enemyBases].sort((a, b) => dist(a, teamCenter) - dist(b, teamCenter) || a.owner - b.owner)
   if (targets.length === 0) return
   const eb = targets[0]
   const enemyBaseCenter = { x: eb.x + 1, y: eb.y + 1 }
@@ -199,7 +203,17 @@ export function onTick(view: View, cmd: Commands): void {
   }
 
   if (mode === "defend") {
-    for (const u of army) if (dist(u, rally) > 3) attackMove(cmd, u, rally)
+    // 盟友家门口有敌人：去帮忙
+    const allyInTrouble = view.objectives.allyBases
+      .map((b) => ({ x: b.x + 1, y: b.y + 1 }))
+      .find((c) => enemyUnits.some((e) => dist(e, c) <= 12))
+    for (const u of army) {
+      if (allyInTrouble) {
+        const near = enemyUnits.filter((e) => dist(e, allyInTrouble) <= 12 && dist(e, u) <= 10)
+        if (near.length > 0) attack(cmd, u, pickTarget(u, near)!)
+        else attackMove(cmd, u, allyInTrouble)
+      } else if (dist(u, rally) > 3) attackMove(cmd, u, rally)
+    }
     return
   }
 

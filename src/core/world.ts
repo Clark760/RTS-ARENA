@@ -91,10 +91,15 @@ export class World implements SetupContext, RuleContext {
   /** 建筑、资源点每增减一次加 1，流场缓存据此作废 */
   staticVersion = 0
 
-  constructor(rules: Ruleset, names: string[], seed: number) {
+  /** 每个玩家的队伍编号 */
+  readonly teams: number[]
+
+  constructor(rules: Ruleset, names: string[], seed: number, teams?: number[]) {
     this.rules = rules
     this.seed = seed
     this.playerCount = names.length
+    if (teams && teams.length !== names.length) throw new Error(`队伍编号有 ${teams.length} 个，玩家有 ${names.length} 个`)
+    this.teams = teams ? [...teams] : names.map((_, i) => i)
     this.rng = new Mulberry32(mixSeed(seed, "rules"))
     this.simRng = new Mulberry32(mixSeed(seed, "sim"))
     this.idRng = new Mulberry32(mixSeed(seed, "ids"))
@@ -134,7 +139,13 @@ export class World implements SetupContext, RuleContext {
     this.pf = new PathFinder(w, this.height)
     this.flow = new FlowCache(this)
     this.staticVersion++
-    this.vis = this.players.map(() => new Uint8Array(n))
+    // 视野按队伍算：同队的玩家共用一张视野格
+    const byTeam = new Map<number, Uint8Array>()
+    this.vis = this.players.map((p) => {
+      const t = this.teams[p.id]
+      if (!byTeam.has(t)) byTeam.set(t, new Uint8Array(n))
+      return byTeam.get(t)!
+    })
   }
 
   inBounds(x: number, y: number): boolean {
@@ -332,7 +343,7 @@ export class World implements SetupContext, RuleContext {
   computeVisibility(): void {
     if (!this.rules.fog) return
     const W = this.width
-    for (const v of this.vis) v.fill(0)
+    for (const v of new Set(this.vis)) v.fill(0)
     for (const e of this.ents.values()) {
       if (e.owner < 0) continue
       const v = this.vis[e.owner]
@@ -349,9 +360,13 @@ export class World implements SetupContext, RuleContext {
     }
   }
 
-  /** 资源点和地形一样始终可见（位置、储量都公开） */
+  isAlly(a: number, b: number): boolean {
+    return a >= 0 && b >= 0 && this.teams[a] === this.teams[b]
+  }
+
+  /** 资源点和地形一样始终可见（位置、储量都公开）；盟友的实体总是看得见，盟友看得见的你也看得见 */
   visibleTo(player: number, e: EntityState): boolean {
-    if (!this.rules.fog || e.owner === player || e.def.kind === "resource") return true
+    if (!this.rules.fog || this.isAlly(e.owner, player) || e.def.kind === "resource") return true
     const v = this.vis[player]
     for (let y = e.y; y < e.y + e.h; y++)
       for (let x = e.x; x < e.x + e.w; x++) if (v[y * this.width + x]) return true
@@ -366,6 +381,7 @@ export class World implements SetupContext, RuleContext {
     return {
       me: player,
       playerNames: this.players.map((p) => p.name),
+      teams: [...this.teams],
       width: this.width,
       height: this.height,
       terrain: this.terrain,
@@ -380,7 +396,7 @@ export class World implements SetupContext, RuleContext {
   }
 
   playerInfos(): PlayerInfo[] {
-    return this.players.map((p) => ({ id: p.id, name: p.name, alive: p.alive, score: p.score }))
+    return this.players.map((p) => ({ id: p.id, name: p.name, team: this.teams[p.id], alive: p.alive, score: p.score }))
   }
 
   /** 玩家现有单位数 + 生产队列里的单位数 */

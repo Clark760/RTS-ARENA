@@ -132,13 +132,16 @@ function updateUI(force = false): void {
   $("tick-label").textContent = `${state.tick} / ${model.lastTick}`
   $("status-line").textContent = state.status
 
+  const teamed = new Set(r.players.map((p) => p.team)).size < r.players.length
   const rows = r.players.map((p, i) => {
     const ps = state!.players[i]
     const res = Object.entries(ps.resources)
       .map(([k, v]) => `${k} ${v}`)
       .join("，")
     const units = [...state!.ents.values()].filter((e) => e.owner === i && r.types[e.type]?.kind === "unit").length
-    return html`<tr><td><span class="swatch" style="background:${hex(playerColor(i))}"></span><span class="${ps.alive ? "" : "out"}">P${i} ${p.name}</span></td>
+    // 分队时在名字后面标队伍（老回放没有 team 字段）
+    const team = teamed && typeof p.team === "number" ? ` [队${p.team + 1}]` : ""
+    return html`<tr><td><span class="swatch" style="background:${hex(playerColor(i))}"></span><span class="${ps.alive ? "" : "out"}">P${i} ${p.name}${team}</span></td>
         <td>分 ${ps.score}</td><td>${res}</td><td>单位 ${units}</td></tr>`
   })
   $("players").innerHTML = html`${rows}`.s
@@ -161,7 +164,8 @@ function updateUI(force = false): void {
   const banner = $("result-banner")
   if (state.tick >= model.lastTick) {
     const res = r.result
-    const head = res.winner === null ? `平局——${res.reason}` : `P${res.winner} ${r.players[res.winner].name} 获胜——${res.reason}`
+    const won = Array.isArray(res.winners) ? res.winners : res.winner === null ? [] : [res.winner]
+    const head = won.length === 0 ? `平局——${res.reason}` : `${won.map((w) => `P${w} ${r.players[w]?.name}`).join("、")} 获胜——${res.reason}`
     const ranks =
       r.players.length > 2 && Array.isArray(res.ranking)
         ? "\n名次：" + res.ranking.map((g, i) => `${i + 1}. ${g.map((p) => `P${p} ${r.players[p]?.name}`).join(" = ")}`).join("　")

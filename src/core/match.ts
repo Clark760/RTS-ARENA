@@ -26,6 +26,8 @@ export interface MatchOptions {
   ruleset: Ruleset
   bots: MatchBot[]
   seed: number
+  /** 每个座位的队伍编号；不填就是每人一队 */
+  teams?: number[]
   /** 每 tick 结束时回调（进度显示用） */
   onTick?: (tick: number) => void
 }
@@ -34,9 +36,15 @@ function clip(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + "…" : s
 }
 
-/** 补全名次：规则包没给就按 winner 推；给了但漏了人，漏的并列最后 */
+/** 补全结果：winners 不填就是 [winner]；名次不填就按 winners 推，给了但漏了人，漏的并列最后 */
+function complete(r: MatchResult, n: number, tick: number): MatchResult & { tick: number } {
+  const winners = r.winners ?? (r.winner === null ? [] : [r.winner])
+  return { ...r, winner: r.winner ?? winners[0] ?? null, winners, ranking: fullRanking({ ...r, winners }, n), tick }
+}
+
 function fullRanking(r: MatchResult, n: number): number[][] {
-  const ranks = r.ranking ? r.ranking.map((g) => [...g]) : r.winner === null ? [[...Array(n).keys()]] : [[r.winner]]
+  const won = r.winners ?? []
+  const ranks = r.ranking ? r.ranking.map((g) => [...g]) : won.length === 0 ? [[...Array(n).keys()]] : [[...won]]
   const seen = new Set(ranks.flat())
   const rest = [...Array(n).keys()].filter((p) => !seen.has(p))
   if (rest.length) ranks.push(rest)
@@ -52,6 +60,7 @@ export function runMatch(opts: MatchOptions): Replay {
     rules,
     opts.bots.map((b) => b.name),
     opts.seed,
+    opts.teams,
   )
   rules.setup(w)
   if (w.width === 0) throw new Error(`规则包 ${rules.id} 的 setup 没有调用 setTerrain`)
@@ -147,11 +156,8 @@ export function runMatch(opts: MatchOptions): Replay {
     step(w)
     rules.onTick?.(w)
     const res = rules.result(w)
-    if (res) w.ended = { ...res, ranking: fullRanking(res, n), tick: w.tick }
-    else if (w.tick >= rules.maxTicks) {
-      const up = rules.timeUp(w)
-      w.ended = { ...up, ranking: fullRanking(up, n), tick: w.tick }
-    }
+    if (res) w.ended = complete(res, n, w.tick)
+    else if (w.tick >= rules.maxTicks) w.ended = complete(rules.timeUp(w), n, w.tick)
     rec.record(w, { logs, errs })
     simMs += performance.now() - t0
     peakEntities = Math.max(peakEntities, w.ents.size)
@@ -175,7 +181,7 @@ export function runMatch(opts: MatchOptions): Replay {
     seed: opts.seed,
     tickRate: rules.tickRate,
     maxTicks: rules.maxTicks,
-    players: opts.bots.map((b) => ({ name: b.name, bot: b.file })),
+    players: opts.bots.map((b, i) => ({ name: b.name, bot: b.file, team: w.teams[i] })),
     map: { width: w.width, height: w.height, terrain: w.terrain, colors },
     types,
     initial: rec.initial,

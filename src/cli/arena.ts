@@ -21,7 +21,8 @@ const HELP = `用法：npm run arena -- <命令> [参数]
 
   <bot> 可以是文件路径，也可以是现成 bot 的名字：baseline（每个规则包的基准 bot）、idle（不动）等，见 list
         --seed N      种子（默认随机）
-        --games N     连打 N 局，最后报胜率；同一个种子把座位轮换一遍（两人局就是换边各打一次）
+        --games N     连打 N 局，最后报胜率；同一个种子把各方的位置轮换一遍（两人局就是换边各打一次）
+        --teams 2v2   分队（规则包要支持），按给出的 bot 顺序分组：2v2 就是前 2 个一队、后 2 个一队
         --out 路径    回放目录，默认 replays/；单局时也可以给 .json 文件名
         --no-check    跳过类型检查
 `
@@ -34,7 +35,7 @@ function fail(msg: string): never {
 /** 各命令接受的选项；值为 true 的是开关，不带值 */
 const OPTIONS: Record<string, Record<string, boolean>> = {
   docs: { out: false },
-  run: { seed: false, games: false, out: false, "no-check": true },
+  run: { seed: false, games: false, out: false, teams: false, "no-check": true },
   check: { ticks: false },
 }
 
@@ -140,7 +141,8 @@ async function makeBots(rules: Ruleset, files: string[], seed: number, names: Ma
 
 function printResult(replay: Replay): void {
   const r = replay.result
-  const winner = r.winner === null ? "平局" : `玩家 ${r.winner}（${replay.players[r.winner].name}）获胜`
+  const won = r.winners ?? []
+  const winner = won.length === 0 ? "平局" : `${won.map((p) => `P${p}（${replay.players[p].name}）`).join("、")}获胜`
   console.log(`  第 ${r.tick} tick 结束：${winner}——${r.reason}`)
   if (replay.players.length > 2 && r.ranking)
     console.log(`  名次：${r.ranking.map((g, i) => `${i + 1}. ${g.map((p) => `P${p} ${replay.players[p].name}`).join(" = ")}`).join("  ")}`)
@@ -186,20 +188,28 @@ async function cmdRun(rules: Ruleset, args: string[], opt: Record<string, string
   if (!Number.isInteger(baseSeed)) fail("--seed 要是整数")
   const outOpt = typeof opt.out === "string" ? opt.out : undefined
   const n = files.length
+  // 分队：--teams 2v2 表示按给出的顺序前 2 个一队、后 2 个一队；不给就每人一队
+  const groups = parseTeams(opt.teams, n)
+  if (groups.length < n && !rules.teams) fail(`「${rules.name}」不支持分队`)
   // 按座位记战绩：同一个文件坐好几个位置（镜像对打）时也分得清
   const seatStats = files.map(() => ({ wins: 0, places: [] as number[] }))
   let draws = 0
   // 本次运行的编号：几个 agent 同一秒用同一个种子跑也不会写到同一个文件
   const runId = randomBytes(3).toString("hex")
-  if (n > 2 && games > 1 && games % n !== 0) console.warn(`提醒：--games ${games} 不是 ${n} 的倍数，最后一个种子没轮完所有座位`)
+  const k = groups.length
+  if (k > 2 && games > 1 && games % k !== 0) console.warn(`提醒：--games ${games} 不是 ${k} 的倍数，最后一个种子没轮完所有位置`)
+  if (k === 2 && games > 1 && games % 2 === 1) console.warn(`提醒：--games ${games} 是奇数，最后一个种子只打了一边`)
   for (let g = 0; g < games; g++) {
-    // 同一个种子把座位轮换一遍（两人局就是换边各打一次），抵消地图和随机数的影响。seats[p] 是坐在 P{p} 的参赛者编号
-    const seed = n > 1 ? baseSeed + Math.floor(g / n) : baseSeed + g
-    const seats = [...Array(n).keys()].map((p) => (p + g) % n)
+    // 同一个种子把各队的位置轮换一遍（两边就是换边各打一次），抵消地图和随机数的影响。
+    // seats[p] 是坐在 P{p} 的参赛者编号，teams[p] 是这个座位的队伍编号
+    const seed = baseSeed + Math.floor(g / k)
+    const rotated = [...Array(k).keys()].map((t) => groups[(t + g) % k])
+    const seats = rotated.flat()
+    const teams = rotated.flatMap((members, t) => members.map(() => t))
     const order = seats.map((i) => files[i])
     const bots = await makeBots(rules, order, seed, names)
     const t0 = performance.now()
-    const replay = runMatch({ ruleset: rules, bots, seed })
+    const replay = runMatch({ ruleset: rules, bots, seed, teams })
     const ms = performance.now() - t0
     for (const w of checkLimits(rules, replay)) console.warn(`提醒：${w}`)
     let file: string
@@ -208,7 +218,11 @@ async function cmdRun(rules: Ruleset, args: string[], opt: Record<string, string
     else file = join(outOpt ?? join(ROOT, "replays"), `${rules.id}-${stamp()}-${runId}-s${seed}${games > 1 ? `-g${g + 1}` : ""}.json`)
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, JSON.stringify(replay))
-    console.log(`第 ${g + 1} 局  种子 ${seed}  ${order.map((f, p) => `P${p}=${names.get(f)}`).join("  ")}  用时 ${(ms / 1000).toFixed(1)} 秒`)
+    const lineup =
+      k === n
+        ? order.map((f, p) => `P${p}=${names.get(f)}`).join("  ")
+        : rotated.map((members, t) => `队${t + 1}[${members.map((i) => `P${seats.indexOf(i)}=${names.get(files[i])}`).join(" ")}]`).join(" 对 ")
+    console.log(`第 ${g + 1} 局  种子 ${seed}  ${lineup}  用时 ${(ms / 1000).toFixed(1)} 秒`)
     printResult(replay)
     console.log(`  回放：${relative(process.cwd(), file)}`)
     // 每个 bot 一份只有它自己信息的日志
@@ -219,19 +233,44 @@ async function cmdRun(rules: Ruleset, args: string[], opt: Record<string, string
       console.log(`  P${p} 的日志：${relative(process.cwd(), logFile)}`)
     }
     const ranking = replay.result.ranking!
-    if (replay.result.winner === null) draws++
+    const won = replay.result.winners ?? []
+    if (won.length === 0) draws++
     for (let p = 0; p < n; p++) {
       const place = 1 + ranking.findIndex((group) => group.includes(p))
       seatStats[seats[p]].places.push(place)
-      if (replay.result.winner === p) seatStats[seats[p]].wins++
+      if (won.includes(p)) seatStats[seats[p]].wins++
     }
   }
   if (games > 1) {
     const avg = (xs: number[]) => (xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(2)
     const label = (i: number) => (files.indexOf(files[i]) === i && files.lastIndexOf(files[i]) === i ? names.get(files[i])! : `${names.get(files[i])}#${i + 1}`)
-    const parts = seatStats.map((s, i) => `${label(i)} 赢 ${s.wins}${n > 2 ? `（平均名次 ${avg(s.places)}）` : ""}`)
+    const parts =
+      k === n
+        ? seatStats.map((s, i) => `${label(i)} 赢 ${s.wins}${n > 2 ? `（平均名次 ${avg(s.places)}）` : ""}`)
+        : groups.map((members, t) => {
+            // 同队的人胜场相同，名次也相同
+            const st = seatStats[members[0]]
+            return `队${t + 1}（${members.map(label).join("、")}）赢 ${st.wins}${k > 2 ? `（平均名次 ${avg(st.places)}）` : ""}`
+          })
     console.log(`\n共 ${games} 局：${parts.join("，")}，平 ${draws}`)
   }
+}
+
+/** "2v2"、"1v1v1v1"、"3v1" → 按顺序分组的参赛者编号；不给就每人一队 */
+function parseTeams(spec: string | true | undefined, n: number): number[][] {
+  if (spec === undefined) return [...Array(n).keys()].map((i) => [i])
+  if (typeof spec !== "string" || !/^\d+(v\d+)+$/.test(spec)) fail(`--teams 要写成 2v2、3v1、1v1v1v1 这样`)
+  const sizes = spec.split("v").map(Number)
+  if (sizes.some((x) => x < 1)) fail("--teams 里每队至少 1 人")
+  const total = sizes.reduce((a, b) => a + b, 0)
+  if (total !== n) fail(`--teams ${spec} 一共 ${total} 人，但给了 ${n} 个 bot`)
+  const out: number[][] = []
+  let i = 0
+  for (const size of sizes) {
+    out.push([...Array(size).keys()].map((j) => i + j))
+    i += size
+  }
+  return out
 }
 
 function safeName(s: string): string {
@@ -242,15 +281,25 @@ function safeName(s: string): string {
 function botLog(replay: Replay, p: number, game: number): string {
   const r = replay.result
   const me = replay.players[p]
-  const others = replay.players.map((x, i) => `P${i} ${x.name}`).filter((_, i) => i !== p)
+  const ally = (i: number) => replay.players[i].team === me.team
+  const allies = replay.players.map((x, i) => `P${i} ${x.name}`).filter((_, i) => i !== p && ally(i))
+  const others = replay.players.map((x, i) => `P${i} ${x.name}`).filter((_, i) => !ally(i))
   const place = 1 + r.ranking!.findIndex((g) => g.includes(p))
-  const outcome = r.winner === null ? "平局" : r.winner === p ? "你赢了" : `你输了（赢家 P${r.winner} ${replay.players[r.winner].name}）`
+  const won = r.winners ?? []
+  const outcome =
+    won.length === 0
+      ? "平局"
+      : won.includes(p)
+        ? allies.length > 0
+          ? "你们队赢了"
+          : "你赢了"
+        : `你输了（赢家 ${won.map((i) => `P${i} ${replay.players[i].name}`).join("、")}）`
   const st = replay.bots[p]
   const avg = st.calls ? (st.fuelTotal / st.calls).toFixed(1) : "0"
   const lines = [
     `# ${me.name} 的对局日志（只有这个 bot 自己的信息）`,
     `规则包：${replay.ruleset.name}（${replay.ruleset.id}）  种子：${replay.seed}  第 ${game} 局`,
-    `你是 P${p}（${me.bot}）；对手：${others.join("、")}`,
+    `你是 P${p}（${me.bot}）${allies.length ? `；盟友：${allies.join("、")}` : ""}；对手：${others.join("、")}`,
     `结果：第 ${r.tick} tick，${outcome}——${r.reason}${replay.players.length > 2 ? `；你的名次 ${place} / ${replay.players.length}` : ""}`,
     `统计：调用 ${st.calls} 次，燃料平均 ${avg} 最高 ${st.fuelMax}，报错 ${st.errors}，燃料耗尽 ${st.fuelOuts}，被拒命令 ${st.rejected}${st.status === "dead" ? `，停止运行：${st.deadReason}` : ""}`,
     "",

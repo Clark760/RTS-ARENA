@@ -86,6 +86,8 @@ export interface Entity {
 export interface PlayerInfo {
   id: number
   name: string
+  /** 队伍编号。同队的是盟友：共享视野、不能互相攻击，资源和交货点各管各的。不分队时每人一队 */
+  team: number
   /** false 表示已出局 */
   alive: boolean
   /** 当前分数，含义由规则包定（见规则说明里的「分数」） */
@@ -136,6 +138,8 @@ export interface Game {
   me: number
   /** 玩家名，下标就是玩家编号 */
   playerNames: string[]
+  /** 每个玩家的队伍编号，下标是玩家编号；同队的是盟友 */
+  teams: number[]
   width: number
   height: number
   /** 地形，terrain[y][x] 是一个字符 */

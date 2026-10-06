@@ -76,7 +76,8 @@ function applyOne(w: World, p: number, c: unknown): string | null {
       if (!isInt(cmd.target)) return "target 必须是实体或整数 id"
       const t = w.ents.get(cmd.target)
       if (!t || !w.visibleTo(p, t)) return `看不到目标 #${cmd.target}`
-      if (!canHit(e, t)) return `不能攻击 #${t.id}（${t.type}）：自己的、资源点或无敌`
+      if (t.owner !== p && w.isAlly(p, t.owner)) return `不能攻击盟友的 #${t.id}（${t.type}）`
+      if (!canHit(w, e, t)) return `不能攻击 #${t.id}（${t.type}）：自己的、资源点或无敌`
       if (e.def.moveTicks <= 0 && w.dist(e, t) > e.def.attack.range) return `#${e.id} 不能移动，#${t.id} 在射程外`
       resetOrder(e, { kind: "attack", target: t.id })
       return null

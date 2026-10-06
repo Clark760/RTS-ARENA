@@ -212,3 +212,50 @@ test("隔墙够不着的敌人不会让 attackMove 停在墙根", () => {
 })
 
 void idle
+
+test("队伍：盟友共享视野、看得见彼此的实体", () => {
+  // 开迷雾；P0 在左边，盟友 P1 在右边，敌人 P2 只在 P1 视野里
+  const rows = Array(5).fill(".".repeat(30))
+  let p0View: View | null = null
+  runMatch({
+    ruleset: mini(rows, [["grunt", 0, 1, 2], ["grunt", 1, 25, 2], ["grunt", 2, 28, 2], ["grunt", 3, 14, 2]], { fog: true, maxTicks: 2, players: { min: 2, max: 4 } }),
+    seed: 1,
+    teams: [0, 0, 1, 1],
+    bots: [
+      { name: "a", file: "", runner: fnBot((v) => void (p0View ??= v)) },
+      { name: "b", file: "", runner: idle() },
+      { name: "c", file: "", runner: idle() },
+      { name: "d", file: "", runner: idle() },
+    ],
+  })
+  const v = p0View as unknown as View
+  const owners = v.entities.map((e) => e.owner).sort()
+  assert.deepEqual(owners, [0, 1, 2], "看得见自己、盟友，以及盟友视野里的敌人；看不见视野外的敌人 P3")
+  assert.deepEqual(v.players.map((p) => p.team), [0, 0, 1, 1])
+})
+
+test("队伍：盟友之间不会自动攻击，攻击命令被拒", () => {
+  const rows = Array(3).fill(".".repeat(10))
+  const events: GameEvent[] = []
+  let last: View | null = null
+  runMatch({
+    ruleset: mini(rows, [["grunt", 0, 4, 1], ["grunt", 1, 5, 1]], { maxTicks: 20 }),
+    seed: 1,
+    teams: [0, 0],
+    bots: [
+      {
+        name: "a",
+        file: "",
+        runner: fnBot((v, cmd) => {
+          events.push(...v.events)
+          last = v
+          if (v.tick === 0) cmd.attack(mine(v, "grunt")[0], v.entities.find((e) => e.owner === 1)!)
+        }),
+      },
+      { name: "b", file: "", runner: idle() },
+    ],
+  })
+  const reasons = events.filter((e) => e.kind === "rejected").map((e) => (e.kind === "rejected" ? e.reason : ""))
+  assert.match(reasons[0] ?? "", /盟友/)
+  for (const e of (last as unknown as View).entities) assert.equal(e.hp, 100, "贴在一起 20 tick 也没互相打")
+})
