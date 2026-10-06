@@ -47,6 +47,11 @@ export interface TerrainSpec {
 export interface MatchResult {
   winner: number | null
   reason: string
+  /**
+   * 名次（多人局用）：ranking[i] 是第 i+1 名的玩家编号们，同一名次可以有多人。
+   * 不填时按 winner 推：赢家第 1，其余并列第 2；平局全部并列第 1。
+   */
+  ranking?: number[][]
 }
 
 /** 回放里的叠加层（区域、文字），由规则包每 tick 设置 */

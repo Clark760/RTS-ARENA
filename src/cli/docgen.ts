@@ -1,6 +1,7 @@
 // 生成发给 bot 作者的 arena.d.ts 和 PROMPT.md（Node 端）
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { randomBytes } from "node:crypto"
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { resolveType } from "../core/world.ts"
 import type { Ruleset } from "../core/types.ts"
@@ -163,8 +164,17 @@ export function botTsconfig(files: string[]): string {
 
 /** 用 tsc 检查 bot；返回错误输出，没有错误返回空字符串 */
 export function typecheck(rules: Ruleset, files: string[]): string {
-  const dir = join(ROOT, "out", "check", rules.id)
+  // 每次一个目录：几个 agent 同时跑 check / run 不会互相覆盖
+  const dir = join(ROOT, "out", "check", `${rules.id}-${process.pid}-${randomBytes(3).toString("hex")}`)
   mkdirSync(dir, { recursive: true })
+  try {
+    return runTsc(rules, files, dir)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+function runTsc(rules: Ruleset, files: string[], dir: string): string {
   writeFileSync(join(dir, "arena.d.ts"), buildDts(rules))
   writeFileSync(join(dir, "tsconfig.json"), botTsconfig(["arena.d.ts", ...files.map((f) => resolve(f))]))
   const tsc = join(ROOT, "node_modules", "typescript", "bin", "tsc")

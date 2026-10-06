@@ -2,7 +2,7 @@
 import { applyCommands } from "./commands.ts"
 import { Recorder } from "./recorder.ts"
 import { step } from "./sim.ts"
-import type { BotCall, BotRunner, BotStats, Frame, Replay, Ruleset } from "./types.ts"
+import type { BotCall, BotRunner, BotStats, Frame, MatchResult, Replay, Ruleset } from "./types.ts"
 import { buildView } from "./view.ts"
 import { World } from "./world.ts"
 
@@ -32,6 +32,15 @@ export interface MatchOptions {
 
 function clip(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + "…" : s
+}
+
+/** 补全名次：规则包没给就按 winner 推；给了但漏了人，漏的并列最后 */
+function fullRanking(r: MatchResult, n: number): number[][] {
+  const ranks = r.ranking ? r.ranking.map((g) => [...g]) : r.winner === null ? [[...Array(n).keys()]] : [[r.winner]]
+  const seen = new Set(ranks.flat())
+  const rest = [...Array(n).keys()].filter((p) => !seen.has(p))
+  if (rest.length) ranks.push(rest)
+  return ranks
 }
 
 export function runMatch(opts: MatchOptions): Replay {
@@ -138,8 +147,11 @@ export function runMatch(opts: MatchOptions): Replay {
     step(w)
     rules.onTick?.(w)
     const res = rules.result(w)
-    if (res) w.ended = { ...res, tick: w.tick }
-    else if (w.tick >= rules.maxTicks) w.ended = { ...rules.timeUp(w), tick: w.tick }
+    if (res) w.ended = { ...res, ranking: fullRanking(res, n), tick: w.tick }
+    else if (w.tick >= rules.maxTicks) {
+      const up = rules.timeUp(w)
+      w.ended = { ...up, ranking: fullRanking(up, n), tick: w.tick }
+    }
     rec.record(w, { logs, errs })
     simMs += performance.now() - t0
     peakEntities = Math.max(peakEntities, w.ents.size)
