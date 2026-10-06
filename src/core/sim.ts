@@ -3,15 +3,15 @@ import { flowStep, UNREACHABLE } from "./nav.ts"
 import { attackable, rectDist, type World } from "./world.ts"
 import type { EntityState, Rect } from "./types.ts"
 
+/** 追单位时，距离在这以内用小范围 A*，更远用去目标当前格的流场 */
+const CHASE_NEAR = 10
 /** 追单位时 A* 最多扩展的格子数 */
 const CHASE_EXPAND = 400
 /** move / attackMove 被单位挡住这么多 tick 就放弃，变成 idle */
 const STUCK_GIVE_UP = 30
-/** 被挡住这么多 tick 后允许横着让一步 */
-const SIDESTEP_AFTER = 3
 /** 被挡住时绕行 A* 最多扩展的格子数 */
 const DETOUR_EXPAND = 300
-/** 生产出的单位最远放到建筑外几圈 */
+/** 生产出的单位最远放到建筑外几步 */
 const SPAWN_RING = 4
 
 export function step(w: World): void {
@@ -28,6 +28,8 @@ function setIdle(e: EntityState): void {
   e.path.length = 0
   e.pathKey = ""
   e.stuck = 0
+  e.want = -1
+  e.gatherCd = 0
 }
 
 // ---------- 生产 ----------
@@ -58,7 +60,7 @@ export function canHit(e: EntityState, o: EntityState): boolean {
   return o.owner !== e.owner && attackable(o)
 }
 
-/** radius 内最好打的敌人：最近 → 血最少 → id 最小 */
+/** radius 内最好打的敌人：最近 → 血最少 → id 最小（id 是随机分配的，所以最后这条等于随机） */
 function bestEnemyWithin(w: World, e: EntityState, radius: number): EntityState | null {
   let best: EntityState | null = null
   let bestD = 0
@@ -93,7 +95,12 @@ function attackTarget(w: World, e: EntityState): EntityState | null {
   switch (o.kind) {
     case "attack": {
       const t = w.ents.get(o.target)
-      return t && canHit(e, t) && rectDist(e, t) <= range ? t : null
+      // 目标没了、看不见了，或者自己不能动而目标出了射程：命令结束，这一 tick 照常自动攻击
+      if (!t || !canHit(e, t) || !w.visibleTo(e.owner, t) || (e.def.moveTicks <= 0 && rectDist(e, t) > range)) {
+        setIdle(e)
+        return bestEnemyWithin(w, e, range)
+      }
+      return rectDist(e, t) <= range ? t : null
     }
     case "idle":
     case "attackMove":
@@ -133,7 +140,7 @@ function combat(w: World): void {
 
 // ---------- 移动 ----------
 
-/** 移动目标：不会动的目标走流场，会动的单位用小范围 A* */
+/** 移动目标：不会动的目标走流场，会动的单位用 chase */
 interface Goal {
   key: string
   /** move / attackMove：到不了或挡太久就放弃 */
@@ -143,8 +150,8 @@ interface Goal {
   chase?: { target: EntityState; range: number }
 }
 
-function tileGoal(w: World, x: number, y: number): Goal {
-  return { key: `t${x},${y}`, giveUp: true, field: () => w.flow.toTile(x, y) }
+function tileGoal(w: World, x: number, y: number, key = `t${x},${y}`): Goal {
+  return { key, giveUp: true, field: () => w.flow.toTile(x, y) }
 }
 
 function nearGoal(w: World, t: EntityState, range: number): Goal {
@@ -158,7 +165,7 @@ function nearestDropOff(w: World, e: EntityState): EntityState | null {
   for (const o of w.ents.values()) {
     if (o.owner !== e.owner || !o.def.dropOff) continue
     const d = rectDist(e, o)
-    if (!best || d < bestD) {
+    if (!best || d < bestD || (d === bestD && o.id < best.id)) {
       best = o
       bestD = d
     }
@@ -195,7 +202,7 @@ function moveGoal(w: World, e: EntityState): Goal | null {
         setIdle(e)
         return null
       }
-      return { ...tileGoal(w, o.x, o.y), key: `a${o.x},${o.y}` }
+      return tileGoal(w, o.x, o.y, `a${o.x},${o.y}`)
     }
     case "gather": {
       if (o.returning) {
@@ -213,32 +220,60 @@ function moveGoal(w: World, e: EntityState): Goal | null {
   }
 }
 
-type StepResult = "moved" | "blocked" | "done"
+/** unreachable：从这里到不了目标（由 stepToward 决定怎么办） */
+type StepResult = "moved" | "blocked" | "done" | "unreachable"
 
 function doMove(w: World, e: EntityState, to: number): StepResult {
   w.moveUnit(e, to)
   e.stuck = 0
+  e.want = -1
   e.moveCd = e.def.moveTicks
   return "moved"
 }
 
+/**
+ * 挡在 ni 的是自己人，而且它闲着、或者它上次也想走进我这一格（迎面堵住）：两人交换位置。
+ * 敌人不让路。
+ */
+function trySwap(w: World, e: EntityState, ni: number): boolean {
+  if (ni < 0) return false
+  const o = w.ents.get(w.unitOcc[ni])
+  if (!o || o.owner !== e.owner || o.def.moveTicks <= 0) return false
+  const here = e.y * w.width + e.x
+  const idle = o.order.kind === "idle"
+  if (!idle && o.want !== here) return false
+  w.unitOcc[here] = o.id
+  w.unitOcc[ni] = e.id
+  o.x = e.x
+  o.y = e.y
+  e.x = ni % w.width
+  e.y = (ni - e.x) / w.width
+  e.stuck = 0
+  e.want = -1
+  e.moveCd = e.def.moveTicks
+  if (!idle) {
+    // 对方也算走了一步
+    o.stuck = 0
+    o.want = -1
+    o.path.length = 0
+    o.moveCd = o.def.moveTicks
+  }
+  return true
+}
+
 /** 按流场走一步 */
-function stepByField(w: World, e: EntityState, goal: Goal): StepResult {
-  const field = goal.field!()
+function stepByField(w: World, e: EntityState, field: Int32Array, key: string, giveUp: boolean): StepResult {
   const here = e.y * w.width + e.x
   const d = field[here]
-  if (d === UNREACHABLE) {
-    setIdle(e) // 从这里到不了
-    return "done"
-  }
+  if (d === UNREACHABLE) return "unreachable"
   if (d === 0) return "done"
   // move 到目标旁边了、目标格被别的单位占着：算到了
-  if (goal.giveUp && d <= 1 && e.stuck >= 3) {
+  if (giveUp && d <= 1 && e.stuck >= 3) {
     setIdle(e)
     return "done"
   }
   // 正在走绕行路线
-  const detourKey = "d" + goal.key
+  const detourKey = "d" + key
   if (e.pathKey === detourKey && e.path.length > 0) {
     const next = e.path[e.path.length - 1]
     if (w.staticFree(next) && w.unitOcc[next] === 0) {
@@ -247,15 +282,16 @@ function stepByField(w: World, e: EntityState, goal: Goal): StepResult {
     }
     e.path.length = 0
   }
-  const { next, closer } = flowStep(w, field, here, e.stuck >= SIDESTEP_AFTER)
-  if (next >= 0) return doMove(w, e, next)
-  if (!closer) {
+  const step = flowStep(w, field, here)
+  if (step.next >= 0) return doMove(w, e, step.next)
+  if (!step.closer) {
     // 没有更近的可站位置（目标在障碍里）：已经尽量靠近了
     setIdle(e)
     return "done"
   }
-  if (swapWithIdle(w, e, field, here)) return "moved"
-  // 被挡了两回：把单位当障碍、用流场当启发值做小范围 A*，绕一段（解决面对面互相堵死）
+  if (trySwap(w, e, step.blocked)) return "moved"
+  e.want = step.blocked
+  // 被挡了两回：把单位当障碍、用流场当启发值做小范围 A*，绕一段
   if (e.stuck >= 2 && e.stuck % 2 === 0) {
     const self = e.id
     const W = w.width
@@ -268,7 +304,7 @@ function stepByField(w: World, e: EntityState, goal: Goal): StepResult {
       },
       passable: (i) => w.staticFree(i) && (w.unitOcc[i] === 0 || w.unitOcc[i] === self),
       maxExpand: DETOUR_EXPAND,
-      salt: w.simRng.next() & 0xffff,
+      salt: w.simRng.next() >>> 1,
     })
     if (res.path.length > 0) {
       e.path = res.path
@@ -279,32 +315,17 @@ function stepByField(w: World, e: EntityState, goal: Goal): StepResult {
   return "blocked"
 }
 
-/** 更近的那一格被自己闲着的单位占了：直接交换位置 */
-function swapWithIdle(w: World, e: EntityState, field: Int32Array, here: number): boolean {
-  const W = w.width
-  const cur = field[here]
-  for (const ni of [here - W, here + 1, here + W, here - 1]) {
-    if (ni < 0 || ni >= field.length || Math.abs((ni % W) - e.x) > 1) continue
-    const nd = field[ni]
-    if (nd === UNREACHABLE || nd >= cur) continue
-    const o = w.ents.get(w.unitOcc[ni])
-    if (!o || o.owner !== e.owner || o.order.kind !== "idle" || o.def.moveTicks <= 0) continue
-    w.unitOcc[here] = o.id
-    w.unitOcc[ni] = e.id
-    o.x = e.x
-    o.y = e.y
-    e.x = ni % W
-    e.y = (ni - e.x) / W
-    e.stuck = 0
-    e.moveCd = e.def.moveTicks
-    return true
-  }
-  return false
-}
-
-/** 追会动的单位：小范围 A*，目标走远了再重新规划 */
+/**
+ * 追会动的单位：近了用小范围 A*（目标走出 2 格就重新规划）；远了、或者 A* 找不到更近的路（隔着墙要绕远），
+ * 改用去目标当前格的流场。
+ */
 function stepByChase(w: World, e: EntityState, goal: Goal): StepResult {
   const { target: t, range } = goal.chase!
+  const fieldKey = "f" + goal.key
+  if (e.pathKey === fieldKey || rectDist(e, t) > CHASE_NEAR) {
+    e.pathKey = fieldKey
+    return stepByField(w, e, w.flow.toTile(t.x, t.y), goal.key, false)
+  }
   const moved = Math.abs(t.x - e.planX) + Math.abs(t.y - e.planY)
   const avoid = e.stuck >= 2
   if (e.pathKey !== goal.key || e.path.length === 0 || moved >= 2 || (avoid && e.stuck % 3 === 2)) {
@@ -316,18 +337,17 @@ function stepByChase(w: World, e: EntityState, goal: Goal): StepResult {
       h: (ax, ay) => Math.max(0, rectDist({ x: ax, y: ay, w: 1, h: 1 }, r) - range),
       passable: avoid ? (i) => w.staticFree(i) && (w.unitOcc[i] === 0 || w.unitOcc[i] === self) : (i) => w.staticFree(i),
       maxExpand: CHASE_EXPAND,
-      salt: w.simRng.next() & 0xffff,
+      salt: w.simRng.next() >>> 1,
     })
     e.path = res.path
     e.pathKey = goal.key
     e.planX = t.x
     e.planY = t.y
     if (e.path.length === 0) {
-      if (!avoid) {
-        setIdle(e) // 不绕开单位都找不到更近的路：目标被围死了
-        return "done"
-      }
-      return "blocked"
+      if (avoid) return "blocked"
+      // 不绕开单位都找不到更近的路：改用流场（流场也到不了才算真的到不了）
+      e.pathKey = fieldKey
+      return stepByField(w, e, w.flow.toTile(t.x, t.y), goal.key, false)
     }
   }
   const next = e.path[e.path.length - 1]
@@ -335,7 +355,14 @@ function stepByChase(w: World, e: EntityState, goal: Goal): StepResult {
     e.path.length = 0
     return "blocked"
   }
-  if (w.unitOcc[next] !== 0) return "blocked"
+  if (w.unitOcc[next] !== 0) {
+    if (trySwap(w, e, next)) {
+      e.path.pop()
+      return "moved"
+    }
+    e.want = next
+    return "blocked"
+  }
   e.path.pop()
   return doMove(w, e, next)
 }
@@ -343,7 +370,16 @@ function stepByChase(w: World, e: EntityState, goal: Goal): StepResult {
 function stepToward(w: World, e: EntityState): StepResult {
   const goal = moveGoal(w, e)
   if (!goal) return "done"
-  return goal.field ? stepByField(w, e, goal) : stepByChase(w, e, goal)
+  const r = goal.field ? stepByField(w, e, goal.field(), goal.key, goal.giveUp) : stepByChase(w, e, goal)
+  if (r !== "unreachable") return r
+  const o = e.order
+  // attackMove 被看得见却到不了的敌人（比如隔着水）引过去：不管它，继续去终点
+  if (o.kind === "attackMove" && goal.key !== `a${o.x},${o.y}`) {
+    const r2 = stepByField(w, e, w.flow.toTile(o.x, o.y), `a${o.x},${o.y}`, true)
+    if (r2 !== "unreachable") return r2
+  }
+  setIdle(e) // 从这里到不了
+  return "done"
 }
 
 function movement(w: World): void {
@@ -357,9 +393,9 @@ function movement(w: World): void {
   w.simRng.shuffle(movers)
   // 第一轮被挡住的，等别人走完再试一次（排成一列走时后面的能跟上）
   const retry: EntityState[] = []
-  for (const e of movers) if (e.alive && stepToward(w, e) === "blocked") retry.push(e)
+  for (const e of movers) if (e.alive && e.moveCd === 0 && stepToward(w, e) === "blocked") retry.push(e)
   for (const e of retry) {
-    if (stepToward(w, e) !== "blocked") continue
+    if (e.moveCd > 0 || stepToward(w, e) !== "blocked") continue
     e.stuck++
     if (e.stuck >= STUCK_GIVE_UP && (e.order.kind === "move" || e.order.kind === "attackMove")) setIdle(e)
   }
@@ -383,7 +419,10 @@ function gathering(w: World): void {
         o.returning = true
         continue
       }
-      if (rectDist(e, node) > 1) continue
+      if (rectDist(e, node) > 1) {
+        e.gatherCd = 0
+        continue
+      }
       e.gatherCd++
       if (e.gatherCd < g.ticks) continue
       e.gatherCd = 0

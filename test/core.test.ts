@@ -71,24 +71,27 @@ test("会进攻的 bot 能打赢不动的 bot", () => {
 
 test("非法命令被拒绝，原因出现在下次的 events 里", () => {
   const seen: GameEvent[] = []
-  let enemyBase = 0
   const bot = fnBot((view: View, cmd) => {
     seen.push(...view.events)
     if (view.tick === 0) {
-      enemyBase = view.entities.find((e) => e.owner !== view.me && e.type === "base")?.id ?? 999
+      // 关掉迷雾才看得到对方主基地
+      const enemyBase = view.entities.find((e) => e.owner >= 0 && e.owner !== view.me && e.type === "base")!
       const myWorker = view.entities.find((e) => e.owner === view.me && e.type === "worker")!
       cmd.move(enemyBase, 1, 1) // 不是自己的
+      cmd.move(123456789, 1, 1) // 不存在
       cmd.move(myWorker, 999, 0) // 越界
       cmd.produce(myWorker, "soldier") // 工人不能生产
     }
   })
-  const quick: Ruleset = { ...annihilation, maxTicks: 20 }
+  const quick: Ruleset = { ...annihilation, maxTicks: 20, fog: false }
   runMatch({ ruleset: quick, seed: 1, bots: [{ name: "a", file: "", runner: bot }, { name: "b", file: "", runner: idle() }] })
   const reasons = seen.filter((e) => e.kind === "rejected").map((e) => (e.kind === "rejected" ? e.reason : ""))
-  assert.equal(reasons.length, 3)
-  assert.match(reasons[0], /找不到|不是你的/)
-  assert.match(reasons[1], /地图外/)
-  assert.match(reasons[2], /不能生产/)
+  assert.equal(reasons.length, 4)
+  // 不是你的和不存在说法一样（否则能拿 id 探测看不见的敌人是否还活着），只差 id
+  assert.match(reasons[0], /你没有/)
+  assert.equal(reasons[0].replace(/#\d+/, "#"), reasons[1].replace(/#\d+/, "#"))
+  assert.match(reasons[2], /地图外/)
+  assert.match(reasons[3], /不能生产/)
 })
 
 test("未知命令和格式错误的命令被拒绝", () => {

@@ -22,6 +22,8 @@ function resetOrder(e: EntityState, order: EntityState["order"]): void {
   e.path.length = 0
   e.pathKey = ""
   e.stuck = 0
+  e.want = -1
+  e.gatherCd = 0
 }
 
 /** 执行玩家 p 的一批命令，返回被拒绝的 [命令, 原因] */
@@ -50,8 +52,8 @@ function applyOne(w: World, p: number, c: unknown): string | null {
   const actorId = kind === "produce" || kind === "cancel" ? cmd.building : cmd.unit
   if (!isInt(actorId)) return "unit / building 必须是实体或整数 id"
   const e = w.ents.get(actorId)
-  if (!e) return `找不到 #${actorId}（可能已经死了）`
-  if (e.owner !== p) return `#${actorId} 不是你的`
+  // 不存在和不是你的用同一句话，否则 bot 能拿 id 探测看不见的敌人是否还活着
+  if (!e || e.owner !== p) return `你没有 #${actorId} 这个实体（可能已经死了）`
 
   switch (kind) {
     case "move": {

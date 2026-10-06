@@ -20,6 +20,7 @@ export function buildView(w: World, p: number): View {
     }
     entities.push(v)
   }
+  entities.sort((a, b) => a.id - b.id)
   const player = w.players[p]
   const events = player.pending
   player.pending = []

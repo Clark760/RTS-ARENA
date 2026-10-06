@@ -5,8 +5,8 @@ import { rectDist, type World } from "./world.ts"
 
 /** 到不了 */
 export const UNREACHABLE = -1
-/** 最多缓存多少张流场 */
-const MAX_FIELDS = 128
+/** 流场缓存总共最多占多少字节（地图越小能存的张数越多），张数限制在 64～1024 */
+const CACHE_BYTES = 32 * 1024 * 1024
 
 const DX = [0, 1, 0, -1]
 const DY = [-1, 0, 1, 0]
@@ -20,12 +20,14 @@ export class FlowCache {
   private w: World
   private cache = new Map<string, Entry>()
   private queue: Int32Array
+  private maxFields: number
   /** 统计：重算了多少张 */
   built = 0
 
   constructor(w: World) {
     this.w = w
     this.queue = new Int32Array(w.width * w.height)
+    this.maxFields = Math.max(64, Math.min(1024, Math.floor(CACHE_BYTES / (w.width * w.height * 4))))
   }
 
   private get(key: string, build: (field: Int32Array) => void): Int32Array {
@@ -42,7 +44,7 @@ export class FlowCache {
     this.built++
     this.cache.delete(key)
     this.cache.set(key, { version: this.w.staticVersion, field })
-    if (this.cache.size > MAX_FIELDS) this.cache.delete(this.cache.keys().next().value!)
+    if (this.cache.size > this.maxFields) this.cache.delete(this.cache.keys().next().value!)
     return field
   }
 
@@ -114,37 +116,44 @@ export class FlowCache {
 }
 
 /**
- * 按流场选下一步：相邻格里步数更小、地形可走、没被单位占的；一样好的随机挑一个
- * （固定方向顺序会让两边走出不对称的路线）。
- * 返回 { next: 下一格（都被占时为 -1）, closer: 是否还存在更近的可走格 }
+ * 按流场选下一步：相邻格里步数更小、地形可走的。一样好的随机挑一个（固定方向顺序会让两边走出不对称的路线）。
+ * - next：能走的最好一格（都被单位占着时为 -1）
+ * - blocked：被单位占着的最好一格（用来和挡路的自己人换位；没有为 -1）
+ * - closer：是否存在更近的可走格（没有说明已经尽量靠近了）
  */
-export function flowStep(w: World, field: Int32Array, from: number, sidestep: boolean): { next: number; closer: boolean } {
+export function flowStep(w: World, field: Int32Array, from: number): { next: number; blocked: number; closer: boolean } {
   const W = w.width
   const cx = from % W
   const cy = (from - cx) / W
   const cur = field[from]
-  let bestD = Number.MAX_SAFE_INTEGER
-  let n = 0
-  let closer = false
+  let freeD = Number.MAX_SAFE_INTEGER
+  let busyD = Number.MAX_SAFE_INTEGER
+  let nFree = 0
+  let nBusy = 0
   for (let d = 0; d < 4; d++) {
     const nx = cx + DX[d]
     const ny = cy + DY[d]
     if (nx < 0 || ny < 0 || nx >= W || ny >= w.height) continue
     const ni = ny * W + nx
     const nd = field[ni]
-    if (nd === UNREACHABLE || !w.staticFree(ni)) continue
-    if (nd < cur) closer = true
-    // 正常只走更近的格；被挡久了允许横着让一步
-    if (nd > cur || (nd === cur && !sidestep)) continue
-    if (w.unitOcc[ni] !== 0) continue
-    if (nd < bestD) {
-      bestD = nd
-      n = 0
+    if (nd === UNREACHABLE || nd >= cur || !w.staticFree(ni)) continue
+    if (w.unitOcc[ni] === 0) {
+      if (nd < freeD) {
+        freeD = nd
+        nFree = 0
+      }
+      if (nd === freeD) free[nFree++] = ni
+    } else {
+      if (nd < busyD) {
+        busyD = nd
+        nBusy = 0
+      }
+      if (nd === busyD) busy[nBusy++] = ni
     }
-    if (nd === bestD) candidates[n++] = ni
   }
-  if (n === 0) return { next: -1, closer }
-  return { next: n === 1 ? candidates[0] : candidates[w.simRng.int(n)], closer }
+  const pick = (arr: Int32Array, n: number) => (n === 0 ? -1 : n === 1 ? arr[0] : arr[w.simRng.int(n)])
+  return { next: pick(free, nFree), blocked: pick(busy, nBusy), closer: nFree + nBusy > 0 }
 }
 
-const candidates = new Int32Array(4)
+const free = new Int32Array(4)
+const busy = new Int32Array(4)

@@ -125,6 +125,7 @@ export function runMatch(opts: MatchOptions): Replay {
         cmds[p] = handle(p, runner.tick(JSON.stringify(buildView(w, p))))
       }
     }
+    for (let p = 0; p < n; p++) if (!runners[p] || !w.players[p].alive) w.players[p].pending.length = 0
     w.tick++
     for (let p = 0; p < n; p++) {
       if (!cmds[p] || cmds[p].length === 0) continue

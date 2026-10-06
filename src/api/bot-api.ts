@@ -58,6 +58,7 @@ export type Order =
 
 /** 看得到的实体。建筑的 x、y 是占地左上角 */
 export interface Entity {
+  /** 随机分配的正整数，不重复使用，大小不代表先后 */
   id: number
   type: TypeName
   /** 所属玩家编号；-1 表示中立 */
@@ -155,13 +156,13 @@ export interface Game {
 
 /** onTick 里用来下命令的对象。unit、building、target 可以传实体或 id */
 export interface Commands {
-  /** 走到 (x, y)，途中不还手。目标格在障碍里就走到最近的能站的格后停下 */
+  /** 走到 (x, y)，途中不还手。目标格在障碍里就走到最近的能站的格后停下；完全走不过去就直接停下 */
   move(unit: Entity | number, x: number, y: number): void
-  /** 追着打 target，直到它死掉或你看不见它 */
+  /** 追着打 target，直到它死掉、你看不见它或走不到它（不能移动的实体：目标出了射程也结束） */
   attack(unit: Entity | number, target: Entity | number): void
-  /** 走向 (x, y)，路上射程内有敌人就打、视野内有敌人就追 */
+  /** 走向 (x, y)，路上射程内有敌人就打、视野内有敌人就追（走不过去的不追） */
   attackMove(unit: Entity | number, x: number, y: number): void
-  /** 循环采集：采满后自动回最近的交货点交货，再回来采；资源点采完就停下 */
+  /** 循环采集：采满后自动回最近的交货点交货，再回来采；资源点采完后交完手上的就停下 */
   gather(unit: Entity | number, resource: Entity | number): void
   /** 停下。停着的单位会打射程内的敌人，但不追 */
   stop(unit: Entity | number): void

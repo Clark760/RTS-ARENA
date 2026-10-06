@@ -1,0 +1,214 @@
+// 内核边界情况：用小地图和直接在 Node 里跑的 bot
+import assert from "node:assert/strict"
+import { test } from "node:test"
+import type { Entity, GameEvent, View } from "../src/api/bot-api.ts"
+import { runMatch } from "../src/core/match.ts"
+import type { Ruleset, TypeSpec } from "../src/core/types.ts"
+import { STANDARD_TERRAIN } from "../rulesets/common/standard.ts"
+import { fnBot, idle } from "./helpers.ts"
+import type { Commands } from "../src/api/bot-api.ts"
+
+const look = { shape: "circle" as const }
+const TYPES: Record<string, TypeSpec> = {
+  hq: { kind: "building", maxHp: 1000, sight: 3, produces: ["grunt"], dropOff: true, look },
+  tower: { kind: "building", maxHp: 500, sight: 4, attack: { damage: 5, range: 3, cooldown: 2 }, look },
+  grunt: {
+    kind: "unit",
+    maxHp: 100,
+    moveTicks: 1,
+    sight: 4,
+    cost: { gold: 10 },
+    buildTicks: 2,
+    attack: { damage: 10, range: 1, cooldown: 2 },
+    gather: { amount: 1, ticks: 2, capacity: 3 },
+    look,
+  },
+  ore: { kind: "resource", resource: "gold", amount: 30, look },
+}
+
+type Spawn = [type: string, owner: number, x: number, y: number]
+
+function mini(rows: string[], spawns: Spawn[], extra: Partial<Ruleset> = {}): Ruleset {
+  return {
+    id: "mini",
+    name: "测试",
+    players: { min: 2, max: 2 },
+    maxTicks: 100,
+    tickRate: 10,
+    decisionInterval: 1,
+    fuel: 100,
+    unitCap: 0,
+    fog: false,
+    resources: ["gold"],
+    terrain: STANDARD_TERRAIN,
+    types: TYPES,
+    setup(ctx) {
+      ctx.setTerrain(rows)
+      for (const [type, owner, x, y] of spawns) ctx.spawn(type, owner, x, y)
+      for (let p = 0; p < 2; p++) ctx.setResources(p, { gold: 100 })
+    },
+    objectives: () => ({}),
+    result: () => null,
+    timeUp: () => ({ winner: null, reason: "到时间" }),
+    ...extra,
+  }
+}
+
+function play(rules: Ruleset, p0: (view: View, cmd: Commands) => void, p1: (view: View, cmd: Commands) => void = () => {}) {
+  return runMatch({ ruleset: rules, seed: 1, bots: [{ name: "a", file: "", runner: fnBot(p0) }, { name: "b", file: "", runner: fnBot(p1) }] })
+}
+
+const mine = (v: View, type: string) => v.entities.filter((e) => e.owner === v.me && e.type === type)
+const theirs = (v: View, type: string) => v.entities.filter((e) => e.owner !== v.me && e.owner >= 0 && e.type === type)
+
+test("塔：目标走出射程后命令结束，接着自动打射程内的新敌人", () => {
+  const rows = Array(5).fill(".".repeat(12))
+  let last: View | null = null
+  let firstTarget = 0
+  play(
+    mini(rows, [["tower", 0, 5, 2], ["grunt", 1, 7, 2], ["grunt", 1, 0, 4]], { maxTicks: 30 }),
+    (v, cmd) => {
+      last = v
+      if (v.tick === 0) {
+        const t = theirs(v, "grunt").find((e) => e.x === 7)!
+        firstTarget = t.id
+        cmd.attack(mine(v, "tower")[0], t)
+      }
+    },
+    (v, cmd) => {
+      if (v.tick !== 0) return
+      for (const g of mine(v, "grunt")) {
+        if (g.x === 7) cmd.move(g, 11, 0) // 跑出射程
+        else cmd.move(g, 4, 3) // 走进射程
+      }
+    },
+  )
+  const v = last as unknown as View
+  assert.equal(mine(v, "tower")[0].order?.kind, "idle")
+  const late = theirs(v, "grunt").find((e) => e.id !== firstTarget)!
+  assert.ok(late.hp < 100, "后来的敌人应该挨打")
+})
+
+test("追击隔墙的目标：A* 找不到近路时改用流场绕过去", () => {
+  // 一堵长墙，只在最右边留口子：墙这边有 600 格，A* 扩展 400 格内找不到更近的路
+  const rows = Array.from({ length: 12 }, (_, y) => (y === 6 ? "#".repeat(98) + ".." : ".".repeat(100)))
+  let enemyHp = 100
+  play(
+    mini(rows, [["grunt", 0, 2, 4], ["grunt", 1, 2, 8]], { maxTicks: 400 }),
+    (v, cmd) => {
+      if (v.tick === 0) cmd.attack(mine(v, "grunt")[0], theirs(v, "grunt")[0])
+      const t = theirs(v, "grunt")[0]
+      if (t) enemyHp = t.hp
+      else enemyHp = 0
+    },
+  )
+  assert.ok(enemyHp < 100, "应该绕过墙打到目标")
+})
+
+test("一格宽走廊里两个自己人迎面走：交换位置，各自到达", () => {
+  const rows = ["##########", "#........#", "##########"]
+  let last: View | null = null
+  let a = 0
+  let b = 0
+  play(mini(rows, [["grunt", 0, 1, 1], ["grunt", 0, 8, 1]], { maxTicks: 40 }), (v, cmd) => {
+    last = v
+    if (v.tick === 0) {
+      const [g1, g2] = mine(v, "grunt").sort((x, y) => x.x - y.x)
+      a = g1.id
+      b = g2.id
+      cmd.move(g1, 8, 1)
+      cmd.move(g2, 1, 1)
+    }
+  })
+  const v = last as unknown as View
+  const byId = (id: number) => v.entities.find((e) => e.id === id)!
+  assert.deepEqual([byId(a).x, byId(b).x], [8, 1])
+})
+
+test("追击时挡路的是自己闲着的单位：换位过去", () => {
+  const rows = ["##########", "#........#", "##########"]
+  let enemyHp = 100
+  play(mini(rows, [["grunt", 0, 1, 1], ["grunt", 0, 2, 1], ["grunt", 1, 8, 1]], { maxTicks: 40 }), (v, cmd) => {
+    if (v.tick === 0) {
+      const attacker = mine(v, "grunt").find((e) => e.x === 1)!
+      cmd.attack(attacker, theirs(v, "grunt")[0])
+    }
+    enemyHp = theirs(v, "grunt")[0]?.hp ?? 0
+  })
+  assert.ok(enemyHp < 100)
+})
+
+test("采集交货循环：每次交 capacity 个", () => {
+  const rows = Array(5).fill(".".repeat(10))
+  const golds: number[] = []
+  play(mini(rows, [["hq", 0, 1, 1], ["ore", -1, 5, 1], ["grunt", 0, 2, 2], ["hq", 1, 8, 4]], { maxTicks: 60 }), (v, cmd) => {
+    if (v.tick === 0) cmd.gather(mine(v, "grunt")[0], v.entities.find((e) => e.type === "ore")!)
+    golds.push(v.resources.gold)
+  })
+  const gained = golds[golds.length - 1] - golds[0]
+  assert.ok(gained >= 6 && gained % 3 === 0, `交货量 ${gained}`)
+})
+
+test("生产：取消全额退款；单位数到上限被拒", () => {
+  const rows = Array(5).fill(".".repeat(10))
+  const events: GameEvent[] = []
+  const golds: number[] = []
+  play(mini(rows, [["hq", 0, 1, 1], ["grunt", 0, 3, 3], ["hq", 1, 8, 4]], { maxTicks: 5, unitCap: 2 }), (v, cmd) => {
+    events.push(...v.events)
+    golds.push(v.resources.gold)
+    const hq = mine(v, "hq")[0]
+    if (v.tick === 0) {
+      cmd.produce(hq, "grunt")
+      cmd.cancel(hq)
+    }
+    if (v.tick === 1) {
+      cmd.produce(hq, "grunt") // 现有 1 个 + 这个 = 2，到上限
+      cmd.produce(hq, "grunt") // 第 3 个被拒
+    }
+  })
+  assert.equal(golds[1], 100, "取消后退款")
+  const rej = events.filter((e) => e.kind === "rejected").map((e) => (e.kind === "rejected" ? e.reason : ""))
+  assert.equal(rej.length, 1)
+  assert.match(rej[0], /上限/)
+})
+
+test("生产的单位不会隔墙出生", () => {
+  // 主基地右边一整列墙，左边三个邻格都站了人
+  const rows = ["....#.....", "....#.....", "....#.....", "....#.....", "....#....."]
+  let spawned: Entity | undefined
+  let before: number[] = []
+  play(mini(rows, [["hq", 0, 3, 2], ["grunt", 0, 3, 1], ["grunt", 0, 3, 3], ["grunt", 0, 2, 2], ["hq", 1, 9, 4]], { maxTicks: 10 }), (v, cmd) => {
+    if (v.tick === 0) {
+      before = mine(v, "grunt").map((e) => e.id)
+      cmd.produce(mine(v, "hq")[0], "grunt")
+    }
+    spawned = mine(v, "grunt").find((e) => !before.includes(e.id)) ?? spawned
+  })
+  assert.ok(spawned, "应该生产出来")
+  assert.ok(spawned!.x < 4, `出生在 (${spawned!.x}, ${spawned!.y})，跑到墙那边去了`)
+})
+
+test("实体 id 随机分配，view.entities 按 id 升序", () => {
+  const rows = Array(5).fill(".".repeat(10))
+  let ids: number[] = []
+  play(mini(rows, [["hq", 0, 1, 1], ["grunt", 0, 3, 3], ["grunt", 0, 4, 3], ["grunt", 0, 5, 3], ["hq", 1, 8, 4]], { maxTicks: 2 }), (v) => {
+    ids = v.entities.map((e) => e.id)
+  })
+  assert.deepEqual(ids, [...ids].sort((a, b) => a - b))
+  const gaps = ids.slice(1).map((x, i) => x - ids[i])
+  assert.ok(gaps.some((g) => g !== 1), "id 不应该是连续的")
+})
+
+test("隔墙够不着的敌人不会让 attackMove 停在墙根", () => {
+  // 敌人在水对面看得见但过不去，终点在右边
+  const rows = [".".repeat(16), ".".repeat(16), "~".repeat(16), ".".repeat(16)]
+  let last: View | null = null
+  play(mini(rows, [["grunt", 0, 1, 1], ["grunt", 1, 3, 3]], { maxTicks: 40 }), (v, cmd) => {
+    last = v
+    if (v.tick === 0) cmd.attackMove(mine(v, "grunt")[0], 14, 0)
+  })
+  const g = mine(last as unknown as View, "grunt")[0]
+  assert.deepEqual([g.x, g.y], [14, 0])
+})
+
+void idle

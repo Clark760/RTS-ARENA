@@ -26,7 +26,7 @@ export function resolveType(name: string, s: TypeSpec): TypeDef {
     kind: s.kind,
     w: s.w ?? 1,
     h: s.h ?? 1,
-    maxHp: s.maxHp ?? 0,
+    maxHp: s.kind === "resource" ? 0 : (s.maxHp ?? 0),
     cost: s.cost ?? {},
     buildTicks: s.buildTicks ?? 0,
     moveTicks: s.kind === "unit" ? (s.moveTicks ?? 0) : 0,
@@ -69,9 +69,14 @@ export class World implements SetupContext, RuleContext {
   staticOcc = new Int32Array(0)
   /** 单位占的格子（存 id） */
   unitOcc = new Int32Array(0)
-  /** id 递增插入，遍历顺序即 id 升序 */
+  /** 按创建先后插入，遍历顺序即创建顺序 */
   readonly ents = new Map<number, EntityState>()
-  private nextId = 1
+  /**
+   * id 随机分配、不重复使用：递增的 id 会让 bot 从自己新单位的 id 跳号推算出对手的产量。
+   * 范围随实体数扩大，正常对局 id 都在 7 位以内。
+   */
+  private idRng: Rng
+  private usedIds = new Set<number>()
   readonly players: PlayerState[]
   /** 本 tick 的事件（规则包看） */
   events: RuleEvent[] = []
@@ -92,6 +97,7 @@ export class World implements SetupContext, RuleContext {
     this.playerCount = names.length
     this.rng = new Mulberry32(mixSeed(seed, "rules"))
     this.simRng = new Mulberry32(mixSeed(seed, "sim"))
+    this.idRng = new Mulberry32(mixSeed(seed, "ids"))
     for (const [name, spec] of Object.entries(rules.types)) this.types[name] = resolveType(name, spec)
     this.players = names.map((name, id) => ({
       id,
@@ -171,7 +177,7 @@ export class World implements SetupContext, RuleContext {
     if (!def) throw new Error(`未定义的实体类型 "${type}"`)
     if (owner < -1 || owner >= this.playerCount || !Number.isInteger(owner)) throw new Error(`玩家编号 ${owner} 不存在`)
     const e: EntityState = {
-      id: this.nextId++,
+      id: this.newId(),
       type,
       def,
       owner,
@@ -193,11 +199,22 @@ export class World implements SetupContext, RuleContext {
       planX: 0,
       planY: 0,
       stuck: 0,
+      want: -1,
       alive: true,
     }
     this.ents.set(e.id, e)
     this.occupy(e, e.id)
     return e
+  }
+
+  private newId(): number {
+    const range = Math.max(1_000_000, this.usedIds.size * 4)
+    for (;;) {
+      const id = 1 + this.idRng.int(range - 1)
+      if (this.usedIds.has(id)) continue
+      this.usedIds.add(id)
+      return id
+    }
   }
 
   spawn(type: string, owner: number, x: number, y: number, opts?: { amount?: number }): number {
@@ -234,8 +251,12 @@ export class World implements SetupContext, RuleContext {
     p.pending.push(ev)
   }
 
-  /** 在矩形周围由近到远找能放下 def 的位置；同一圈里选离地图中心最近的，一样近的随机挑（对称地图上两边一样） */
+/**
+   * 在矩形周围找能放下 def 的位置。单位（1×1）：从贴着矩形的可走格出发按步数往外找（不会隔墙出生），
+   * 最多 maxRing 步；多格实体：按曼哈顿圈找。同样远的选离地图中心最近的，再一样随机挑（对称地图上两边一样）。
+   */
   findSpotAround(def: TypeDef, around: Rect, maxRing: number): { x: number; y: number } | null {
+    if (def.w === 1 && def.h === 1) return this.findUnitSpot(around, maxRing)
     const cx2 = this.width - def.w
     const cy2 = this.height - def.h
     const ties: { x: number; y: number }[] = []
@@ -255,6 +276,53 @@ export class World implements SetupContext, RuleContext {
           if (c === bestC) ties.push({ x, y })
         }
       if (ties.length > 0) return ties.length === 1 ? ties[0] : ties[this.simRng.int(ties.length)]
+    }
+    return null
+  }
+
+  private findUnitSpot(around: Rect, maxRing: number): { x: number; y: number } | null {
+    const W = this.width
+    const depth = new Map<number, number>()
+    let frontier: number[] = []
+    for (let y = around.y - 1; y <= around.y + around.h; y++)
+      for (let x = around.x - 1; x <= around.x + around.w; x++) {
+        if (!this.inBounds(x, y) || rectDist({ x, y, w: 1, h: 1 }, around) !== 1) continue
+        const i = y * W + x
+        if (!this.staticFree(i)) continue
+        depth.set(i, 1)
+        frontier.push(i)
+      }
+    for (let d = 1; d <= maxRing && frontier.length > 0; d++) {
+      let bestC = Number.MAX_SAFE_INTEGER
+      const ties: number[] = []
+      for (const i of frontier) {
+        if (this.unitOcc[i] !== 0) continue
+        const x = i % W
+        const y = (i - x) / W
+        const c = Math.abs(2 * x - (W - 1)) + Math.abs(2 * y - (this.height - 1))
+        if (c < bestC) {
+          bestC = c
+          ties.length = 0
+        }
+        if (c === bestC) ties.push(i)
+      }
+      if (ties.length > 0) {
+        const i = ties.length === 1 ? ties[0] : ties[this.simRng.int(ties.length)]
+        return { x: i % W, y: Math.floor(i / W) }
+      }
+      const next: number[] = []
+      for (const i of frontier) {
+        const x = i % W
+        const y = (i - x) / W
+        for (const [nx, ny] of [[x, y - 1], [x + 1, y], [x, y + 1], [x - 1, y]]) {
+          if (!this.inBounds(nx, ny)) continue
+          const ni = ny * W + nx
+          if (depth.has(ni) || !this.staticFree(ni)) continue
+          depth.set(ni, d + 1)
+          next.push(ni)
+        }
+      }
+      frontier = next
     }
     return null
   }
@@ -335,6 +403,7 @@ export class World implements SetupContext, RuleContext {
     }
   }
 
+  /** 按创建顺序 */
   entities(): readonly EntityState[] {
     return [...this.ents.values()]
   }

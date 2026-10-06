@@ -84,7 +84,7 @@ export interface RuleContext {
   readonly width: number
   readonly height: number
   readonly rng: Rng
-  /** 全部实体，按 id 升序 */
+  /** 全部实体，按创建顺序 */
   entities(): readonly EntityState[]
   get(id: number): EntityState | undefined
   readonly players: readonly PlayerState[]
@@ -178,6 +178,8 @@ export interface EntityState extends Rect {
   planY: number
   /** 被单位挡住的连续 tick 数 */
   stuck: number
+  /** 上次被挡住时想走进的格子（-1 表示没有）；两个自己人互相想进对方的格就交换位置 */
+  want: number
   alive: boolean
 }
 
