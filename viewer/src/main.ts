@@ -161,7 +161,12 @@ function updateUI(force = false): void {
   const banner = $("result-banner")
   if (state.tick >= model.lastTick) {
     const res = r.result
-    banner.textContent = res.winner === null ? `平局——${res.reason}` : `P${res.winner} ${r.players[res.winner].name} 获胜——${res.reason}`
+    const head = res.winner === null ? `平局——${res.reason}` : `P${res.winner} ${r.players[res.winner].name} 获胜——${res.reason}`
+    const ranks =
+      r.players.length > 2 && Array.isArray(res.ranking)
+        ? "\n名次：" + res.ranking.map((g, i) => `${i + 1}. ${g.map((p) => `P${p} ${r.players[p]?.name}`).join(" = ")}`).join("　")
+        : ""
+    banner.textContent = head + ranks
     banner.hidden = false
   } else banner.hidden = true
 

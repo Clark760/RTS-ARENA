@@ -139,3 +139,33 @@ export function standardStart(
 export function baseStarts(width: number, height: number): { owner: number; x: number; y: number }[] {
   return [{ owner: 0, x: 3, y: 3 }, { owner: 1, ...mirror(width, height, 3, 3, 3, 3) }]
 }
+
+// ---------- 四角地图（多方混战用） ----------
+
+/** 正方形地图里把矩形绕中心顺时针转 90° */
+export function rotate90(size: number, r: { x: number; y: number; w: number; h: number }): { x: number; y: number; w: number; h: number } {
+  return { x: size - r.y - r.h, y: r.x, w: r.h, h: r.w }
+}
+
+/** 转 k 次 90° */
+export function rotateK(size: number, r: { x: number; y: number; w: number; h: number }, k: number) {
+  let out = r
+  for (let i = 0; i < k % 4; i++) out = rotate90(size, out)
+  return out
+}
+
+/** 先铺满 fill，再画 features，每个 feature 同时画到另外三个旋转位置（四重旋转对称） */
+export function rotationalTerrain(size: number, fill: string, features: Feature[]): string[] {
+  const g: string[][] = Array.from({ length: size }, () => Array<string>(size).fill(fill))
+  for (const f of features)
+    for (let k = 0; k < 4; k++) {
+      const r = rotateK(size, f, k)
+      for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) g[y][x] = f.ch
+    }
+  return g.map((row) => row.join(""))
+}
+
+/** 各人数下玩家坐哪个角（转几次 90°）：两人坐对角，三人空一个角，四人坐满 */
+export function cornersFor(players: number): number[] {
+  return players === 2 ? [0, 2] : [0, 1, 2, 3].slice(0, players)
+}

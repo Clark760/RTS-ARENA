@@ -6,7 +6,7 @@
 
 ```bash
 npm install
-npm run arena -- list                       # 规则包：annihilation 歼灭、koth 夺点、harvest 采集竞速
+npm run arena -- list                       # 规则包：annihilation 歼灭、koth 夺点、harvest 采集竞速、melee 混战（2～4 人）
 ```
 
 ## 写一个 bot
@@ -23,7 +23,9 @@ npm run arena -- run annihilation my-bot/bot.ts baseline              # 和基�
 npm run arena -- run annihilation my-bot/bot.ts baseline --games 10    # 打 10 局看胜率
 ```
 
-`run` 会打印胜负、每个 bot 的燃料、报错和被拒命令，回放写到 `replays/`。
+`run` 会打印胜负、每个 bot 的燃料、报错和被拒命令，回放写到 `replays/`；每个 bot 还有一份只含它自己信息的日志（`<回放>.P<座位>-<bot 名>.log`），几个 agent 同时跑也分得清。
+
+多方混战：`npm run arena -- run melee a.ts b.ts c.ts d.ts --games 8`，同一个种子会把座位轮换一遍，最后报胜场和平均名次。
 
 对手可以写文件路径，也可以写现成 bot 的名字：`baseline` 是每个规则包的基准 bot（多数对局能打赢该规则包的其他示例 bot，是衡量新 bot 的标准对手），`idle` 什么都不做。`npm run arena -- list` 列出每个规则包有哪些现成 bot。
 
