@@ -1,7 +1,7 @@
 // 对战页的 bot 下拉框：服务端找 bot 文件、按 bot 目录分组、标上用的规则包；上传副本
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
@@ -76,16 +76,37 @@ test("对战接口：列出找到的 bot；上传的 bot 存成副本，能直�
     assert.ok(info.botFiles.some((b) => b.path === "../my-bot2/boom.ts"))
     assert.ok(info.rulesets.some((r) => r.id === "../gold"))
 
-    assert.equal((await post("/api/arena/upload", { name: "notes.ts", content: "const x = 1" })).status, 400)
-    const up = await post("/api/arena/upload", { name: "bot.ts", content: "export function onTick(view: View, cmd: Commands): void {}\n" })
+    const code = "export function onTick(view: View, cmd: Commands): void {}\n"
+    assert.equal((await post("/api/arena/upload", { name: "notes", content: "const x = 1" })).status, 400)
+    // 名字：不能叫 bot，不能有路径和奇怪的字符
+    assert.equal((await post("/api/arena/upload", { name: "bot", content: code })).status, 400)
+    assert.equal((await post("/api/arena/upload", { name: "../evil", content: code })).status, 400)
+    const up = await post("/api/arena/upload", { name: "张三", content: code })
     assert.equal(up.status, 200)
     const { path } = (await up.json()) as { path: string }
-    assert.match(path, /^replays\/uploaded-bots\/bot-[0-9a-f]{6}\.ts$/)
-    const again = (await (await fetch(base + "/api/arena")).json()) as { botFiles: { path: string; group: string }[] }
-    assert.ok(again.botFiles.some((b) => b.path === path && b.group === "从电脑选的（副本）"))
+    assert.equal(path, "replays/uploaded-bots/张三.ts")
+    const again = (await (await fetch(base + "/api/arena")).json()) as { botFiles: { path: string; group: string; label?: string; uploaded?: boolean }[] }
+    assert.ok(again.botFiles.some((b) => b.path === path && b.group === "从电脑选的（副本）" && b.label === "张三" && b.uploaded))
+    // 同名：内容一样直接用；不一样要说替换
+    assert.equal((await post("/api/arena/upload", { name: "张三", content: code })).status, 200)
+    const v2 = code + "// 新版\n"
+    const conflict = await post("/api/arena/upload", { name: "张三", content: v2 })
+    assert.equal(conflict.status, 409)
+    assert.equal(((await conflict.json()) as { exists: boolean }).exists, true)
+    assert.equal((await post("/api/arena/upload", { name: "张三", content: v2, overwrite: true })).status, 200)
+    assert.equal(readFileSync(join(cwd, path), "utf8"), v2)
+    // 改名：只能改上传的；新名字被占了不行
+    await post("/api/arena/upload", { name: "李四", content: code })
+    assert.equal((await post("/api/arena/upload/rename", { from: "bot.ts", name: "王五" })).status, 400)
+    assert.equal((await post("/api/arena/upload/rename", { from: path, name: "李四" })).status, 409)
+    const renamed = await post("/api/arena/upload/rename", { from: path, name: "王五" })
+    assert.equal(renamed.status, 200)
+    assert.equal(((await renamed.json()) as { path: string }).path, "replays/uploaded-bots/王五.ts")
+    assert.ok(!existsSync(join(cwd, path)))
+    const renamedPath = "replays/uploaded-bots/王五.ts"
 
     // 隔壁目录的规则包也能直接选来开比赛
-    assert.equal((await post("/api/arena/run", { ruleset: "../gold", bots: ["../my-gold/bot.ts", path], games: 1, seed: 1 })).status, 200)
+    assert.equal((await post("/api/arena/run", { ruleset: "../gold", bots: ["../my-gold/bot.ts", renamedPath], games: 1, seed: 1 })).status, 200)
     let run: { running: boolean; exitCode: number; stderr: string }
     for (;;) {
       run = (await (await fetch(base + "/api/arena/run")).json()) as typeof run

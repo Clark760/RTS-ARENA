@@ -395,3 +395,18 @@ ul.stat-list {
   padding-left: 18px;
   font-size: 12px;
 }
+
+/* 给上传的 bot 起名、改名 */
+.naming {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 4px 0 8px;
+}
+.naming .row {
+  margin-top: 4px;
+}
+.naming input {
+  flex: 1;
+  min-width: 0;
+}

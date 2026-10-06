@@ -17,7 +17,13 @@ interface BotFile {
   group: string
   /** 所在 bot 目录用的规则包 id；null 表示哪个规则包都列出 */
   ruleset: string | null
+  /** 下拉框里显示的名字（上传的副本是它的名字） */
+  label?: string
+  /** 页面上传的副本（可以改名） */
+  uploaded?: boolean
 }
+
+const UPLOAD_GROUP = "从电脑选的（副本）"
 
 interface ArenaInfo {
   rulesets: RulesetInfo[]
@@ -252,8 +258,9 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     const isKnown = found.some((b) => b.path === value) || r.bots.includes(value)
     const opt = (v: string, label = v) => `<option value="${esc(v)}"${v === value ? " selected" : ""}>${esc(label)}</option>`
     const groups = [...new Set(found.map((b) => b.group))]
-      .map((g) => `<optgroup label="${esc(g)}">${found.filter((b) => b.group === g).map((b) => opt(b.path)).join("")}</optgroup>`)
+      .map((g) => `<optgroup label="${esc(g)}">${found.filter((b) => b.group === g).map((b) => opt(b.path, b.label ?? b.path)).join("")}</optgroup>`)
       .join("")
+    const uploaded = found.some((b) => b.path === value && b.uploaded)
     return `<div class="seat" data-i="${i}">
       <span class="swatch" style="background:${hex(playerColor(i))}"></span><span class="seat-no">${i + 1}</span>
       <select class="ar-bot">
@@ -265,6 +272,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
         </optgroup>
       </select>
       <button class="ar-pick" title="从电脑上选一个 bot 文件（.ts）">选文件…</button>
+      ${uploaded ? '<button class="ar-rename" title="改这个上传的 bot 的名字（比赛结果里显示这个名字）">改名</button>' : ""}
       <input class="ar-path" placeholder="bot 文件路径（相对 bot 目录）" value="${isKnown ? "" : esc(value)}" ${isKnown ? "hidden" : ""} />
     </div>`
   }
@@ -350,12 +358,109 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
   let uploadSeat = -1
   // 每个座位旁边的"选文件…"按钮
   seatsBox.addEventListener("click", (ev) => {
-    const btn = (ev.target as HTMLElement).closest(".ar-pick")
-    const row = btn?.closest(".seat") as HTMLElement | null
+    const target = ev.target as HTMLElement
+    const row = target.closest(".seat") as HTMLElement | null
     if (!row) return
-    uploadSeat = Number(row.dataset.i)
-    fileInput.value = ""
-    fileInput.click()
+    const i = Number(row.dataset.i)
+    if (target.closest(".ar-pick")) {
+      uploadSeat = i
+      fileInput.value = ""
+      fileInput.click()
+    } else if (target.closest(".ar-rename")) {
+      const b = info?.botFiles?.find((f) => f.path === seats[i])
+      if (b) startNaming({ mode: "rename", seat: i, from: b.path }, b.label ?? "")
+    }
+  })
+
+  // ---------- 给上传的 bot 起名、改名 ----------
+  // 名字就是比赛结果、排行榜里显示的名字，起个能认出是谁写的
+  type Naming = { mode: "upload"; seat: number; fileName: string; content: string } | { mode: "rename"; seat: number; from: string }
+  let naming: Naming | null = null
+  const namingBox = $("ar-naming")
+  const startNaming = (n: Naming, value: string) => {
+    naming = n
+    const title =
+      n.mode === "upload"
+        ? `给 ${n.fileName} 起个名字：比赛结果和排行榜里显示这个名字，方便认出是谁写的（比如作者的名字）`
+        : "改名：比赛结果和排行榜里显示新名字（以前的回放里还是旧名字）"
+    namingBox.innerHTML = `<div class="small">${esc(title)}</div>
+      <div class="row"><input id="ar-name-input" maxlength="40" placeholder="字母、汉字、数字、_、-" value="${esc(value)}" />
+      <button id="ar-name-ok" class="primary">保存</button><button id="ar-name-cancel">取消</button></div>
+      <div id="ar-name-msg" class="err small"></div><div id="ar-name-choice" class="row" hidden></div>`
+    namingBox.hidden = false
+    const input = $<HTMLInputElement>("ar-name-input")
+    input.focus()
+    input.select()
+  }
+  const stopNaming = () => {
+    naming = null
+    namingBox.hidden = true
+    namingBox.innerHTML = ""
+  }
+  /** 上传或改名成功：更新列表和用到它的座位 */
+  const named = (oldPath: string | null, path: string, name: string, seat: number) => {
+    const list = (info!.botFiles ??= [])
+    const old = oldPath ? list.find((b) => b.path === oldPath) : undefined
+    if (old) {
+      old.path = path
+      old.label = name
+    } else if (!list.some((b) => b.path === path)) list.push({ path, group: UPLOAD_GROUP, ruleset: null, label: name, uploaded: true })
+    else list.find((b) => b.path === path)!.label = name
+    if (oldPath) seats = seats.map((x) => (x === oldPath ? path : x))
+    seats[seat] = path
+    stopNaming()
+    renderSetup()
+  }
+  const post = (url: string, body: unknown) =>
+    fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-Arena": "1" }, body: JSON.stringify(body) }).then(async (res) => ({
+      ok: res.ok,
+      status: res.status,
+      body: (await res.json().catch(() => ({}))) as { error?: string; path?: string; name?: string; exists?: boolean },
+    }))
+  const saveName = async (overwrite = false) => {
+    const n = naming
+    if (!n) return
+    const name = $<HTMLInputElement>("ar-name-input").value.trim()
+    const say = (t: string) => ($("ar-name-msg").textContent = t)
+    say("")
+    $("ar-name-choice").hidden = true
+    if (n.mode === "upload") {
+      const r = await post("/api/arena/upload", { name, content: n.content, overwrite })
+      if (r.status === 409 && r.body.exists) {
+        // 同名、内容不一样：替换（同一个作者更新了 bot），还是换个名字
+        say(`${r.body.error}。`)
+        const choice = $("ar-name-choice")
+        choice.innerHTML = '<button id="ar-name-replace">替换成新上传的这个</button><button id="ar-name-other">换个名字</button>'
+        choice.hidden = false
+        return
+      }
+      if (!r.ok) return say(r.body.error ?? `上传失败：${r.status}`)
+      named(null, r.body.path!, r.body.name!, n.seat)
+      msg.textContent = `已选 ${name}（${n.fileName} 的副本存成 ${r.body.path}；改了原文件要重新选）`
+      msg.classList.add("ok")
+    } else {
+      const r = await post("/api/arena/upload/rename", { from: n.from, name })
+      if (!r.ok) return say(r.body.error ?? `改名失败：${r.status}`)
+      named(n.from, r.body.path!, r.body.name!, n.seat)
+      msg.textContent = `已改名为 ${r.body.name}`
+      msg.classList.add("ok")
+    }
+  }
+  namingBox.addEventListener("click", (ev) => {
+    const id = (ev.target as HTMLElement).id
+    if (id === "ar-name-ok") void saveName()
+    else if (id === "ar-name-cancel") stopNaming()
+    else if (id === "ar-name-replace") void saveName(true)
+    else if (id === "ar-name-other") {
+      $("ar-name-choice").hidden = true
+      $("ar-name-msg").textContent = ""
+      $<HTMLInputElement>("ar-name-input").select()
+    }
+  })
+  namingBox.addEventListener("keydown", (ev) => {
+    if ((ev.target as HTMLElement).id !== "ar-name-input") return
+    if (ev.key === "Enter") void saveName()
+    else if (ev.key === "Escape") stopNaming()
   })
   seatsBox.addEventListener("change", (ev) => {
     const row = (ev.target as HTMLElement).closest(".seat") as HTMLElement | null
@@ -379,17 +484,10 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     if (!file || uploadSeat < 0) return
     msg.textContent = ""
     msg.classList.remove("ok")
-    try {
-      const { path } = await api<{ path: string }>("/api/arena/upload", { method: "POST", body: JSON.stringify({ name: file.name, content: await file.text() }) })
-      const list = (info!.botFiles ??= [])
-      if (!list.some((b) => b.path === path)) list.push({ path, group: "从电脑选的（副本）", ruleset: null })
-      seats[uploadSeat] = path
-      renderSetup()
-      msg.textContent = `已选 ${file.name}（存了一份副本 ${path}；改了原文件要重新选）`
-      msg.classList.add("ok")
-    } catch (e) {
-      msg.textContent = (e as Error).message
-    }
+    if (!file.name.endsWith(".ts") || file.name.endsWith(".d.ts")) return void (msg.textContent = "要选 bot 的 .ts 文件")
+    // 先起名再上传；默认用文件名（叫 bot.ts 的看不出是谁的，留空让人填）
+    const stem = file.name.replace(/\.ts$/, "")
+    startNaming({ mode: "upload", seat: uploadSeat, fileName: file.name, content: await file.text() }, stem === "bot" ? "" : stem)
   })
   seatsBox.addEventListener("input", (ev) => {
     const input = ev.target as HTMLInputElement

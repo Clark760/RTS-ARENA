@@ -1,11 +1,10 @@
 // 播放器页面用的本机接口：读回放、读日志、列出规则包和 bot、在后台跑比赛（调用命令行 run --json）。
 // rts-arena view 和 Vite 开发服务器（npm run viewer）共用。只该监听 127.0.0.1。
 import { spawn, type ChildProcess } from "node:child_process"
-import { createHash } from "node:crypto"
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { basename, join, relative, resolve, sep } from "node:path"
-import { BOT_EXPORT, discoverBots } from "./bot-finder.ts"
+import { BOT_EXPORT, discoverBots, uploadNameProblem } from "./bot-finder.ts"
 import { leagueTables, teamSplits } from "./league.ts"
 import { findRuleset, knownBots, listRulesets, loadRulesetRef, localBots, readWorkspaceIn, type RulesetRef } from "./catalog.ts"
 
@@ -142,23 +141,51 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
       return true
     }
 
+    // 上传 bot：存成 <回放目录>/uploaded-bots/<名字>.ts，名字就是比赛结果里显示的名字
     if (path === "/api/arena/upload" && req.method === "POST") {
-      let body: { name?: unknown; content?: unknown }
+      let body: { name?: unknown; content?: unknown; overwrite?: unknown }
       try {
         body = JSON.parse(await readBody(req, MAX_UPLOAD * 2))
       } catch {
         return send(res, 400, { error: `文件太大（最多 ${MAX_UPLOAD / 1000} K 字）或者请求不对` }), true
       }
-      const { name, content } = body
-      if (typeof name !== "string" || !name.endsWith(".ts") || name.endsWith(".d.ts")) return send(res, 400, { error: "要选 .ts 文件" }), true
+      const { name, content, overwrite } = body
+      if (typeof name !== "string") return send(res, 400, { error: "要给 bot 起个名字" }), true
+      const stem = name.trim().replace(/\.ts$/, "")
+      const bad = uploadNameProblem(stem)
+      if (bad) return send(res, 400, { error: bad }), true
       if (typeof content !== "string" || content.length > MAX_UPLOAD) return send(res, 400, { error: `文件太大（最多 ${MAX_UPLOAD / 1000} K 字）` }), true
-      if (!BOT_EXPORT.test(content)) return send(res, 400, { error: `${name} 里没有导出 onTick，不像 bot 文件` }), true
-      // 同样的内容存成同一个文件；名字里只留安全的字符
-      const stem = basename(name, ".ts").replace(/[^\w\u4e00-\u9fa5-]+/g, "_").slice(0, 40) || "bot"
-      const file = join(uploads, `${stem}-${createHash("sha1").update(content).digest("hex").slice(0, 6)}.ts`)
+      if (!BOT_EXPORT.test(content)) return send(res, 400, { error: "这个文件里没有导出 onTick，不像 bot 文件" }), true
+      const file = join(uploads, `${stem}.ts`)
+      const rel = relative(cwd, file).split(sep).join("/")
+      // 同名：内容一样直接用；不一样要明确说替换（同一个作者更新 bot 时就替换）
+      if (existsSync(file) && readFileSync(file, "utf8") !== content && overwrite !== true)
+        return send(res, 409, { error: `已经有一个叫 ${stem} 的 bot 了（内容不一样）`, exists: true, path: rel }), true
       mkdirSync(uploads, { recursive: true })
       writeFileSync(file, content)
-      send(res, 200, { path: relative(cwd, file).split(sep).join("/") })
+      send(res, 200, { path: rel, name: stem })
+      return true
+    }
+
+    // 给上传的副本改名（比赛结果里显示的名字跟着变；以前的回放里还是旧名字）
+    if (path === "/api/arena/upload/rename" && req.method === "POST") {
+      let body: { from?: unknown; name?: unknown }
+      try {
+        body = JSON.parse(await readBody(req))
+      } catch {
+        return send(res, 400, { error: "请求不是 JSON" }), true
+      }
+      if (typeof body.from !== "string" || typeof body.name !== "string") return send(res, 400, { error: "要给 from 和 name" }), true
+      const from = resolve(cwd, body.from)
+      if (!from.startsWith(uploads + sep) || !from.endsWith(".ts") || !existsSync(from)) return send(res, 400, { error: "只能给上传的 bot 改名" }), true
+      const stem = body.name.trim().replace(/\.ts$/, "")
+      const bad = uploadNameProblem(stem)
+      if (bad) return send(res, 400, { error: bad }), true
+      const to = join(uploads, `${stem}.ts`)
+      if (to === from) return send(res, 200, { path: relative(cwd, to).split(sep).join("/"), name: stem }), true
+      if (existsSync(to)) return send(res, 409, { error: `已经有一个叫 ${stem} 的 bot 了` }), true
+      renameSync(from, to)
+      send(res, 200, { path: relative(cwd, to).split(sep).join("/"), name: stem })
       return true
     }
 

@@ -12,6 +12,21 @@ export interface FoundBot {
   group: string
   /** 所在 bot 目录用的规则包（和 /api/arena 里规则包的 id 一样）；不在任何 bot 目录里为 null，任何规则包都列出 */
   ruleset: string | null
+  /** 下拉框里显示的名字（不给就显示路径）；上传的副本显示它的名字 */
+  label?: string
+  /** 是页面上传的副本（可以改名） */
+  uploaded?: boolean
+}
+
+/** 上传的 bot 的名字：就是比赛结果里显示的名字。只能用字母（含汉字）、数字、_、-，1～40 个字 */
+export const UPLOAD_NAME = /^[\p{L}\p{N}_-]{1,40}$/u
+
+/** 检查上传的 bot 的名字；不行返回原因 */
+export function uploadNameProblem(name: string): string | null {
+  if (!UPLOAD_NAME.test(name)) return "名字只能用字母、汉字、数字、_、-，1～40 个字"
+  // bot.ts 在显示时会换成所在目录的名字（uploaded-bots），起了也看不出是谁的
+  if (name === "bot") return "名字不能叫 bot，起个能认出是谁写的名字"
+  return null
 }
 
 /** 导出了 onTick 的才算 bot */
@@ -117,7 +132,7 @@ export function discoverBots(cwd: string, uploadsDir: string): { bots: FoundBot[
   // 页面上传的副本
   if (existsSync(uploadsDir))
     for (const name of readdirSync(uploadsDir).sort())
-      if (name.endsWith(".ts")) bots.push({ path: rel(root, join(uploadsDir, name)), group: "从电脑选的（副本）", ruleset: null })
+      if (name.endsWith(".ts")) bots.push({ path: rel(root, join(uploadsDir, name)), group: "从电脑选的（副本）", ruleset: null, label: name.slice(0, -3), uploaded: true })
   // 这个 bot 目录排最前，其余按分组、路径排
   const rank = (b: FoundBot) => (b.group === "这个 bot 目录" ? 0 : b.group.startsWith("bot 目录") ? 1 : b.group === "其他文件" ? 2 : 3)
   bots.sort((a, b) => rank(a) - rank(b) || a.group.localeCompare(b.group) || a.path.localeCompare(b.path))
