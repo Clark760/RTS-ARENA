@@ -178,6 +178,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
           <option value="${PATH}"${isKnown ? "" : " selected"}>填路径…</option>
         </optgroup>
       </select>
+      <button class="ar-pick" title="从电脑上选一个 bot 文件（.ts）">选文件…</button>
       <input class="ar-path" placeholder="bot 文件路径（相对 bot 目录）" value="${isKnown ? "" : esc(value)}" ${isKnown ? "hidden" : ""} />
     </div>`
   }
@@ -206,6 +207,15 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
   // 读回当前下拉框里的选择（选"填路径…"时显示路径输入框，选"从电脑选文件…"时打开选文件窗口）
   const fileInput = $<HTMLInputElement>("ar-file")
   let uploadSeat = -1
+  // 每个座位旁边的"选文件…"按钮
+  seatsBox.addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest(".ar-pick")
+    const row = btn?.closest(".seat") as HTMLElement | null
+    if (!row) return
+    uploadSeat = Number(row.dataset.i)
+    fileInput.value = ""
+    fileInput.click()
+  })
   seatsBox.addEventListener("change", (ev) => {
     const row = (ev.target as HTMLElement).closest(".seat") as HTMLElement | null
     if (!row || (ev.target as HTMLElement).tagName !== "SELECT") return
@@ -227,6 +237,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     const file = fileInput.files?.[0]
     if (!file || uploadSeat < 0) return
     msg.textContent = ""
+    msg.classList.remove("ok")
     try {
       const { path } = await api<{ path: string }>("/api/arena/upload", { method: "POST", body: JSON.stringify({ name: file.name, content: await file.text() }) })
       const list = (info!.botFiles ??= [])
@@ -234,6 +245,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       seats[uploadSeat] = path
       renderSetup()
       msg.textContent = `已选 ${file.name}（存了一份副本 ${path}；改了原文件要重新选）`
+      msg.classList.add("ok")
     } catch (e) {
       msg.textContent = (e as Error).message
     }
@@ -354,6 +366,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
 
   $("ar-start").addEventListener("click", async () => {
     msg.textContent = ""
+    msg.classList.remove("ok")
     if (seats.some((s) => !s)) return void (msg.textContent = "有座位还没选 bot（选了“填路径…”就要填上路径）")
     const games = Number($<HTMLInputElement>("ar-games").value)
     const seedText = $<HTMLInputElement>("ar-seed").value.trim()

@@ -279,9 +279,14 @@ code {
 }
 .seat select {
   flex: 1;
+  /* 选项文字很长（路径）时也能缩，给旁边的按钮留位置 */
+  min-width: 0;
 }
 .seat .ar-path {
   flex-basis: 100%;
+}
+.seat .ar-pick {
+  white-space: nowrap;
 }
 .seat-no {
   min-width: 14px;
@@ -348,4 +353,9 @@ button.link {
 pre.err {
   white-space: pre-wrap;
   font-size: 12px;
+}
+
+/* 对战页的提示：默认是报错（红），成功的提示不用红色 */
+#ar-msg.ok {
+  color: var(--muted);
 }
