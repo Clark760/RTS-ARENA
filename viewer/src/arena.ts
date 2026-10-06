@@ -103,6 +103,9 @@ interface LeagueStatsInfo {
     produced: number
     lostUnits: number
     lostWorkers?: number
+    ownerGained?: number
+    ownerLost?: number
+    custom?: Record<string, number>
     killedUnits: number
     killedBuildings: number
     lostBuildings: number
@@ -115,6 +118,7 @@ interface LeagueStatsInfo {
   }[]
   seats: { games: number; points: number; wins: number; ci?: number }[]
   reasons: { reason: string; n: number; example?: string }[]
+  timeUps?: { who: string; n: number }[]
 }
 
 interface StartEvent {
@@ -528,18 +532,19 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
   })
   modeSel.addEventListener("change", () => {
     seats = []
-    $<HTMLInputElement>("ar-games").value = league() ? "2" : "10"
+    $<HTMLInputElement>("ar-games").value = league() ? "4" : "10"
     renderSetup()
-    if (league()) $<HTMLInputElement>("ar-games").value = String(leagueSize())
+    if (league()) $<HTMLInputElement>("ar-games").value = String(defaultPerTable())
   })
+  const defaultPerTable = () => (leagueSize() === 2 ? 4 : leagueSize())
   lteamsSel.addEventListener("change", () => {
     $<HTMLInputElement>("ar-games").value = ""
     renderSetup()
   })
   partnersSel.addEventListener("change", () => renderSetup())
   sizeSel.addEventListener("change", () => {
-    // 每桌局数默认等于每局人数：座位正好轮换一圈
-    $<HTMLInputElement>("ar-games").value = String(leagueSize())
+    // 每桌局数默认等于每局人数：座位正好轮换一圈（两人局打两轮，一轮只有 2 局误差太大）
+    $<HTMLInputElement>("ar-games").value = String(defaultPerTable())
     renderSetup()
   })
   $("ar-add").addEventListener("click", () => {
@@ -620,7 +625,10 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     if (!stats) return ""
     const avg = (x: number, n: number, d = 0) => (n ? (x / n).toFixed(d) : "—")
     const conf = (st.confidence ?? [])
-      .map((c) => `<li>${esc(c.upper)} &gt; ${esc(c.lower)}：${c.w}-${c.d}-${c.l}，${c.los === null ? "没分出过先后" : `把握 ${(c.los * 100).toFixed(c.los > 0.99 ? 1 : 0)}%`}</li>`)
+      .map(
+        (c) =>
+          `<li>${esc(c.upper)} &gt; ${esc(c.lower)}：${c.w}-${c.d}-${c.l}，${c.los === null ? "没分出过先后" : `把握 ${(c.los * 100).toFixed(c.los > 0.99 ? 1 : 0)}%`}${c.w + c.l < 6 ? '<span class="muted">（分出胜负的不到 6 局，偏乐观）</span>' : ""}</li>`,
+      )
       .join("")
     const rows = st.table
       .map((s) => stats.bots[s.index])
@@ -629,6 +637,26 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
           `<tr><td>${esc(b.name)}</td><td>${avg(b.ticks, b.games)}</td><td>${avg(b.winTicks, b.winGames)}</td><td>${avg(b.income, b.games)}</td><td>${avg(b.produced, b.games, 1)}</td><td>${avg(b.lostUnits, b.games, 1)}${b.lostWorkers !== undefined ? `（${avg(b.lostWorkers, b.games, 1)}）` : ""}</td><td>${avg(b.killedUnits, b.games, 1)}</td><td>${avg(b.killedBuildings, b.games, 1)}</td><td>${avg(b.fuel, b.calls, 1)}</td><td class="${b.errors + b.fuelOuts + b.dead ? "err" : ""}">${b.errors}/${b.fuelOuts}/${b.rejected}/${b.dead}</td></tr>`,
       )
       .join("")
+    // 规则包自己的：换主人、result.stats；还有打到时间上限的对局
+    const bots = st.table.map((s) => stats.bots[s.index])
+    const keys = [...new Set(bots.flatMap((b) => Object.keys(b.custom ?? {})))]
+    const owned = bots.some((b) => (b.ownerGained ?? 0) + (b.ownerLost ?? 0) > 0)
+    const extras =
+      (owned || keys.length
+        ? `<div class="muted small">规则包相关，每局平均${owned ? "（换主人：换到手里的 / 被换走的）" : ""}</div>
+      <div class="table-scroll"><table class="summary standings"><tr><th>bot</th>${owned ? "<th>换主人</th>" : ""}${keys.map((k) => `<th>${esc(k)}</th>`).join("")}</tr>${bots
+        .map(
+          (b) =>
+            `<tr><td>${esc(b.name)}</td>${owned ? `<td>${avg(b.ownerGained ?? 0, b.games, 1)} / ${avg(b.ownerLost ?? 0, b.games, 1)}</td>` : ""}${keys.map((k) => `<td>${avg(b.custom?.[k] ?? 0, b.games, 1)}</td>`).join("")}</tr>`,
+        )
+        .join("")}</table></div>`
+        : "") +
+      (stats.timeUps?.length
+        ? `<div class="muted small">打到时间上限才结束的对局</div><ul class="stat-list">${stats.timeUps
+            .slice(0, 6)
+            .map((t) => `<li>×${t.n} ${esc(t.who)}</li>`)
+            .join("")}</ul>`
+        : "")
     const seats = stats.seats.map((s, p) => `P${p} ${avg(s.points * 100, s.games)}%${s.ci !== undefined ? ` ±${Math.round(s.ci * 100)}%` : ""}`).join("，")
     const reasons = stats.reasons
       .slice(0, 6)
@@ -640,6 +668,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       <div class="table-scroll"><table class="summary standings"><tr><th>bot</th><th>时长</th><th>胜局时长</th><th>采集</th><th>造单位</th><th title="损失的单位（括号里是其中的工人）">损失（工人）</th><th>击杀</th><th>拆建筑</th><th>燃料</th><th>出错</th></tr>${rows}</table></div>
       <div class="muted small">座位的得分率和 95% 区间（看地图偏不偏；区间都盖住 50% 就还看不出偏）：${seats}</div>
       <div class="muted small">结束原因（数字不一样的算一类，这里是其中一局的原话）</div><ul class="stat-list">${reasons}</ul>
+      ${extras}
     </details>`
   }
 

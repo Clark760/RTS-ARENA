@@ -68,6 +68,10 @@ export class World implements SetupContext, RuleContext {
   width = 0
   height = 0
   terrain: string[] = []
+  /** 规则包 remove 掉、回放还没记下的实体 id（回放用它区分"移除"和"打死"） */
+  readonly removed = new Set<number>()
+  /** setup 时的提醒（spawnNear 没找到空位），rts-arena check 打印 */
+  readonly notes: string[] = []
   /** 地形能否通行 */
   walk = new Uint8Array(0)
   /** 建筑、资源点占的格子（存 id） */
@@ -261,15 +265,16 @@ export class World implements SetupContext, RuleContext {
   }
 
   /** 实体死亡或被移除：发事件、清占位 */
-  destroy(e: EntityState, killer: number): void {
+  destroy(e: EntityState, killer: number, removed = false): void {
     if (!e.alive) return
     e.alive = false
     this.occupy(e, 0)
     this.ents.delete(e.id)
-    this.events.push({ kind: "died", id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, killer, ...(e.construction ? { unfinished: true as const } : {}) })
+    if (removed) this.removed.add(e.id)
+    const flags = { ...(e.construction ? { unfinished: true as const } : {}), ...(removed ? { removed: true as const } : {}) }
+    this.events.push({ kind: "died", id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, killer, ...flags })
     for (const p of this.players) {
-      if (p.id === e.owner || this.visibleTo(p.id, e))
-        this.pushEvent(p.id, { kind: "died", tick: this.tick, id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, ...(e.construction ? { unfinished: true as const } : {}) })
+      if (p.id === e.owner || this.visibleTo(p.id, e)) this.pushEvent(p.id, { kind: "died", tick: this.tick, id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, ...flags })
     }
   }
 
@@ -461,13 +466,17 @@ export class World implements SetupContext, RuleContext {
     const def = this.types[type]
     if (!def) throw new Error(`未定义的实体类型 "${type}"`)
     if (this.canPlace(def, x, y)) return this.spawnLive(type, owner, x, y, opts?.amount).id
-    const spot = this.findSpotAround(def, { x, y, w: 1, h: 1 }, 8)
+    // (x, y) 落在建筑、资源点里：从它的外圈开始找（不然单位从建筑中间一步也走不出去）
+    const inside = this.inBounds(x, y) ? this.ents.get(this.staticOcc[y * this.width + x]) : undefined
+    const around = inside ? { x: inside.x, y: inside.y, w: inside.w, h: inside.h } : { x, y, w: 1, h: 1 }
+    const spot = this.findSpotAround(def, around, 8)
+    if (!spot && this.tick === 0) this.notes.push(`setup 里 spawnNear("${type}", ${owner}, ${x}, ${y}) 没找到空位，返回了 null（这个实体没放下）`)
     return spot ? this.spawnLive(type, owner, spot.x, spot.y, opts?.amount).id : null
   }
 
   remove(id: number): void {
     const e = this.ents.get(id)
-    if (e) this.destroy(e, -1)
+    if (e) this.destroy(e, -1, true)
   }
 
   private mustGet(id: number, what: string): EntityState {

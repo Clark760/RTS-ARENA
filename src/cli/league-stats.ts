@@ -17,6 +17,9 @@ export interface SeatGameStats {
   /** 最后一击是这个座位的：打死的单位、拆掉的建筑（不算自己和盟友的，算中立的） */
   killedUnits: number
   killedBuildings: number
+  /** 规则包改归属（setOwner）：换到这个座位手里的、从这个座位手里换走的实体数 */
+  ownerGained: number
+  ownerLost: number
 }
 
 export function gameSeatStats(replay: Replay): SeatGameStats[] {
@@ -26,7 +29,7 @@ export function gameSeatStats(replay: Replay): SeatGameStats[] {
   const model = new ReplayModel(replay)
   const s = model.initialState()
   const initial = new Set(s.ents.keys())
-  const out: SeatGameStats[] = replay.players.map(() => ({ income: 0, produced: 0, lostUnits: 0, lostWorkers: 0, lostBuildings: 0, killedUnits: 0, killedBuildings: 0 }))
+  const out: SeatGameStats[] = replay.players.map(() => ({ income: 0, produced: 0, lostUnits: 0, lostWorkers: 0, lostBuildings: 0, killedUnits: 0, killedBuildings: 0, ownerGained: 0, ownerLost: 0 }))
   const spent = new Array<number>(n).fill(0)
   const startRes = s.players.map((p) => Object.values(p.resources).reduce((a, b) => a + b, 0))
   const lastHit = new Map<number, number>()
@@ -36,9 +39,17 @@ export function gameSeatStats(replay: Replay): SeatGameStats[] {
       const a = s.ents.get(sh[i])
       if (a && a.owner >= 0) lastHit.set(sh[i + 1], a.owner)
     }
+    const ow = f.owner ?? []
+    for (let i = 0; i < ow.length; i += 2) {
+      const e = s.ents.get(ow[i])
+      if (!e || e.owner === ow[i + 1]) continue
+      if (e.owner >= 0 && e.owner < n) out[e.owner].ownerLost++
+      if (ow[i + 1] >= 0 && ow[i + 1] < n) out[ow[i + 1]].ownerGained++
+    }
+    const removed = new Set(f.removed ?? [])
     for (const id of f.die ?? []) {
       const e = s.ents.get(id)
-      if (!e) continue
+      if (!e || removed.has(id)) continue
       const kind = types[e.type]?.kind
       if (kind === "resource") continue
       if (e.owner >= 0 && e.owner < n) {
@@ -98,6 +109,10 @@ interface BotAgg {
   lostBuildings: number
   killedUnits: number
   killedBuildings: number
+  ownerGained: number
+  ownerLost: number
+  /** 规则包在结果里给的统计（result.stats），按 bot 累计 */
+  custom: Record<string, number>
   errors: number
   fuelOuts: number
   rejected: number
@@ -112,14 +127,17 @@ export interface LeagueStatsJson {
   bots: (BotAgg & { name: string })[]
   /** 每个座位：局数、名次分之和、独得第一的局数、得分率 95% 区间的半宽 */
   seats: { games: number; points: number; wins: number; ci: number }[]
-  /** 结束原因（数字归一成 N 算一类）、次数、这一类里第一局的原话，多的在前 */
+  /** 结束原因（数字归一成 N 算一类，P1、队2 这样的编号不归一）、次数、这一类里第一局的原话，多的在前 */
   reasons: { reason: string; n: number; example: string }[]
+  /** 打到时间上限才结束的对局：参赛者（名字，" 对 " 隔开）和局数 */
+  timeUps: { who: string; n: number }[]
 }
 
 export class LeagueStats {
   private bots: BotAgg[]
   private seats: { games: number; points: number; wins: number }[] = []
   private reasons = new Map<string, { n: number; example: string }>()
+  private timeUps = new Map<string, number>()
   private names: string[]
 
   constructor(names: string[]) {
@@ -137,6 +155,9 @@ export class LeagueStats {
       lostBuildings: 0,
       killedUnits: 0,
       killedBuildings: 0,
+      ownerGained: 0,
+      ownerLost: 0,
+      custom: {},
       errors: 0,
       fuelOuts: 0,
       rejected: 0,
@@ -178,6 +199,9 @@ export class LeagueStats {
         a.lostBuildings += g.lostBuildings
         a.killedUnits += g.killedUnits
         a.killedBuildings += g.killedBuildings
+        a.ownerGained += g.ownerGained
+        a.ownerLost += g.ownerLost
+        for (const [k, v] of Object.entries(replay.result.stats ?? {})) if (typeof v[p] === "number") a.custom[k] = (a.custom[k] ?? 0) + v[p]
         const b = replay.bots[p]
         if (!b) continue
         a.errors += b.errors
@@ -189,7 +213,12 @@ export class LeagueStats {
         a.fuelMax = Math.max(a.fuelMax, b.fuelMax)
       }
     }
-    const reason = replay.result.reason.replace(/\d+/g, "N")
+    // 数字归一成 N 算一类，但 P1、队2、#3 这样的编号留着（"队1先劫够"和"队2先劫够"是两类）
+    const reason = replay.result.reason.replace(/(?<![P队#])\d+/g, "N")
+    if (replay.result.tick >= replay.maxTicks) {
+      const who = [...new Set(seats)].map((i) => this.names[i]).join(" 对 ")
+      this.timeUps.set(who, (this.timeUps.get(who) ?? 0) + 1)
+    }
     const r = this.reasons.get(reason)
     if (r) r.n++
     else this.reasons.set(reason, { n: 1, example: replay.result.reason })
@@ -200,6 +229,7 @@ export class LeagueStats {
       bots: this.bots.map((b, i) => ({ name: this.names[i], ...b })),
       seats: this.seats.map((s) => ({ ...s, ci: Number(rateCi(s.points, s.games).toFixed(3)) })),
       reasons: [...this.reasons].map(([reason, r]) => ({ reason, ...r })).sort((a, b) => b.n - a.n),
+      timeUps: [...this.timeUps].map(([who, n]) => ({ who, n })).sort((a, b) => b.n - a.n),
     }
   }
 }
@@ -211,7 +241,9 @@ export function statsText(stats: LeagueStatsJson, result: LeagueResult): string 
   const lines: string[] = ["## 统计"]
   lines.push("", "把握度（相邻名次直接对阵时，上面的比下面的强的把握；平局不算，局数少时不可靠）")
   for (const c of adjacentConfidence(result))
-    lines.push(`  ${c.upper} > ${c.lower}：${c.w}-${c.d}-${c.l}，${c.los === null ? "两人没分出过先后" : `把握 ${(c.los * 100).toFixed(c.los > 0.99 ? 1 : 0)}%`}`)
+    lines.push(
+      `  ${c.upper} > ${c.lower}：${c.w}-${c.d}-${c.l}，${c.los === null ? "两人没分出过先后" : `把握 ${(c.los * 100).toFixed(c.los > 0.99 ? 1 : 0)}%`}${c.w + c.l < 6 ? "（分出胜负的不到 6 局，偏乐观）" : ""}`,
+    )
   const names = stats.bots.map((b) => b.name)
   const width = Math.max(4, ...names.map((x) => [...x].length))
   const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - [...s].length))
@@ -224,10 +256,29 @@ export function statsText(stats: LeagueStatsJson, result: LeagueResult): string 
     )
   }
   lines.push("（报错、燃料耗尽、被拒、停止是整个联赛的总数）")
+  const order = result.table.map((s) => s.index)
+  if (stats.bots.some((b) => (b.ownerGained ?? 0) + (b.ownerLost ?? 0) > 0)) {
+    lines.push("", "换主人（规则包 setOwner）每局平均：换到手里的 / 被换走的")
+    for (const i of order) lines.push(`  ${pad(stats.bots[i].name, width)}  ${avg(stats.bots[i].ownerGained ?? 0, stats.bots[i].games, 1)} / ${avg(stats.bots[i].ownerLost ?? 0, stats.bots[i].games, 1)}`)
+  }
+  const keys = [...new Set(stats.bots.flatMap((b) => Object.keys(b.custom ?? {})))]
+  if (keys.length) {
+    lines.push("", "规则包统计（规则包在结果里给的 stats）每局平均")
+    lines.push(`  ${pad("bot", width)}  ${keys.join("  ")}`)
+    for (const i of order) {
+      const b = stats.bots[i]
+      lines.push(`  ${pad(b.name, width)}  ${keys.map((k) => avg(b.custom?.[k] ?? 0, b.games, 1).padStart([...k].length * 2)).join("  ")}`)
+    }
+  }
   lines.push("", "座位（各座位的得分率和 95% 区间，看地图和规则包偏不偏向某个位置；区间都盖住 50% 就还看不出偏）")
   lines.push("  " + stats.seats.map((s, p) => `P${p} ${s.games} 局，得分率 ${avg(s.points * 100, s.games)}% ±${Math.round((s.ci ?? 0) * 100)}%，独得第一 ${s.wins}`).join("；"))
   lines.push("", "结束原因（数字不一样的算一类，后面是其中一局的原话）")
   for (const r of stats.reasons.slice(0, 8)) lines.push(`  ×${r.n}  ${r.example ?? r.reason}${r.n > 1 && r.example && r.example !== r.reason ? "  等" : ""}`)
   if (stats.reasons.length > 8) lines.push(`  另有 ${stats.reasons.length - 8} 种`)
+  if (stats.timeUps?.length) {
+    lines.push("", "打到时间上限才结束的对局")
+    for (const t of stats.timeUps.slice(0, 8)) lines.push(`  ×${t.n}  ${t.who}`)
+    if (stats.timeUps.length > 8) lines.push(`  另有 ${stats.timeUps.length - 8} 组`)
+  }
   return lines.join("\n")
 }

@@ -5,7 +5,7 @@ import { PKG_ROOT } from "../paths.ts"
 import { loadSandboxedRuleset } from "../sandbox/ruleset.ts"
 import { buildDts, RULES_GLOBALS_DTS, rulesTsconfig } from "./docgen.ts"
 
-const INDEX = `// 示例规则包「采金赛」：先累计交够 600 金的赢；主基地被摧毁直接输；到时间比交货量。从这里改起。
+export const INDEX = `// 示例规则包「采金赛」：先累计交够 600 金的赢；主基地被摧毁直接输；到时间比交货量。从这里改起。
 // 写法见同目录的 RULESET.md。类型从 "rts-arena/ruleset" 导入（import type），共用的单位和地图工具从 "rts-arena/standard" 导入。
 import type { RuleContext, Ruleset } from "rts-arena/ruleset"
 import { baseStarts, spawnMirrored, STANDARD_TERRAIN, standardTypes, symmetricTerrain } from "rts-arena/standard"
@@ -117,7 +117,7 @@ const RULES = `两人对战，比谁先采够金子。双方各有一个主基�
 `
 
 // 参考 bot：基准 + 两个不同打法的陪练（第一行注释是打法说明，会列进 PROMPT.md）
-const RUSH = `// 速攻：只留 3 个工人采矿，兵营一直出战士，凑够 4 个就去拆对方主基地（拆掉直接赢），之后新出的兵直接跟上。
+export const RUSH = `// 速攻：只留 3 个工人采矿，兵营一直出战士，凑够 4 个就去拆对方主基地（拆掉直接赢），之后新出的兵直接跟上。
 
 let attacking = false
 
@@ -160,7 +160,7 @@ export function onTick(view: View, cmd: Commands): void {
 }
 `
 
-const GREEDY = `// 只采不打：主基地一直补工人到 10 个，每个金矿最多 3 人，全力抢着交够金子；一个兵都不出。
+export const GREEDY = `// 只采不打：主基地一直补工人到 10 个，每个金矿最多 3 人，全力抢着交够金子；一个兵都不出。
 
 function nearest<T extends Pos>(from: Pos, list: T[]): T | undefined {
   let best: T | undefined
@@ -195,7 +195,7 @@ export function onTick(view: View, cmd: Commands): void {
 }
 `
 
-const BASELINE = `// 基准（均衡）：工人补到 8 个，每个金矿最多 3 人；兵营出战士守家，攒够 6 个去拆对方主基地。
+export const BASELINE = `// 基准（均衡）：工人补到 8 个，每个金矿最多 3 人；兵营出战士守家，攒够 6 个去拆对方主基地。
 
 function nearest<T extends Pos>(from: Pos, list: T[]): T | undefined {
   let best: T | undefined

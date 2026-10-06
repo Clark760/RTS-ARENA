@@ -122,5 +122,16 @@ export function checkResult(r: unknown, playerCount: number, allowNull: boolean)
   if (r.winners !== undefined && (!Array.isArray(r.winners) || !r.winners.every(player))) return "winners 要是玩家编号数组"
   if (r.ranking !== undefined && (!Array.isArray(r.ranking) || !r.ranking.every((g) => Array.isArray(g) && g.every(player))))
     return "ranking 要是玩家编号数组的数组，如 [[0], [1, 2]]"
+  if (r.stats !== undefined) {
+    if (!isObj(r.stats)) return "stats 要写成 { 名字: [每个玩家的数] }"
+    const keys = Object.keys(r.stats)
+    if (keys.length > 12) return "stats 最多 12 项"
+    for (const k of keys) {
+      const v = (r.stats as Record<string, unknown>)[k]
+      if (k.length === 0 || k.length > 20) return `stats 的名字要是 1～20 字（"${k.slice(0, 30)}"）`
+      if (!Array.isArray(v) || v.length !== playerCount || !v.every((x) => typeof x === "number" && Number.isFinite(x)))
+        return `stats.${k} 要是 ${playerCount} 个数的数组（按玩家编号排）`
+    }
+  }
   return null
 }

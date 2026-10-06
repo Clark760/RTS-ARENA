@@ -7,7 +7,7 @@ import { runMatch, type MatchBot } from "../core/match.ts"
 import { mixSeed } from "../core/rng.ts"
 import type { Replay, Ruleset } from "../core/types.ts"
 import { compileBot, createBot } from "../sandbox/quickjs.ts"
-import { botTsconfig, buildDts, buildPrompt, typecheck, typecheckRuleset } from "./docgen.ts"
+import { botTsconfig, buildDts, buildPrompt, lineups, setupWorld, typecheck, typecheckRuleset } from "./docgen.ts"
 import { serveViewer } from "./serve.ts"
 import {
   findRuleset,
@@ -27,7 +27,7 @@ import { PKG_ROOT } from "../paths.ts"
 import { buildReport } from "./report.ts"
 import { leagueStandings, leagueTables, standingsText, teamSplits, type LeagueGame, type LeagueResult } from "./league.ts"
 import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
-import { writeRulesTemplate } from "./rules-template.ts"
+import { BASELINE as TEMPLATE_BASELINE, GREEDY as TEMPLATE_GREEDY, INDEX as TEMPLATE_INDEX, RUSH as TEMPLATE_RUSH, writeRulesTemplate } from "./rules-template.ts"
 
 const HELP = `用法：rts-arena <命令> [参数]
 
@@ -68,7 +68,8 @@ run 的选项：
         --json        每行输出一个 JSON 事件（start / game / summary / warning / error），给程序读
 league 的选项：
         --size K      每局几个人（默认 2；规则包不能两个人打时是它的最少人数）
-        --per-table N 每桌打几局（默认等于每局人数：同一个种子轮换座位一圈；两人局也可以写 --per-pair）
+        --per-table N 每桌打几局（默认轮换座位一圈，两人局默认每对 4 局；两人局也可以写 --per-pair）。
+                      局数少时排名的误差很大：同一个 bot 写两次放进联赛，看两份差多少就知道
         --tables M    多人局的组合太多时抽几桌（默认：组合不超过 20 桌就全打，否则让每个 bot 大约上场 6 桌）
         --teams 2v2   分队联赛（规则包要支持分队）；--partners mixed 轮换搭档（默认，所有分组方式都打，
                       每个 bot 拿所在队的名次分），--partners same 每队由同一个 bot 组成（bot 不够一局的人数时默认）
@@ -559,7 +560,8 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
     return out
   }
   const cycle = layoutsOf(tables[0]).length
-  const perTable = intOpt("per-table") ?? intOpt("per-pair") ?? cycle
+  // 默认一轮；两人局一轮只有 2 局，误差太大，默认打两轮（每对 4 局）
+  const perTable = intOpt("per-table") ?? intOpt("per-pair") ?? (cycle === 2 ? 4 : cycle)
   if (perTable < 1 || perTable > 200) fail("--per-table 要是 1～200")
   if (perTable % cycle !== 0) warn(`每桌 ${perTable} 局不是 ${cycle} 的倍数，${mode === "mixed" ? "分法和位置" : "座位"}没轮换完整`)
   const total = tables.length * perTable
@@ -595,14 +597,16 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
     writeFileSync(seriesFile, JSON.stringify(series, null, 1))
   }
   emit0({ type: "start", league: true, ruleset: rules.id, name: rules.name, games: total, size: players, teams: series.teams, partners: series.partners, perTable, tables: tables.length, complete: schedule.complete, seed: baseSeed, participants, series: basename(seriesFile) })
+  const rounds = perTable % cycle === 0
+  const notFull = `不到整轮：一轮是 ${cycle} 局`
   const how =
     mode === "ffa"
       ? players === 2
-        ? `两两对打，${tables.length} 对，每对 ${perTable} 局（换边）`
-        : `每局 ${players} 人，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（轮换座位）`
+        ? `两两对打，${tables.length} 对，每对 ${perTable} 局（${rounds ? "换边" : notFull}）`
+        : `每局 ${players} 人，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? "轮换座位" : notFull}）`
       : mode === "mixed"
-        ? `分队 ${teamSpec}、轮换搭档，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（每种分法都打${equalSizes ? "、各队轮换位置" : ""}）`
-        : `分队 ${teamSpec}、每队是同一个 bot，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（轮换位置）`
+        ? `分队 ${teamSpec}、轮换搭档，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? `每种分法都打${equalSizes ? "、各队轮换位置" : ""}` : notFull}）`
+        : `分队 ${teamSpec}、每队是同一个 bot，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? "轮换位置" : notFull}）`
   say(`联赛：${rules.name}（${rules.id}），${N} 个 bot（${labels.join("、")}），${how}，共 ${total} 局，种子从 ${baseSeed} 起`)
 
   const record: LeagueGame[] = []
@@ -694,7 +698,9 @@ function rulesetTypeWarning(src: RulesetRef): void {
   if (src.builtin) return
   const out = typecheckRuleset(src.dir)
   if (!out) return
-  const at = relative(process.cwd(), src.dir) || "."
+  const rel = relative(process.cwd(), src.dir).split(sep).join("/") || "."
+  // 不带 ./ 会被当成平台自带规则包的名字
+  const at = rel.startsWith(".") || rel.startsWith("/") || /^[a-zA-Z]:/.test(rel) ? rel : `./${rel}`
   const lines = out.trim().split("\n")
   warn(`规则包 ${at} 没通过类型检查（不影响这次比赛；规则包作者用 rts-arena check ${at} 看详情）：\n${lines.slice(0, 3).join("\n")}${lines.length > 3 ? `\n…还有 ${lines.length - 3} 行` : ""}`)
 }
@@ -846,6 +852,36 @@ async function cmdCheckRules(src: RulesetRef, opt: Record<string, string | true>
   } catch (e) {
     bad(`说明书生成不了：${(e as Error).message}`)
   }
+  // setup 里 spawnNear 没找到空位（静默返回 null，实体没放下）
+  for (const l of lineups(rules)) {
+    try {
+      for (const note of setupWorld(rules, l.n, l.teams).notes) console.log(`提醒：${l.label}时，${note}。从建筑里面找会从它的外圈开始；找不到通常是附近太挤或者被墙围住了`)
+    } catch {
+      // setup 出错在后面试打时会报出来
+    }
+  }
+  if (!src.builtin) {
+    // 改了玩法（index.ts 和模板不一样）后，bots/ 里还是 new-rules 模板（采金赛）原样的 bot
+    const norm = (s: string) => s.replace(/\r\n/g, "\n")
+    const changed = existsSync(join(src.dir, "index.ts")) && norm(readFileSync(join(src.dir, "index.ts"), "utf8")).replace(/id: "[^"]*"/, `id: "__ID__"`) !== TEMPLATE_INDEX
+    const tmpl = new Map([
+      ["baseline", TEMPLATE_BASELINE],
+      ["rush", TEMPLATE_RUSH],
+      ["greedy", TEMPLATE_GREEDY],
+    ])
+    for (const b of referenceBots(src.dir)) {
+      const t = tmpl.get(b.name)
+      if (changed && t && norm(readFileSync(b.file, "utf8")) === t)
+        console.log(`提醒：bots/${b.name}.ts 还是 new-rules 模板（采金赛）的原样。改了玩法后要换成按你的玩法写的 bot，或者删掉（类型检查和试打通过不代表它会玩你的玩法）`)
+    }
+    // objectives.ts 改过之后 bots/arena.d.ts 要跟着更新（编辑器用它）
+    const dtsFile = join(src.dir, "bots", "arena.d.ts")
+    const dts = buildDts(rules, src.dir)
+    if (existsSync(dtsFile) && readFileSync(dtsFile, "utf8") !== dts) {
+      writeFileSync(dtsFile, dts)
+      console.log("已刷新 bots/arena.d.ts（objectives.ts 或实体类型改过了）")
+    }
+  }
   const botFiles = knownBots(src).map((n) => knownBotFile(src, n)!)
   const tc = typecheck(rules, src.dir, botFiles)
   if (tc) bad(`现成 bot 的类型检查没通过：\n${tc}`)
@@ -973,6 +1009,7 @@ async function main(): Promise<void> {
         const { rules: r, src } = await loadRuleset(pos[0])
         console.log(`「${r.name}」（${r.id}）的参考 bot（命令里写名字就能和它打；rts-arena league 不写对手就和它们全部循环对打）：`)
         for (const b of referenceBots(src.dir)) console.log(`  ${b.name.padEnd(10)} ${b.about || "（没写打法说明）"}`)
+        console.log(`源码在 ${join(src.dir, "bots")}${sep}（idle 在 ${join(PKG_ROOT, "bots")}${sep}）`)
         return
       }
       for (const id of listRulesets()) {
@@ -1014,6 +1051,11 @@ async function main(): Promise<void> {
     case "run": {
       const t = await target(pos, "run")
       // bot 目录里不写对手：打基准 bot，人数不够就都补基准
+      if (t.mine && t.bots.length > t.rules.players.max)
+        fail(
+          `「${t.rules.name}」最多 ${t.rules.players.max} 个 bot：在 bot 目录里，你的 ${t.bots[0]} 会自动排在第一个，再加上写的 ${t.bots.length - 1} 个就多了。` +
+            `想自己指定所有参赛的 bot（比如拿旧版本打参考 bot），在前面写上规则包：rts-arena run ${t.src.ref} ${t.bots.slice(1).join(" ")}`,
+        )
       const onlyBaseline = t.mine && t.bots.length === 1
       if (onlyBaseline) while (t.bots.length < t.rules.players.min) t.bots.push("baseline")
       await cmdRun(t.rules, t.src, t.bots, opt)
@@ -1047,7 +1089,7 @@ async function main(): Promise<void> {
         player = mySeats[0]
         console.log(`（你的 bot ${ws!.bot} 这局坐在 P${player}，按 P${player} 写；看别的座位用 --player N）`)
       } else if (player !== undefined && mySeats.length > 0 && !mySeats.includes(player))
-        console.log(`（注意：P${player} 不是你的 bot，你的 ${ws!.bot} 这局坐在 ${mySeats.map((p) => `P${p}`).join("、")}）`)
+        console.log(`（注意：P${player} 不是你的 bot，你的 ${ws!.bot} 这局坐在 ${mySeats.map((p) => `P${p}`).join("、")}；下面战报里的"你"指 P${player}）`)
       const every = typeof opt.every === "string" ? Number(opt.every) : undefined
       if (every !== undefined && !(Number.isInteger(every) && every > 0)) fail("--every 要是正整数")
       if (!pos[0]) console.log(`（最新的一局：${file}）`)

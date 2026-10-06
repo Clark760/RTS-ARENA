@@ -106,6 +106,11 @@ test("命令行：联赛里同一个 bot 可以报名两次（带编号）；统
     assert.match(games[0], /^第 1\/2 局 .*（第 \d+ tick，/)
     assert.doesNotMatch(q, /的日志：/)
     assert.match(q, /共 2 局：/)
+    // bot 目录里写满了对手：提示在前面写上规则包
+    sh(["init", "koth", "me"])
+    const r = spawnSync(process.execPath, [CLI, "run", "hold", "rush", "--no-check"], { cwd: join(dir, "me"), encoding: "utf8" })
+    assert.equal(r.status, 1)
+    assert.match(r.stderr, /rts-arena run koth hold rush/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -152,7 +157,8 @@ test("对战接口开联赛：事件里有最新排名和最后的汇总；参�
     }
     assert.equal(run.exitCode, 0, run.stderr)
     const start = run.events.find((e) => e.type === "start") as unknown as { teams: string; partners: string; games: number }
-    assert.deepEqual([start.teams, start.partners, start.games], ["2v2", "same", 2])
+    // 两队：默认打两轮（每桌 4 局），一轮只有 2 局误差太大
+    assert.deepEqual([start.teams, start.partners, start.games], ["2v2", "same", 4])
     const last = run.events.find((e) => e.type === "standings") as unknown as { stats: { bots: unknown[] } }
     assert.equal(last.stats.bots.length, 2)
   } finally {

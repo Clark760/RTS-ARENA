@@ -270,7 +270,7 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
         const tables = leagueTables(list.length, unit, 0).tables.length
         // 不给每桌局数：一轮（各自为战是座位轮换一圈；轮换搭档是每种分法都打、各队轮换位置）
         const cycle = lmode === "mixed" ? teamSplits([...Array(k as number).keys()], sizes!).length * (sizes!.every((x) => x === sizes![0]) ? sides : 1) : sides
-        const per = perTable === undefined || perTable === null ? cycle : perTable
+        const per = perTable === undefined || perTable === null ? (cycle === 2 ? 4 : cycle) : perTable
         if (!Number.isInteger(per) || (per as number) < 1 || (per as number) * tables > MAX_GAMES)
           return send(res, 400, { error: `每桌局数要是正整数，总局数（${tables} 桌 × 每桌局数）最多 ${MAX_GAMES}` }), true
         args = ["league", ruleset, ...list, ...(sizes ? ["--teams", teams as string, "--partners", lmode] : ["--size", String(k)]), "--per-table", String(per), "--out", replays, "--json"]

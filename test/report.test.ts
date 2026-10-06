@@ -35,7 +35,7 @@ test("战报：输家视角有局势抽样、建造事件、战斗、经济对�
   assert.match(text, /## 战斗[^\n]*\nt\d+～\d+ 在 \(\d+, \d+\) 附近：/)
   assert.match(text, /经济差得多/)
   assert.match(text, /你失去 base/)
-  assert.match(text, /工人被卷进战斗：t\d+ 在 \(\d+, \d+\) 附近死了 \d+ 个工人/)
+  assert.match(text, /工人被卷进战斗：t\d+ 在 \(\d+, \d+\) 附近死了 \d+ 个工人（这场一共损失 \d+ 个；工人死的时候的命令：[a-zA-Z]+ \d+/)
   // 全局视角：给每个玩家的提示都带编号
   assert.match(buildReport(replay), /## 可能的问题\n- P\d：/)
 })

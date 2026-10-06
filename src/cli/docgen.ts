@@ -110,19 +110,37 @@ export function unitTable(rules: Ruleset): string {
  * 开局地图：用最少人数跑一遍规则包的 setup，画成带坐标的字符图，再列出资源点和各家开局的实体。
  * 开局由规则包决定，可能和种子、人数有关，这里画的是种子 1、最少人数时的样子
  */
-export function mapSection(rules: Ruleset): string {
-  const n = rules.players.min
+/** 跑一次规则包的 setup（种子 1），返回开局的局面；setup 出错就抛出 */
+export function setupWorld(rules: Ruleset, n: number, teams?: number[]): World {
   const w = new World(
     rules,
     [...Array(n).keys()].map((i) => `P${i}`),
     1,
+    teams,
   )
   try {
     rules.setup(w)
-  } catch (e) {
-    return `## 地图\n\n（画不出来：规则包的 setup 出错了：${(e as Error).message.split("\n")[0]}）`
   } finally {
     rules.release?.()
+  }
+  return w
+}
+
+/** 规则包能打的各种人数（和分队）：check 和说明书都用 */
+export function lineups(rules: Ruleset): { label: string; n: number; teams?: number[] }[] {
+  const out: { label: string; n: number; teams?: number[] }[] = []
+  for (let n = Math.max(1, rules.players.min); n <= rules.players.max; n++) out.push({ label: `${n} 人`, n })
+  if (rules.teams && rules.players.min <= 4 && rules.players.max >= 4) out.push({ label: "分队 2v2（P0、P1 一队，P2、P3 一队）", n: 4, teams: [0, 0, 1, 1] })
+  return out
+}
+
+export function mapSection(rules: Ruleset): string {
+  const n = rules.players.min
+  let w: World
+  try {
+    w = setupWorld(rules, n)
+  } catch (e) {
+    return `## 地图\n\n（画不出来：规则包的 setup 出错了：${(e as Error).message.split("\n")[0]}）`
   }
   const W = w.width
   const H = w.height
@@ -151,6 +169,24 @@ export function mapSection(rules: Ruleset): string {
     for (const e of mine) byType.set(e.type, [...(byType.get(e.type) ?? []), `(${e.x}, ${e.y})`])
     out.push(`${p < 0 ? "中立" : `P${p}`}：${[...byType].map(([t, at]) => `${t} ${at.join(" ")}`).join("；")}`)
   }
+  // 别的人数、分队时，各座位从哪里开始（地图只画了最少人数的）
+  const others = lineups(rules).filter((l) => l.n !== n || l.teams)
+  if (others.length) {
+    out.push("", "其他人数、分队时各座位的开局位置（每个玩家第一个建筑的左上角，没有建筑就是第一个单位）：")
+    for (const l of others) {
+      try {
+        const ow = setupWorld(rules, l.n, l.teams)
+        const seat = (p: number) => {
+          const own = ow.entities({ owner: p })
+          const e = own.find((x) => x.def.kind === "building") ?? own[0]
+          return e ? `P${p} ${e.type} (${e.x}, ${e.y})` : `P${p} 没有实体`
+        }
+        out.push(`- ${l.label}：${[...Array(l.n).keys()].map(seat).join("，")}`)
+      } catch (e) {
+        out.push(`- ${l.label}：setup 出错了（${(e as Error).message.split("\n")[0]}）`)
+      }
+    }
+  }
   if (w.markers.length) {
     out.push("", "开局的标记（规则包画在地图上的区域和文字，回放里看得到）：")
     for (const m of w.markers) {
@@ -170,19 +206,15 @@ function resourceGroups(resources: readonly EntityState[], ents: readonly Entity
   for (let i = 0; i < resources.length; i++) for (let j = 0; j < i; j++) if (gap(resources[i], resources[j]) <= 3) parent[find(i)] = find(j)
   const groups = new Map<number, EntityState[]>()
   resources.forEach((e, i) => groups.set(find(i), [...(groups.get(find(i)) ?? []), e]))
-  // 每个玩家的"家"：建筑的中心，没有建筑就用所有实体的中心
+  // 每个玩家的"家"：他的建筑（没有建筑就用他的单位）
   const home = [...Array(n).keys()].map((p) => {
     const own = ents.filter((e) => e.owner === p && e.def.kind !== "resource")
     const base = own.filter((e) => e.def.kind === "building")
-    const list = base.length ? base : own
-    if (!list.length) return null
-    return { x: list.reduce((a, e) => a + e.x + e.w / 2, 0) / list.length, y: list.reduce((a, e) => a + e.y + e.h / 2, 0) / list.length }
+    return base.length ? base : own
   })
-  const out = [`资源点（${resources.length} 个，按挨在一起的分成 ${groups.size} 片；距离是到各家建筑中心的格数）：`]
+  const out = [`资源点（${resources.length} 个，按挨在一起的分成 ${groups.size} 片；距离是这片里最近的资源点到各家最近的建筑，按占地算，和 dist() 一样）：`]
   for (const g of groups.values()) {
-    const cx = g.reduce((a, e) => a + e.x + e.w / 2, 0) / g.length
-    const cy = g.reduce((a, e) => a + e.y + e.h / 2, 0) / g.length
-    const d = home.map((h) => (h ? Math.round(Math.abs(h.x - cx) + Math.abs(h.y - cy)) : null))
+    const d = home.map((h) => (h.length ? Math.min(...g.flatMap((r) => h.map((b) => gap(r, b)))) : null))
     const known = d.map((v, p) => ({ v, p })).filter((x): x is { v: number; p: number } => x.v !== null).sort((a, b) => a.v - b.v)
     const where =
       known.length === 0

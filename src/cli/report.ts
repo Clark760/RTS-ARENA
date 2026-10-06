@@ -32,6 +32,8 @@ interface Death {
   y: number
   /** 最后打它的玩家，-1 表示不知道（不是被打死的） */
   by: number
+  /** 死的时候在执行的命令（回放里的命令文字） */
+  ord: string
 }
 
 /** 一段闲着的时间 */
@@ -136,6 +138,8 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   takeSample(0)
   const initialRes = s.players.map((p) => ({ ...p.resources }))
   const deaths: Death[] = []
+  /** 规则包 remove 掉的（不算死亡、损失）："owner|type" → 个数 */
+  const removedBy = new Map<string, number>()
   const spent = Array.from({ length: n }, () => new Map<string, number>())
   /** cat：depleted 是资源点采完（太多时先省略），key 是"第一次……"、换主人这些（太多时也保留） */
   const events: { t: number; p: number; text: string; cat?: "depleted" | "key" }[] = []
@@ -195,16 +199,22 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
         events.push({ t: f.t, p: tg.owner, text: `${who(tg.owner)}的建筑第一次挨打：${tg.type} ${at(tg)}，打它的是 P${a.owner} 的 ${a.type}`, cat: "key" })
       }
     }
+    const removedNow = new Set(f.removed ?? [])
     for (const id of f.die ?? []) {
       const e = s.ents.get(id)
       if (!e) continue
       closeIdle(e, f.t)
+      if (removedNow.has(id)) {
+        const k = `${e.owner}|${e.type}`
+        removedBy.set(k, (removedBy.get(k) ?? 0) + 1)
+        continue
+      }
       if (kind(e.type) === "resource") {
         events.push({ t: f.t, p: -1, text: `${at(e)} 的 ${e.type} 采完了`, cat: "depleted" })
         continue
       }
       const by = lastHit.get(id) ?? -1
-      deaths.push({ t: f.t, owner: e.owner, type: e.type, x: e.x, y: e.y, by })
+      deaths.push({ t: f.t, owner: e.owner, type: e.type, x: e.x, y: e.y, by, ord: e.ord })
       const byText = by >= 0 ? `，最后一击是 P${by}` : ""
       if (e.owner < 0) events.push({ t: f.t, p: -1, text: `中立的 ${e.type} 死了 ${at(e)}${byText}` })
       else if (kind(e.type) === "building") events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}失去 ${e.type}${e.bp !== undefined ? "（还没建好）" : ""} ${at(e)}${byText}` })
@@ -361,6 +371,23 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     out.push(`${who0(p)}：采集约 ${income}（估算：结束时剩的 − 开局的 + 造东西花掉的），花掉 ${spentText}，抽样时平均手上留着 ${bank}；损失 ${countList(lost)}；击杀 ${countList(killed)}`)
   }
   out.push("")
+  if (removedBy.size) {
+    // 规则包按玩法移除的（交了货的商队、过期的道具……）：不算死亡、损失、击杀
+    out.push("## 规则包移除的（按玩法移除，不算死亡和损失）")
+    const owners = [...new Set([...removedBy.keys()].map((k) => Number(k.split("|")[0])))].sort((a, b) => a - b)
+    for (const o of owners) {
+      const m = new Map<string, number>()
+      for (const [k, v] of removedBy) if (Number(k.split("|")[0]) === o) m.set(k.split("|")[1], v)
+      out.push(`${o < 0 ? "中立" : who0(o)}：${countList(m)}`)
+    }
+    out.push("")
+  }
+  const custom = replay.result.stats
+  if (custom && Object.keys(custom).length) {
+    out.push("## 规则包统计（规则包在结果里给的）")
+    for (const [k, v] of Object.entries(custom)) out.push(`${k}：${v.map((x, p) => `${who0(p)} ${Math.round(x * 100) / 100}`).join("，")}`)
+    out.push("")
+  }
 
   // ---------- 可能的问题（只写看得出来的事实） ----------
   const hintFor = me === undefined ? [...Array(n).keys()] : [me]
@@ -407,7 +434,15 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
         const where = bad.slice(0, 3).map(({ b, lost, workers }) => {
           const cx = Math.round(b.reduce((a, x) => a + x.x, 0) / b.length)
           const cy = Math.round(b.reduce((a, x) => a + x.y, 0) / b.length)
-          return `t${b[0].t} 在 (${cx}, ${cy}) 附近死了 ${workers} 个工人（这场一共损失 ${lost.length} 个）`
+          // 死的时候在干什么：撤退路上被追着打、还在采矿、还是上去打了
+          const doing = new Map<string, number>()
+          for (const d of lost) {
+            if (!isWorker(d.type)) continue
+            const k = d.ord.startsWith("gather") && d.ord.endsWith("回程") ? "gather 回程" : d.ord.split(" ")[0]
+            doing.set(k, (doing.get(k) ?? 0) + 1)
+          }
+          const how = [...doing].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join("、")
+          return `t${b[0].t} 在 (${cx}, ${cy}) 附近死了 ${workers} 个工人（这场一共损失 ${lost.length} 个；工人死的时候的命令：${how}）`
         })
         hints.push(`工人被卷进战斗：${where.join("；")}${bad.length > 3 ? `，另有 ${bad.length - 3} 场` : ""}。敌人打过来时可以让工人躲开，或者在采集的地方留兵`)
       }

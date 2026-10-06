@@ -101,6 +101,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
     }
   });
 
+  var terrainRows = null;
   var ctx = Object.freeze({
     get seed() { return H.seed(); },
     get playerCount() { return H.playerCount(); },
@@ -109,9 +110,13 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
     get maxTicks() { return H.maxTicks(); },
     get width() { return H.width(); },
     get height() { return H.height(); },
+    get terrain() {
+      if (!terrainRows) terrainRows = Object.freeze(parse(H.terrain()));
+      return terrainRows;
+    },
     get rng() { return rng; },
     isAlly: function (a, b) { return a >= 0 && b >= 0 && teams[a] === teams[b]; },
-    setTerrain: function (rows) { H.setTerrain(stringify(rows)); entsChanged(); },
+    setTerrain: function (rows) { H.setTerrain(stringify(rows)); terrainRows = null; entsChanged(); },
     spawn: function (type, owner, x, y, o) { var id = H.spawn(type, owner, x, y, amountOf(o)); entsChanged(); return id; },
     setResources: function (p, res) {
       H.setResources(p, stringify(res));

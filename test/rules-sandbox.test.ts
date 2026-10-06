@@ -11,7 +11,10 @@ import { writeRulesTemplate } from "../src/cli/rules-template.ts"
 import { runMatch, type MatchBot } from "../src/core/match.ts"
 import type { Replay, Ruleset } from "../src/core/types.ts"
 import { compileBot, createBot } from "../src/sandbox/quickjs.ts"
-import { checkRulesetData } from "../src/sandbox/rules-check.ts"
+import { checkResult, checkRulesetData } from "../src/sandbox/rules-check.ts"
+import { LeagueStats, statsText } from "../src/cli/league-stats.ts"
+import { leagueStandings } from "../src/cli/league.ts"
+import { setupWorld } from "../src/cli/docgen.ts"
 import { loadSandboxedRuleset } from "../src/sandbox/ruleset.ts"
 import { fnBot, idle } from "./helpers.ts"
 
@@ -299,6 +302,68 @@ test("规则包的 buildCheck：拒绝原因原样告诉 bot，允许的照常�
   })
   assert.deepEqual(reasons, ["这里是禁建区（x 要小于 5）"])
   assert.equal(huts, 1)
+})
+
+test("spawnNear 从多格建筑里面找会从外圈开始；setup 里没放下会记提醒；setup 里能读地形、能 remove", async () => {
+  const types = `{ hq: { kind: "building", maxHp: 100, look }, big: { kind: "building", w: 3, h: 3, maxHp: 100, look }, creep: { kind: "unit", maxHp: 30, moveTicks: 1, sight: 3, look } }`
+  const dir = rules({
+    types,
+    setup: `ctx.spawn("big", 0, 4, 4)
+      const a = ctx.spawnNear("creep", -1, 5, 5)
+      const extra = ctx.spawnNear("creep", -1, 0, 9); ctx.remove(extra)
+      // 四周全被围住的格子：找不到
+      for (const [x, y] of [[8, 0], [9, 1], [9, 0]]) ctx.spawn("hq", -1, x, y)
+      const lost = ctx.spawnNear("creep", -1, 9, 0)
+      ctx.setStatus([a !== null, ctx.get(a).x, ctx.get(a).y, lost, ctx.terrain.length, ctx.terrain[0].length, ctx.entities({ type: "creep" }).length].join(" "))`,
+  })
+  const r = await loadSandboxedRuleset(dir, quiet)
+  const w = setupWorld(r, 2)
+  const [ok, x, y, lost, rows, cols, creeps] = w.status.split(" ")
+  assert.equal(ok, "true")
+  // 贴着 3×3 建筑的外圈
+  const d = Math.max(0, 4 - Number(x), Number(x) - 6) + Math.max(0, 4 - Number(y), Number(y) - 6)
+  assert.equal(d, 1, w.status)
+  assert.equal(lost, "")
+  assert.deepEqual([rows, cols, creeps], ["10", "10", "1"])
+  assert.equal(w.notes.length, 1)
+  assert.match(w.notes[0], /spawnNear\("creep", -1, 9, 0\) 没找到空位/)
+})
+
+test("ctx.remove 在回放里记成移除，战报和联赛统计不算死亡；结果里的 stats 进战报和联赛统计；结束原因保留队伍编号", async () => {
+  const dir = rules({
+    types: CREEP_TYPES,
+    setup: `ctx.spawn("creep", -1, 5, 5); ctx.spawn("creep", 0, 2, 2)`,
+    onTick: `if (ctx.tick === 3) for (const c of ctx.entities({ type: "creep" })) ctx.remove(c.id)`,
+    result: `return ctx.tick >= 10 ? { winner: 0, reason: "队1先到 " + ctx.tick + " 分", stats: { 测试: [1, 2] } } : null`,
+  })
+  const deaths: string[] = []
+  const replay = runMatch({
+    ruleset: await loadSandboxedRuleset(dir, quiet),
+    seed: 1,
+    bots: [
+      { name: "a", file: "", runner: fnBot((v) => void deaths.push(...v.events.flatMap((e) => (e.kind === "died" ? [`${e.type} ${e.removed === true}`] : [])))) },
+      { name: "b", file: "", runner: idle() },
+    ],
+  })
+  const f = replay.frames.find((x) => x.die?.length)!
+  assert.equal(f.t, 3)
+  assert.deepEqual([...(f.removed ?? [])].sort(), [...(f.die ?? [])].sort())
+  assert.deepEqual(deaths, ["creep true", "creep true"])
+  const text = buildReport(replay, { player: 0 })
+  assert.match(text, /## 规则包移除的[^\n]*\n中立：creep×1\n你：creep×1/)
+  assert.match(text, /损失 无/)
+  assert.match(text, /## 规则包统计[^\n]*\n测试：你 1，对手 P1 2/)
+  const st = new LeagueStats(["a", "b"])
+  st.add([0, 1], replay)
+  st.add([1, 0], { ...replay, result: { ...replay.result, reason: "队2先到 12 分" } })
+  const json = st.toJSON()
+  assert.equal(json.bots[0].lostUnits, 0)
+  assert.deepEqual(json.bots[0].custom, { 测试: 3 })
+  assert.deepEqual(json.reasons.map((x) => x.reason).sort(), ["队1先到 N 分", "队2先到 N 分"])
+  const games = [{ players: [0, 1], ranking: [[0], [1]] }, { players: [1, 0], ranking: [[1], [0]] }]
+  assert.match(statsText(json, leagueStandings(["a", "b"], games)), /规则包统计[^\n]*\n {2}bot +测试\n {2}a +1\.5/)
+  // stats 格式不对
+  assert.match(checkResult({ winner: 0, reason: "x", stats: { a: [1] } }, 2, false) ?? "", /2 个数的数组/)
 })
 
 test("区域叠加层可以自定颜色；颜色格式不对被拒", async () => {

@@ -40,6 +40,7 @@ export class Recorder {
   readonly initial: Snapshot
 
   constructor(w: World) {
+    w.removed.clear()
     for (const e of w.ents.values()) this.last.set(e.id, snapOf(e))
     const players = playerSnaps(w)
     this.lastPlayers = JSON.stringify(players)
@@ -75,11 +76,14 @@ export class Recorder {
     const die: number[] = []
     for (const id of this.last.keys()) if (!w.ents.has(id)) die.push(id)
     for (const id of die) this.last.delete(id)
+    const removed = die.filter((id) => w.removed.has(id))
+    w.removed.clear()
 
     if (spawn.length) f.spawn = spawn
     if (move.length) f.move = move
     if (hp.length) f.hp = hp
     if (die.length) f.die = die
+    if (removed.length) f.removed = removed
     if (w.shots.length) f.shots = w.shots.slice()
     if (ord.length) f.ord = ord
     if (bp.length) f.bp = bp

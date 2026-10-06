@@ -56,6 +56,11 @@ export interface MatchResult {
    * 不填时按 winner 推：赢家第 1，其余并列第 2；平局全部并列第 1。
    */
   ranking?: number[][]
+  /**
+   * 可选：规则包自己的统计，每项是按玩家编号排的数组，比如 { 劫到商队: [3, 5], 被抢走: [1, 0] }。
+   * 联赛按 bot 累计、显示每局平均，战报也会列出来；用来检查自己设计的机制到底有没有发生。最多 12 项，名字最长 20 字
+   */
+  stats?: Record<string, number[]>
 }
 
 /** 回放里的叠加层（区域、文字），由规则包每 tick 设置 */
@@ -81,7 +86,8 @@ export interface EntityFilter {
 /** 规则包发给自己的事件（本 tick 内发生的） */
 export type RuleEvent =
   /** killer 是最后一击的玩家，-1 表示没有（如资源采完、规则移除、拆掉自己的地基）；unfinished 表示死的是没建好的建筑 */
-  | { kind: "died"; id: number; type: string; owner: number; x: number; y: number; killer: number; unfinished?: true }
+  /** removed 为 true 表示是规则包用 remove 移除的（不是打死的），killer 是 -1 */
+  | { kind: "died"; id: number; type: string; owner: number; x: number; y: number; killer: number; unfinished?: true; removed?: true }
   | { kind: "created"; id: number; type: string; owner: number }
   | { kind: "deposit"; player: number; resource: string; amount: number; by: number }
   /** 工人建造的建筑建好了（放下地基时是 created） */
@@ -111,8 +117,16 @@ export interface SetupContext {
   dist(a: Rect, b: Rect): number
   /** 两个玩家是否同队 */
   isAlly(a: number, b: number): boolean
-  /** 在 (x, y) 附近找空位放实体，找不到返回 null（setup 里也能用，比自己记占用的格子省事） */
+  /**
+   * 在 (x, y) 附近找空位放实体（setup 里也能用，比自己记占用的格子省事）。(x, y) 放得下就放在那里，否则往外找：(x, y) 落在建筑或资源点里时从它的外圈开始找；单位按走路的步数往外找（不穿墙，最多 8 步），
+   * 建筑按距离一圈一圈找（最多 8 圈）。找不到返回 null；
+   * setup 里返回 null 时 rts-arena check 会提醒
+   */
   spawnNear(type: string, owner: number, x: number, y: number, opts?: { amount?: number }): number | null
+  /** 移除实体（setup 里也能用，比如摆好之后又不要了） */
+  remove(id: number): void
+  /** 地形，每行一个字符串（setTerrain 之后才有）；每格是什么看 Ruleset.terrain */
+  readonly terrain: readonly string[]
 }
 
 /** 每 tick 规则包能用的接口（规则包是可信代码，拿到的是内部状态，别直接改字段，用下面的方法） */
@@ -126,6 +140,8 @@ export interface RuleContext {
   isAlly(a: number, b: number): boolean
   readonly width: number
   readonly height: number
+  /** 地形，每行一个字符串，terrain[y][x] 是 (x, y) 的地形字符；能不能走看 Ruleset.terrain */
+  readonly terrain: readonly string[]
   readonly rng: Rng
   /**
    * 实体，按创建顺序。可以按 owner、type、kind 筛选：规则包在沙箱里跑，筛选在沙箱外面做，
@@ -143,7 +159,7 @@ export interface RuleContext {
   addScore(player: number, n: number): void
   setScore(player: number, n: number): void
   addResource(player: number, resource: string, n: number): void
-  /** 在 (x, y) 附近找空位放实体，找不到返回 null */
+  /** 在 (x, y) 附近找空位放实体，找法和 SetupContext.spawnNear 一样，找不到返回 null */
   spawnNear(type: string, owner: number, x: number, y: number, opts?: { amount?: number }): number | null
   remove(id: number): void
   /** 让玩家出局：不再调用他的 bot，实体留着（要清掉自己 remove） */
@@ -332,6 +348,8 @@ export interface Frame {
   /** [攻击者, 目标, ...] */
   shots?: number[]
   ord?: [number, string][]
+  /** die 里由规则包 remove 掉的（不是被打死的） */
+  removed?: number[]
   /** [id, 新主人, ...]：规则包改了归属（setOwner）的实体，-1 是中立 */
   owner?: number[]
   /** [id, 建造进度百分比, ...]；100 表示建好了 */

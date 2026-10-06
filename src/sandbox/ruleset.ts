@@ -381,6 +381,7 @@ class RulesBox {
       maxTicks: () => n(w().maxTicks),
       width: () => n(w().width),
       height: () => n(w().height),
+      terrain: () => s(JSON.stringify(w().terrain)),
       rng: () => n(w().rng.next()),
       setTerrain: (h) => {
         setupOnly("setTerrain")
