@@ -76,7 +76,7 @@ function state(ctx: RuleContext): MatchState {
 
 function baseHp(ctx: RuleContext, p: number): number {
   let hp = 0
-  for (const e of ctx.entities()) if (e.owner === p && e.type === "base") hp += e.hp
+  for (const e of ctx.entities({ owner: p, type: "base" })) hp += e.hp
   return hp
 }
 
@@ -194,7 +194,7 @@ const ruleset: Ruleset = {
       if (!p.alive || baseHp(ctx, p.id) > 0) continue
       // 出局：剩下的单位和建筑一起清掉，免得变成没人管的残兵
       ctx.eliminate(p.id)
-      for (const e of ctx.entities()) if (e.owner === p.id) ctx.remove(e.id)
+      for (const e of ctx.entities({ owner: p.id })) ctx.remove(e.id)
       s.out.push(p.id)
       s.outTick.set(p.id, ctx.tick)
     }

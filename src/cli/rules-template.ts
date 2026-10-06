@@ -16,7 +16,7 @@ const TARGET = 600
 const types = standardTypes()
 
 function hasBase(ctx: RuleContext, player: number): boolean {
-  return ctx.entities().some((e) => e.owner === player && e.type === "base")
+  return ctx.entities({ owner: player, type: "base" }).length > 0
 }
 
 const ruleset: Ruleset = {

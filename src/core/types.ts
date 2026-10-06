@@ -63,6 +63,13 @@ export type Marker =
   | { kind: "zone"; x: number; y: number; w: number; h: number; owner: number | null; label?: string }
   | { kind: "label"; x: number; y: number; text: string; owner?: number | null }
 
+/** ctx.entities 的筛选条件，不写的项不限 */
+export interface EntityFilter {
+  owner?: number
+  type?: string
+  kind?: TypeDef["kind"]
+}
+
 /** 规则包发给自己的事件（本 tick 内发生的） */
 export type RuleEvent =
   /** killer 是最后一击的玩家，-1 表示没有（如资源采完、规则移除、拆掉自己的地基）；unfinished 表示死的是没建好的建筑 */
@@ -101,8 +108,11 @@ export interface RuleContext {
   readonly width: number
   readonly height: number
   readonly rng: Rng
-  /** 全部实体，按创建顺序 */
-  entities(): readonly RuleEntity[]
+  /**
+   * 实体，按创建顺序。可以按 owner、type、kind 筛选：规则包在沙箱里跑，筛选在沙箱外面做，
+   * 只把筛出来的传进去，比取全部实体再自己筛快得多（比如每 tick 找主基地写 entities({ owner: p, type: "base" })）
+   */
+  entities(filter?: EntityFilter): readonly RuleEntity[]
   get(id: number): RuleEntity | undefined
   readonly players: readonly RulePlayer[]
   /** 本 tick 发生的事 */

@@ -7,8 +7,8 @@ interface RulesetInfo {
   players: { min: number; max: number }
   teams: boolean
   bots: string[]
-  /** 自己写的规则包（在沙箱里跑）；id 是 arena.json 里写的路径 */
-  sandboxed?: boolean
+  /** 不是平台自带的、自己写的规则包；id 是 arena.json 里写的路径 */
+  external?: boolean
 }
 
 interface ArenaInfo {
@@ -316,7 +316,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
       return
     }
     rulesetSel.innerHTML = info.rulesets
-      .map((r) => `<option value="${esc(r.id)}">${esc(r.name)}（${esc(r.id)}${r.sandboxed ? "，沙箱" : ""}）</option>`)
+      .map((r) => `<option value="${esc(r.id)}">${esc(r.name)}（${esc(r.id)}${r.external ? "，自己写的" : ""}）</option>`)
       .join("")
     if (info.broken?.length) $("ar-msg").textContent = `有规则包加载失败：${info.broken.join("；")}`
     if (info.workspace && info.rulesets.some((r) => r.id === info!.workspace!.ruleset)) rulesetSel.value = info.workspace.ruleset

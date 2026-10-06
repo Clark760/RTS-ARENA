@@ -17,7 +17,7 @@ function zoneController(ctx: RuleContext): number | null {
 }
 
 function hasBase(ctx: RuleContext, p: number): boolean {
-  return ctx.entities().some((e) => e.owner === p && e.type === "base")
+  return ctx.entities({ owner: p, type: "base" }).length > 0
 }
 
 const ruleset: Ruleset = {

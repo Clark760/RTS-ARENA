@@ -60,7 +60,7 @@ test("对战接口：开 2 局、看进度、汇总和回放日志都写出来",
   }
 })
 
-test("对战接口：bot 目录用自己写的规则包（沙箱），列表里有它，也能开比赛", async () => {
+test("对战接口：bot 目录用自己写的规则包，列表里有它，也能开比赛", async () => {
   const root = mkdtempSync(join(tmpdir(), "rts-arena-api-rules-"))
   const cli = join(ROOT, "src", "cli", "arena.ts")
   const sh = (args: string[], cwd: string) => {
@@ -80,9 +80,9 @@ test("对战接口：bot 目录用自己写的规则包（沙箱），列表里�
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok))
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   try {
-    const info = (await (await fetch(base + "/api/arena")).json()) as { rulesets: { id: string; name: string; sandboxed?: boolean; bots: string[] }[] }
+    const info = (await (await fetch(base + "/api/arena")).json()) as { rulesets: { id: string; name: string; external?: boolean; bots: string[] }[] }
     const mine = info.rulesets.find((r) => r.id === "../gold")
-    assert.ok(mine?.sandboxed, JSON.stringify(info.rulesets.map((r) => r.id)))
+    assert.ok(mine?.external, JSON.stringify(info.rulesets.map((r) => r.id)))
     assert.deepEqual(mine.bots, ["baseline", "idle"])
     // 不是自带的、也不是 arena.json 里写的规则包路径，不给跑
     const post = (body: unknown) => fetch(base + "/api/arena/run", { method: "POST", headers: { "Content-Type": "application/json", "X-Arena": "1" }, body: JSON.stringify(body) })

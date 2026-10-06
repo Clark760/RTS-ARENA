@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { after, test } from "node:test"
-import { importRuleset } from "../src/cli/catalog.ts"
+import { findRuleset, importRuleset, loadRulesetRef } from "../src/cli/catalog.ts"
 import { writeRulesTemplate } from "../src/cli/rules-template.ts"
 import { runMatch, type MatchBot } from "../src/core/match.ts"
 import type { Replay, Ruleset } from "../src/core/types.ts"
@@ -52,6 +52,28 @@ test("混战三家放进沙箱：出局、清掉出局者的实体、名次都�
   const a = await play(native)
   assert.equal(a.result.winner, 1)
   assert.equal(stable(await play(boxed)), stable(a))
+})
+
+test("命令行和对战页加载规则包（自带的也一样）走的是沙箱", async () => {
+  const r = await loadRulesetRef(findRuleset("koth")!)
+  assert.equal(typeof r.release, "function", "沙箱规则包才有 release")
+  assert.equal(r.id, "koth")
+})
+
+test("ctx.entities 的筛选：沙箱里不管有没有全量快照，结果都和直接跑一样", async () => {
+  const dir = rules({
+    onTick: `if (ctx.tick === 3) {
+      const a = ctx.entities({ owner: 0 }).map((e) => e.id).join()
+      const b = ctx.entities({ type: "hq", kind: "building" }).length
+      const c = ctx.entitiesIn(0, 0, 5, 5).map((e) => e.type).join()
+      ctx.entities()
+      const d = ctx.entities({ owner: 0 }).map((e) => e.id).join()
+      const e2 = ctx.entitiesIn(0, 0, 5, 5).map((e) => e.type).join()
+      ctx.setStatus([a === d, b, c, c === e2].join("|"))
+    }`,
+  })
+  const replay = await play(dir)
+  assert.equal(replay.frames.find((f) => f.status?.includes("|"))?.status, "true|2|hq|true")
 })
 
 test("自带规则包的定义都能通过沙箱规则包的格式检查", async () => {

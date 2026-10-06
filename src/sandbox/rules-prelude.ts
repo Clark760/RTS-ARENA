@@ -49,25 +49,30 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
   }
 
   var defs = {}, teams = [], cache = {}, stampNow = null;
+  /** 宿主省掉了和默认值一样的字段，这里补全 */
+  function fill(list) {
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i], d = defs[e.type];
+      e.def = d;
+      if (e.w === undefined) { e.w = d.w; e.h = d.h; }
+      if (e.amount === undefined) e.amount = 0;
+      if (e.order === undefined) e.order = { kind: "idle" };
+      if (e.carrying === undefined) e.carrying = null;
+      if (e.queue === undefined) e.queue = [];
+      if (e.construction === undefined) e.construction = null;
+      e.alive = true;
+    }
+    return list;
+  }
   function ents() {
     if (!cache.ents) {
-      var list = parse(H.entities());
-      // 宿主省掉了和默认值一样的字段，这里补全
-      for (var i = 0; i < list.length; i++) {
-        var e = list[i], d = defs[e.type];
-        e.def = d;
-        if (e.w === undefined) { e.w = d.w; e.h = d.h; }
-        if (e.amount === undefined) e.amount = 0;
-        if (e.order === undefined) e.order = { kind: "idle" };
-        if (e.carrying === undefined) e.carrying = null;
-        if (e.queue === undefined) e.queue = [];
-        if (e.construction === undefined) e.construction = null;
-        e.alive = true;
-      }
-      cache.ents = list;
+      cache.ents = fill(parse(H.entities()));
       cache.byId = null;
     }
     return cache.ents;
+  }
+  function matches(e, f) {
+    return (f.owner === undefined || e.owner === f.owner) && (f.type === undefined || e.type === f.type) && (f.kind === undefined || e.def.kind === f.kind);
   }
   function byId() {
     if (!cache.byId) {
@@ -114,7 +119,12 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
     },
     setMarkers: function (m) { H.setMarkers(stringify(m)); },
     setStatus: function (t) { H.setStatus(String(t)); },
-    entities: function () { return ents().slice(); },
+    entities: function (f) {
+      if (f === undefined || f === null) return ents().slice();
+      // 已经有全量快照就在这里筛，否则让宿主筛好再传进来
+      if (cache.ents) return cache.ents.filter(function (e) { return matches(e, f); });
+      return fill(parse(H.entitiesWhere(stringify({ owner: f.owner, type: f.type, kind: f.kind }))));
+    },
     get: function (id) { return byId().get(id); },
     get players() { return players(); },
     get events() {
@@ -123,7 +133,8 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
     },
     dist: rectDist,
     entitiesIn: function (x, y, w, h) {
-      var r = { x: x, y: y, w: w, h: h }, out = [], list = ents();
+      if (!cache.ents) return fill(parse(H.entitiesIn(x, y, w, h)));
+      var r = { x: x, y: y, w: w, h: h }, out = [], list = cache.ents;
       for (var i = 0; i < list.length; i++) if (rectDist(list[i], r) === 0) out.push(list[i]);
       return out;
     },

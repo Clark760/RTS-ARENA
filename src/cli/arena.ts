@@ -26,7 +26,7 @@ import { writeRulesTemplate } from "./rules-template.ts"
 
 const HELP = `用法：rts-arena <命令> [参数]
 
-<规则包> 是平台自带规则包的名字（见 list），或者自己写的规则包目录（如 ./my-rules，在沙箱里跑）。
+<规则包> 是平台自带规则包的名字（见 list），或者自己写的规则包目录（如 ./my-rules）。规则包都在沙箱里跑。
 
 在 bot 目录里（有 arena.json 的目录，用 init 建）：
   init <规则包> [目录]                   建 bot 目录（默认当前目录）：arena.json、bot.ts 模板、PROMPT.md、arena.d.ts、tsconfig.json
@@ -504,11 +504,9 @@ async function cmdCheckRules(src: RulesetRef, opt: Record<string, string | true>
     ok = false
     console.log(msg)
   }
-  if (!src.builtin) {
-    const out = typecheckRuleset(src.dir)
-    if (out) bad(`规则包类型检查没通过：\n${out}`)
-    else console.log("规则包类型检查通过")
-  }
+  const tsOut = typecheckRuleset(src.dir)
+  if (tsOut) bad(`规则包类型检查没通过：\n${tsOut}`)
+  else console.log("规则包类型检查通过")
   let rules: Ruleset
   try {
     rules = await loadRulesetRef(src)
@@ -516,7 +514,7 @@ async function cmdCheckRules(src: RulesetRef, opt: Record<string, string | true>
     console.log(`加载失败：${(e as Error).message}`)
     process.exit(1)
   }
-  console.log(`加载通过：「${rules.name}」（${rules.id}），${rules.players.min}～${rules.players.max} 人${rules.teams ? "，支持分队" : ""}${src.builtin ? "" : "（在沙箱里跑）"}`)
+  console.log(`在沙箱里加载通过：「${rules.name}」（${rules.id}），${rules.players.min}～${rules.players.max} 人${rules.teams ? "，支持分队" : ""}`)
   for (const w of checkLimits(rules)) console.log(`提醒：${w}`)
   try {
     buildPrompt(rules, src.dir, buildDts(rules, src.dir))

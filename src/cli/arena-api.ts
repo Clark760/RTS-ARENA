@@ -33,7 +33,7 @@ interface Run {
 const metaCache = new Map<string, { mtime: number; meta: { name: string; players: { min: number; max: number }; teams: boolean } }>()
 
 async function rulesetMeta(src: RulesetRef) {
-  const mtime = src.builtin ? 0 : statSync(join(src.dir, "index.ts")).mtimeMs
+  const mtime = statSync(join(src.dir, "index.ts")).mtimeMs
   const hit = metaCache.get(src.dir)
   if (hit && hit.mtime === mtime) return hit.meta
   const r = await loadRulesetRef(src)
@@ -115,7 +115,7 @@ export function createArenaApi(opts: ArenaApiOptions): (req: IncomingMessage, re
       const broken: string[] = []
       for (const src of refs) {
         try {
-          rulesets.push({ id: src.ref, ...(await rulesetMeta(src)), bots: knownBots(src), sandboxed: !src.builtin })
+          rulesets.push({ id: src.ref, ...(await rulesetMeta(src)), bots: knownBots(src), external: !src.builtin })
         } catch (e) {
           broken.push(`${src.ref}：${(e as Error).message}`)
         }

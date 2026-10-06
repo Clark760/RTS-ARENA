@@ -15,8 +15,8 @@ export function listRulesets(): string[] {
 }
 
 /**
- * 一个规则包在哪：平台自带的（按名字，可信代码，直接在 Node 里跑），
- * 或者某个目录（别人写的，在沙箱里跑）。
+ * 一个规则包在哪：平台自带的（按名字引用，在仓库的 rulesets/<id>/），或者某个目录（按路径引用）。
+ * 两种都在沙箱里跑（D-123）。
  */
 export interface RulesetRef {
   /** 用户写的名字或路径（原样，传给子进程时用） */
@@ -44,7 +44,10 @@ export function rulesetHint(ref: string): string {
   return `没有规则包 "${ref}"。平台自带的：${listRulesets().join("、")}；自己写的规则包写目录路径（如 ./my-rules）`
 }
 
-/** 按名字加载平台自带的规则包；没有时抛错 */
+/**
+ * 不经过沙箱、直接导入平台自带的规则包。命令行和对战页都不用它（规则包一律进沙箱），
+ * 只给测试（比较两种跑法结果一样）和调数值的开发脚本用
+ */
 export async function importRuleset(id: string): Promise<Ruleset> {
   if (!listRulesets().includes(id)) throw new Error(rulesetHint(id))
   const file = join(CODE_ROOT, "rulesets", id, `index${CODE_EXT}`)
@@ -52,12 +55,12 @@ export async function importRuleset(id: string): Promise<Ruleset> {
   return mod.default
 }
 
-/** 加载规则包：自带的直接导入，目录里的在沙箱里加载 */
+/** 加载规则包：自带的和目录里的都在沙箱里加载 */
 export async function loadRulesetRef(r: RulesetRef): Promise<Ruleset> {
-  if (r.builtin) return importRuleset(r.ref)
   for (const f of ["objectives.ts", "RULES.md"]) if (!existsSync(join(r.dir, f))) throw new Error(`规则包目录 ${r.ref} 里缺少 ${f}`)
   const rules = await loadSandboxedRuleset(r.dir)
-  if (listRulesets().includes(rules.id)) throw new Error(`规则包 ${r.ref} 的 id "${rules.id}" 和平台自带的规则包重名，换一个 id`)
+  if (r.builtin && rules.id !== r.ref) throw new Error(`平台自带的规则包 ${r.ref} 的 id 写成了 "${rules.id}"，要和目录名一样`)
+  if (!r.builtin && listRulesets().includes(rules.id)) throw new Error(`规则包 ${r.ref} 的 id "${rules.id}" 和平台自带的规则包重名，换一个 id`)
   return rules
 }
 

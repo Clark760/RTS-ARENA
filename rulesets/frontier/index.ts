@@ -47,7 +47,7 @@ function valueOf(type: string, finished: boolean): number {
 
 function baseHp(ctx: RuleContext, p: number): number {
   let hp = 0
-  for (const e of ctx.entities()) if (e.owner === p && e.type === "base") hp += e.hp
+  for (const e of ctx.entities({ owner: p, type: "base" })) hp += e.hp
   return hp
 }
 

@@ -1,6 +1,6 @@
 # 写规则包
 
-规则包决定一种玩法：地图、单位数值、开局、怎么计分、怎么判胜负。平台负责其余的一切（移动、战斗、采集、建造、视野、bot 沙箱、回放）。自己写的规则包放在任意目录，用路径引用，平台在沙箱里运行它。
+规则包决定一种玩法：地图、单位数值、开局、怎么计分、怎么判胜负。平台负责其余的一切（移动、战斗、采集、建造、视野、bot 沙箱、回放）。自己写的规则包放在任意目录，用路径引用。所有规则包（包括平台自带的）都在沙箱里运行。
 
 ## 目录
 
@@ -66,7 +66,7 @@ export default ruleset
 `setup(ctx)` 拿到的是 `SetupContext`，其余回调拿到的是 `RuleContext`（定义都在 `src/core/types.ts`）：
 
 - 只能在 setup 里用：`setTerrain(rows)`（每行一个字符串，只能调一次）、`spawn(type, owner, x, y, { amount })`（位置被占会抛错）、`setResources(player, { gold: 200 })`。
-- 读：`tick`、`maxTicks`、`playerCount`、`teams`、`isAlly(a, b)`、`width`、`height`、`entities()`（按创建顺序）、`get(id)`、`entitiesIn(x, y, w, h)`、`players`（分数、资源、是否在场）、`events`（本 tick 的 died、created、deposit、built）、`dist(a, b)`。
+- 读：`tick`、`maxTicks`、`playerCount`、`teams`、`isAlly(a, b)`、`width`、`height`、`entities()`（按创建顺序；可以筛选：`entities({ owner: 0, type: "base", kind: "building" })`，不写的项不限）、`get(id)`、`entitiesIn(x, y, w, h)`、`players`（分数、资源、是否在场）、`events`（本 tick 的 died、created、deposit、built）、`dist(a, b)`。
 - 写：`addScore`、`setScore`、`addResource`、`spawnNear`（找空位刷实体，找不到返回 null）、`remove(id)`、`eliminate(player)`（出局：不再调用他的 bot，实体留着，要清掉自己 remove）、`setMarkers`（回放里的区域、文字）、`setStatus`（回放顶部的一行字）。
 - 随机数用 `ctx.rng`（`next()`、`int(n)`、`shuffle(arr)`），同一个种子结果完全一样。`Math.random` 也按种子确定，但在 setup 之前（规则包的顶层代码里）每局都一样，推荐只用 `ctx.rng`。
 - 分数 `players[i].score` 的含义由你定，在 RULES.md 里写清楚；bot 能在 `view.players` 里看到每个人的分数。
@@ -80,7 +80,8 @@ export default ruleset
 - 没有 Date、网络、文件、定时器。`console.log` 打到命令行的标准错误（每次回调最多 20 行，整局 2000 行），调试用。
 - 燃料（1 燃料约 5000 次简单循环）：加载 2000，setup 4000，onTick 和 result 每次各 400，objectives 每次 100，timeUp 1000。每次回调墙钟 2 秒（加载、setup 10 秒），整局累计 120 秒；内存 256 MB。超了就算规则包出错，这一局作废，命令行会说是哪个回调、第几 tick。
 - 上限：地图边长 256，玩家 8 人，实体 5000 个，类型 64 种，bot 燃料每次最多 2000；建议上限（地图 128、4 人、600 个实体……）超了只提醒，见 `rts-arena check` 的输出。
-- `entities()`、`get()`、`players` 拿到的是快照：改字段没用，存起来下一 tick 也不会更新，每 tick 重新取。同一 tick 里的几次回调共用一份快照，第一次取全部实体要把它们传进沙箱（几百个实体约 0.3 毫秒），所以每 tick 先 `const all = ctx.entities()` 再自己筛，比反复调用 `entitiesIn` 不慢。
+- `entities()`、`get()`、`players` 拿到的是快照：改字段没用，存起来下一 tick 也不会更新，每 tick 重新取。
+- 速度：取全部实体要把它们都传进沙箱（几百个实体约 0.3 毫秒），同一 tick 里的几次回调共用这一份。只关心某些实体时用筛选（`entities({ owner, type, kind })`）或 `entitiesIn`：没取过全部实体时，筛选在沙箱外面做，只传筛出来的，快得多。每 tick 找主基地这种事一定要用筛选。
 - `objectives` 的返回值要能转成 JSON，最多 6.4 万字；`result` / `timeUp` 返回 `{ winner, reason }`（可选 `winners`、`ranking`），格式不对会报错。
 
 ## 写好之后

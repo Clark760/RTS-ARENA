@@ -1,4 +1,4 @@
-// 沙箱里的规则包（别人写的、大模型写的规则包都在这里跑；平台自带的规则包是可信代码，直接在 Node 里跑）。
+// 沙箱里的规则包。所有规则包都在这里跑（平台自带的、别人写的、大模型写的一视同仁，D-123）。
 // - 隔离：整个规则包一个独立的 WebAssembly 实例和内存；每局新开一个 QuickJS 上下文重新加载规则包，
 //   规则包顶层变量里的状态不会带到下一局。
 // - 导入：只能 import 规则包自己目录里的文件和平台的 "rts-arena/standard"（rulesets/common/standard.ts）；import type 随便写。
@@ -413,6 +413,16 @@ class RulesBox {
         return undefined
       },
       entities: () => s(JSON.stringify(w().entities().map(entJson))),
+      entitiesWhere: (h) => {
+        const f = json(h, "筛选条件", 1000) as Record<string, unknown> | null
+        if (f === null || typeof f !== "object") throw new Error("entities 的筛选条件要写成 { owner, type, kind }")
+        const owner = f.owner === undefined ? undefined : Number.isInteger(f.owner) ? (f.owner as number) : NaN
+        const type = f.type === undefined || typeof f.type === "string" ? (f.type as string | undefined) : null
+        const kind = f.kind === undefined || ["unit", "building", "resource"].includes(f.kind as string) ? (f.kind as "unit" | undefined) : null
+        if (Number.isNaN(owner) || type === null || kind === null) throw new Error("entities 的筛选条件：owner 要是整数，type 要是字符串，kind 要是 unit、building、resource")
+        return s(JSON.stringify(w().entities({ owner, type, kind }).map(entJson)))
+      },
+      entitiesIn: (x, y, ww, hh) => s(JSON.stringify(w().entitiesIn(num(x, "x"), num(y, "y"), num(ww, "w"), num(hh, "h")).map(entJson))),
       players: () => s(JSON.stringify(w().players.map((p) => ({ id: p.id, name: p.name, alive: p.alive, score: p.score, resources: p.resources })))),
       events: () => s(JSON.stringify(w().events)),
       addScore: (p, v) => {

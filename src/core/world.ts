@@ -5,6 +5,7 @@ import { PathFinder } from "./path.ts"
 import { markSight, rectSeen } from "./vision.ts"
 import { Mulberry32, mixSeed } from "./rng.ts"
 import type {
+  EntityFilter,
   EntityState,
   Marker,
   MatchResult,
@@ -418,8 +419,11 @@ export class World implements SetupContext, RuleContext {
   }
 
   /** 按创建顺序 */
-  entities(): readonly EntityState[] {
-    return [...this.ents.values()]
+  entities(filter?: EntityFilter): readonly EntityState[] {
+    const all = [...this.ents.values()]
+    if (!filter) return all
+    const { owner, type, kind } = filter
+    return all.filter((e) => (owner === undefined || e.owner === owner) && (type === undefined || e.type === type) && (kind === undefined || e.def.kind === kind))
   }
 
   get(id: number): EntityState | undefined {
