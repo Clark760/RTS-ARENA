@@ -1,1 +1,3 @@
 * text=auto eol=lf
+# 批处理文件要 CRLF，仓库里也存 CRLF（单独下载 start.bat 时也能用）
+*.bat -text

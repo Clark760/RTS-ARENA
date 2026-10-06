@@ -4,3 +4,4 @@ replays/
 viewer/dist/
 *.log
 dist/
+/my-bot/

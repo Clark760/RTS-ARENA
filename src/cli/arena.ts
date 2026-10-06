@@ -18,7 +18,7 @@ const HELP = `用法：rts-arena <命令> [参数]
   init                                  在 bot 目录里重新生成说明书和接口（平台升级后跑一次），不动 bot.ts
   check [--ticks N]                     检查自己的 bot：类型检查 + 在每个位置上和不动的对手试打 N tick（默认 300）
   run [对手...] [选项]                  自己的 bot 打对手（不写就打 baseline），回放和日志写到 ./replays
-  view [回放目录] [--port N]            网页播放器（默认看 ./replays，端口 5180）
+  view [回放目录] [--port N] [--open]   网页播放器（默认看 ./replays，端口 5180；--open 起来后打开浏览器）
 
 在任何目录：
   list                                  列出规则包和现成的 bot
@@ -64,7 +64,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   docs: { out: false },
   run: { seed: false, games: false, out: false, teams: false, "no-check": true, json: true },
   check: { ticks: false },
-  view: { port: false },
+  view: { port: false, open: true },
 }
 
 function parseArgs(command: string | undefined, argv: string[]): { pos: string[]; opt: Record<string, string | true> } {
@@ -494,10 +494,10 @@ async function cmdInit(pos: string[]): Promise<void> {
   const created = !existsSync(join(dir, bot))
   if (created) writeFileSync(join(dir, bot), BOT_TEMPLATE)
   if (!existsSync(join(dir, ".gitignore"))) writeFileSync(join(dir, ".gitignore"), "replays/\n")
-  const where = dir === "." ? "当前目录" : dir
+  const where = dir === "." ? "当前目录" : ` ${dir} `
   if (created) {
-    const cd = dir === "." ? "" : `cd ${dir} 后，`
-    console.log(`已在${where}建好「${rules.name}」的 bot 目录。先读 PROMPT.md，改 ${bot}，然后${cd}：`)
+    const at = dir === "." ? "" : `在 ${dir} 里`
+    console.log(`已在${where}建好「${rules.name}」的 bot 目录。先读 PROMPT.md，改 ${bot}，然后${at}运行：`)
     console.log(`  rts-arena check              检查`)
     console.log(`  rts-arena run --games 10     和基准 bot 打 10 局`)
     console.log(`  rts-arena view               看回放`)
@@ -544,7 +544,7 @@ async function main(): Promise<void> {
       const port = typeof opt.port === "string" ? Number(opt.port) : 5180
       if (!Number.isInteger(port) || port < 1 || port > 65535) fail("--port 要是 1~65535 的整数")
       // 对战页在后台用 node 执行同一个命令入口来跑比赛
-      serveViewer(pos[0] ?? "replays", port, process.argv[1])
+      serveViewer(pos[0] ?? "replays", port, process.argv[1], opt.open === true)
       return
     }
     default:
