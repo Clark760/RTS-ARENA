@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "rewriteRelativeImportExtensions": true,
+    "outDir": "dist",
+    "rootDir": ".",
+    "types": ["node"],
+    "sourceMap": false,
+    "declaration": false
+  },
+  "include": ["src", "rulesets"],
+  "exclude": ["src/api/bot-globals.d.ts", "src/cli/bench.ts", "src/cli/balance.ts"]
+}

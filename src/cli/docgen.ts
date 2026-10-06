@@ -2,14 +2,16 @@
 import { spawnSync } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { createRequire } from "node:module"
+import { tmpdir } from "node:os"
+import { dirname, join, resolve } from "node:path"
 import { resolveType } from "../core/world.ts"
 import type { Ruleset } from "../core/types.ts"
+import { PKG_ROOT } from "../paths.ts"
 
-const ROOT = join(import.meta.dirname, "..", "..")
-
+/** 规则包的文本资源（RULES.md、objectives.ts）所在目录 */
 export function rulesetDir(id: string): string {
-  return join(ROOT, "rulesets", id)
+  return join(PKG_ROOT, "rulesets", id)
 }
 
 /** 去掉行首的 export，让类型成为全局声明 */
@@ -22,8 +24,8 @@ function literalUnion(names: string[]): string {
 }
 
 export function buildDts(rules: Ruleset): string {
-  const api = readFileSync(join(ROOT, "src", "api", "bot-api.ts"), "utf8")
-  const globals = readFileSync(join(ROOT, "src", "api", "bot-globals.d.ts"), "utf8")
+  const api = readFileSync(join(PKG_ROOT, "src", "api", "bot-api.ts"), "utf8")
+  const globals = readFileSync(join(PKG_ROOT, "src", "api", "bot-globals.d.ts"), "utf8")
   const objPath = join(rulesetDir(rules.id), "objectives.ts")
   if (!existsSync(objPath)) throw new Error(`规则包 ${rules.id} 缺少 objectives.ts`)
   const objectives = readFileSync(objPath, "utf8")
@@ -95,7 +97,7 @@ export function unitTable(rules: Ruleset): string {
 
 export function buildPrompt(rules: Ruleset, dts: string): string {
   const rulesMd = readFileSync(join(rulesetDir(rules.id), "RULES.md"), "utf8").trim()
-  const platform = readFileSync(join(ROOT, "src", "api", "PLATFORM.md"), "utf8").trim()
+  const platform = readFileSync(join(PKG_ROOT, "src", "api", "PLATFORM.md"), "utf8").trim()
   const terrain = Object.entries(rules.terrain)
     .map(([ch, t]) => `\`${ch}\` ${t.walkable ? "可通行" : "不可通行"}`)
     .join("，")
@@ -164,8 +166,8 @@ export function botTsconfig(files: string[]): string {
 
 /** 用 tsc 检查 bot；返回错误输出，没有错误返回空字符串 */
 export function typecheck(rules: Ruleset, files: string[]): string {
-  // 每次一个目录：几个 agent 同时跑 check / run 不会互相覆盖
-  const dir = join(ROOT, "out", "check", `${rules.id}-${process.pid}-${randomBytes(3).toString("hex")}`)
+  // 每次一个临时目录：几个 agent 同时跑 check / run 不会互相覆盖
+  const dir = join(tmpdir(), "rts-arena-check", `${rules.id}-${process.pid}-${randomBytes(3).toString("hex")}`)
   mkdirSync(dir, { recursive: true })
   try {
     return runTsc(rules, files, dir)
@@ -177,7 +179,8 @@ export function typecheck(rules: Ruleset, files: string[]): string {
 function runTsc(rules: Ruleset, files: string[], dir: string): string {
   writeFileSync(join(dir, "arena.d.ts"), buildDts(rules))
   writeFileSync(join(dir, "tsconfig.json"), botTsconfig(["arena.d.ts", ...files.map((f) => resolve(f))]))
-  const tsc = join(ROOT, "node_modules", "typescript", "bin", "tsc")
+  // typescript 装在哪都行（平台的 node_modules 里，或者被提升到上层）
+  const tsc = join(dirname(createRequire(import.meta.url).resolve("typescript/package.json")), "bin", "tsc")
   const r = spawnSync(process.execPath, [tsc, "-p", join(dir, "tsconfig.json"), "--pretty", "false"], { encoding: "utf8" })
   return r.status === 0 ? "" : (r.stdout + r.stderr).trim()
 }

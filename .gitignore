@@ -3,3 +3,4 @@ out/
 replays/
 viewer/dist/
 *.log
+dist/

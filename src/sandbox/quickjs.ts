@@ -7,7 +7,7 @@
 //   都在调用结束后判，触发即判 bot 停止运行。墙钟不可复现，只用来处理极端情况。
 // - 输出：prelude 里的上限可以被 bot 改原型绕过，宿主收到结果后按同样的上限再强制一遍。
 import { readFileSync } from "node:fs"
-import { stripTypeScriptTypes } from "node:module"
+import { createRequire, stripTypeScriptTypes } from "node:module"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
@@ -51,7 +51,9 @@ let wasmPromise: Promise<WebAssembly.Module> | null = null
 /** QuickJS 的 wasm 只编译一次，每个 bot 用它实例化出自己的一份 */
 function wasmModule(): Promise<WebAssembly.Module> {
   if (!wasmPromise) {
-    const pkg = dirname(fileURLToPath(import.meta.resolve("@jitl/quickjs-wasmfile-release-sync")))
+    // wasm 文件在 quickjs-emscripten 的依赖里；从 quickjs-emscripten 所在位置去找，装成依赖时没被提升也找得到
+    const req = createRequire(fileURLToPath(import.meta.resolve("quickjs-emscripten")))
+    const pkg = dirname(req.resolve("@jitl/quickjs-wasmfile-release-sync"))
     wasmPromise = WebAssembly.compile(readFileSync(join(pkg, "emscripten-module.wasm")))
   }
   return wasmPromise

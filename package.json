@@ -1,9 +1,23 @@
 {
   "name": "rts-arena",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "大模型写 TypeScript 脚本进行即时战略对战的平台",
+  "description": "大模型写 TypeScript 脚本进行即时战略对战的平台：本地命令 rts-arena",
+  "bin": {
+    "rts-arena": "bin/rts-arena.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "src",
+    "rulesets",
+    "bots",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=23.6"
+  },
   "scripts": {
     "arena": "node src/cli/arena.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -11,13 +25,17 @@
     "bench": "node src/cli/bench.ts",
     "balance": "node src/cli/balance.ts",
     "viewer": "vite viewer",
-    "viewer:build": "vite build viewer"
+    "viewer:build": "vite build viewer",
+    "build": "tsc -p tsconfig.build.json && vite build viewer --outDir ../dist/viewer --emptyOutDir",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "quickjs-emscripten": "0.32.0",
+    "typescript": "^7.0.2"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
     "pixi.js": "^8.22.0",
-    "quickjs-emscripten": "^0.32.0",
-    "typescript": "^7.0.2",
     "vite": "^8.3.3"
   }
 }

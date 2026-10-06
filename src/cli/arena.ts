@@ -1,4 +1,4 @@
-// 命令行入口：npm run arena -- <命令> ...
+// 命令行入口：rts-arena <命令> ...（在平台仓库里开发时等价于 npm run arena -- <命令> ...）
 import { randomBytes } from "node:crypto"
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { basename, dirname, join, relative, resolve } from "node:path"
@@ -8,22 +8,31 @@ import { runMatch, type MatchBot } from "../core/match.ts"
 import { mixSeed } from "../core/rng.ts"
 import type { Replay, Ruleset } from "../core/types.ts"
 import { compileBot, createBot } from "../sandbox/quickjs.ts"
-import { botTsconfig, buildDts, buildPrompt, rulesetDir, typecheck } from "./docgen.ts"
+import { botTsconfig, buildDts, buildPrompt, typecheck } from "./docgen.ts"
+import { serveViewer } from "./serve.ts"
+import { CODE_EXT, CODE_ROOT, PKG_ROOT } from "../paths.ts"
 
-const ROOT = join(import.meta.dirname, "..", "..")
-const HELP = `用法：npm run arena -- <命令> [参数]
+const HELP = `用法：rts-arena <命令> [参数]
 
-  list                                  列出规则包
-  docs  <规则包> [--out 目录]            生成 arena.d.ts 和 PROMPT.md（默认 out/<规则包>/）
-  init  <规则包> <目录>                  建一个 bot 工作目录：arena.d.ts、PROMPT.md、tsconfig.json、bot.ts 模板
-  check <规则包> <bot>... [--ticks N]    类型检查 + 在每个位置上和不动的对手试打 N tick（默认 300）
-  run   <规则包> <bot>... [选项]         打一局（或多局），写回放
+在 bot 目录里（有 arena.json 的目录，用 init 建）：
+  init <规则包> [目录]                   建 bot 目录（默认当前目录）：arena.json、bot.ts 模板、PROMPT.md、arena.d.ts、tsconfig.json
+  init                                  在 bot 目录里重新生成说明书和接口（平台升级后跑一次），不动 bot.ts
+  check [--ticks N]                     检查自己的 bot：类型检查 + 在每个位置上和不动的对手试打 N tick（默认 300）
+  run [对手...] [选项]                  自己的 bot 打对手（不写就打 baseline），回放和日志写到 ./replays
+  view [回放目录] [--port N]            网页播放器（默认看 ./replays，端口 5180）
+
+在任何目录：
+  list                                  列出规则包和现成的 bot
+  docs  <规则包> [--out 目录]            生成 arena.d.ts 和 PROMPT.md（默认 ./out/<规则包>/）
+  check <规则包> <bot>... [--ticks N]    检查指定的 bot
+  run   <规则包> <bot>... [选项]         指定所有参赛 bot 打一局（或多局）
 
   <bot> 可以是文件路径，也可以是现成 bot 的名字：baseline（每个规则包的基准 bot）、idle（不动）等，见 list
+run 的选项：
         --seed N      种子（默认随机）
         --games N     连打 N 局，最后报胜率；同一个种子把各方的位置轮换一遍（两人局就是换边各打一次）
         --teams 2v2   分队（规则包要支持），按给出的 bot 顺序分组：2v2 就是前 2 个一队、后 2 个一队
-        --out 路径    回放目录，默认 replays/；单局时也可以给 .json 文件名
+        --out 路径    回放目录，默认 ./replays；单局时也可以给 .json 文件名
         --no-check    跳过类型检查
 `
 
@@ -37,6 +46,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   docs: { out: false },
   run: { seed: false, games: false, out: false, teams: false, "no-check": true },
   check: { ticks: false },
+  view: { port: false },
 }
 
 function parseArgs(command: string | undefined, argv: string[]): { pos: string[]; opt: Record<string, string | true> } {
@@ -65,18 +75,54 @@ function parseArgs(command: string | undefined, argv: string[]): { pos: string[]
 }
 
 function listRulesets(): string[] {
-  const dir = join(ROOT, "rulesets")
+  const dir = join(PKG_ROOT, "rulesets")
   return readdirSync(dir, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && existsSync(join(dir, d.name, "index.ts")))
+    .filter((d) => d.isDirectory() && existsSync(join(dir, d.name, "RULES.md")))
     .map((d) => d.name)
 }
 
 async function loadRuleset(id: string | undefined): Promise<Ruleset> {
   if (!id) fail("缺少规则包名。可用的：" + listRulesets().join("、"))
-  const file = join(rulesetDir(id), "index.ts")
-  if (!existsSync(file)) fail(`没有规则包 "${id}"。可用的：${listRulesets().join("、")}`)
+  if (!listRulesets().includes(id)) fail(`没有规则包 "${id}"。可用的：${listRulesets().join("、")}`)
+  const file = join(CODE_ROOT, "rulesets", id, `index${CODE_EXT}`)
   const mod = (await import(pathToFileURL(file).href)) as { default: Ruleset }
   return mod.default
+}
+
+/** bot 目录里的 arena.json */
+interface Workspace {
+  ruleset: string
+  bot: string
+}
+
+const WORKSPACE_FILE = "arena.json"
+
+function readWorkspace(): Workspace | null {
+  if (!existsSync(WORKSPACE_FILE)) return null
+  try {
+    const w = JSON.parse(readFileSync(WORKSPACE_FILE, "utf8")) as Partial<Workspace>
+    if (typeof w.ruleset !== "string" || typeof w.bot !== "string") fail(`${WORKSPACE_FILE} 里要有 ruleset 和 bot 两个字符串字段`)
+    return w as Workspace
+  } catch (e) {
+    fail(`${WORKSPACE_FILE} 读不出来：${(e as Error).message}`)
+  }
+}
+
+/**
+ * check / run 的两种写法：第一个参数是规则包名，就是"指定所有 bot"；
+ * 否则在 bot 目录里，规则包和自己的 bot 从 arena.json 读，参数是对手。
+ */
+async function target(pos: string[], command: string): Promise<{ rules: Ruleset; bots: string[]; mine: boolean }> {
+  if (pos[0] !== undefined && listRulesets().includes(pos[0])) return { rules: await loadRuleset(pos[0]), bots: pos.slice(1), mine: false }
+  const ws = readWorkspace()
+  if (!ws)
+    fail(
+      pos.length === 0
+        ? `当前目录不是 bot 目录（没有 ${WORKSPACE_FILE}）。先 rts-arena init <规则包>，或者写成 rts-arena ${command} <规则包> <bot>...`
+        : `"${pos[0]}" 不是规则包名，当前目录也不是 bot 目录（没有 ${WORKSPACE_FILE}）。可用的规则包：${listRulesets().join("、")}`,
+    )
+  if (!existsSync(ws.bot)) fail(`${WORKSPACE_FILE} 里写的 bot 文件 ${ws.bot} 不存在`)
+  return { rules: await loadRuleset(ws.ruleset), bots: [ws.bot, ...pos], mine: true }
 }
 
 function writeDocs(rules: Ruleset, dir: string): void {
@@ -107,7 +153,7 @@ function botNames(files: string[]): Map<string, string> {
 /** 规则包能用的现成 bot：bots/<规则包>/*.ts 和通用的 bots/*.ts */
 function knownBots(id: string): string[] {
   const list = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".ts")).map((f) => f.slice(0, -3)) : [])
-  return [...new Set([...list(join(ROOT, "bots", id)), ...list(join(ROOT, "bots"))])]
+  return [...new Set([...list(join(PKG_ROOT, "bots", id)), ...list(join(PKG_ROOT, "bots"))])]
 }
 
 /** bot 参数可以是文件路径，也可以是现成 bot 的名字（如 baseline、idle） */
@@ -115,7 +161,7 @@ function resolveBots(rules: Ruleset, args: string[]): string[] {
   return args.map((a) => {
     if (existsSync(a)) return a
     if (/^[\w-]+$/.test(a)) {
-      for (const f of [join(ROOT, "bots", rules.id, `${a}.ts`), join(ROOT, "bots", `${a}.ts`)])
+      for (const f of [join(PKG_ROOT, "bots", rules.id, `${a}.ts`), join(PKG_ROOT, "bots", `${a}.ts`)])
         if (existsSync(f)) return relative(process.cwd(), f)
     }
     fail(`找不到 bot "${a}"：既不是文件，也不是「${rules.name}」的现成 bot（${knownBots(rules.id).join("、")}）`)
@@ -215,7 +261,7 @@ async function cmdRun(rules: Ruleset, args: string[], opt: Record<string, string
     let file: string
     // --out 以 .json 结尾是单局的回放文件名，否则是目录
     if (games === 1 && outOpt?.endsWith(".json")) file = outOpt
-    else file = join(outOpt ?? join(ROOT, "replays"), `${rules.id}-${stamp()}-${runId}-s${seed}${games > 1 ? `-g${g + 1}` : ""}.json`)
+    else file = join(outOpt ?? "replays", `${rules.id}-${stamp()}-${runId}-s${seed}${games > 1 ? `-g${g + 1}` : ""}.json`)
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, JSON.stringify(replay))
     const lineup =
@@ -375,6 +421,37 @@ export function onTick(view: View, cmd: Commands): void {
 }
 `
 
+/** 建 bot 目录，或者在已有的 bot 目录里更新说明书 */
+async function cmdInit(pos: string[]): Promise<void> {
+  let id = pos[0]
+  let dir = pos[1] ?? "."
+  if (id === undefined) {
+    // 不带参数：更新当前 bot 目录
+    const ws = readWorkspace() ?? fail(`用法：rts-arena init <规则包> [目录]。可用的规则包：${listRulesets().join("、")}`)
+    id = ws.ruleset
+    dir = "."
+  }
+  const rules = await loadRuleset(id)
+  mkdirSync(dir, { recursive: true })
+  const wsFile = join(dir, WORKSPACE_FILE)
+  const old = existsSync(wsFile) ? (JSON.parse(readFileSync(wsFile, "utf8")) as Partial<Workspace>) : {}
+  const bot = old.bot ?? "bot.ts"
+  writeFileSync(wsFile, JSON.stringify({ ruleset: rules.id, bot }, null, 2) + "\n")
+  writeDocs(rules, dir)
+  writeFileSync(join(dir, "tsconfig.json"), botTsconfig(["arena.d.ts", bot]))
+  const created = !existsSync(join(dir, bot))
+  if (created) writeFileSync(join(dir, bot), BOT_TEMPLATE)
+  if (!existsSync(join(dir, ".gitignore"))) writeFileSync(join(dir, ".gitignore"), "replays/\n")
+  const where = dir === "." ? "当前目录" : dir
+  if (created) {
+    const cd = dir === "." ? "" : `cd ${dir} 后，`
+    console.log(`已在${where}建好「${rules.name}」的 bot 目录。先读 PROMPT.md，改 ${bot}，然后${cd}：`)
+    console.log(`  rts-arena check              检查`)
+    console.log(`  rts-arena run --games 10     和基准 bot 打 10 局`)
+    console.log(`  rts-arena view               看回放`)
+  } else console.log(`已更新${where}的说明书和接口（「${rules.name}」），${bot} 没动`)
+}
+
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2)
   const { pos, opt } = parseArgs(command, rest)
@@ -388,29 +465,32 @@ async function main(): Promise<void> {
     }
     case "docs": {
       const rules = await loadRuleset(pos[0])
-      const dir = typeof opt.out === "string" ? opt.out : join(ROOT, "out", rules.id)
+      const dir = typeof opt.out === "string" ? opt.out : join("out", rules.id)
       writeDocs(rules, dir)
       console.log(`已生成 ${relative(process.cwd(), join(dir, "arena.d.ts"))} 和 PROMPT.md`)
       return
     }
     case "init": {
-      const rules = await loadRuleset(pos[0])
-      const dir = pos[1] ?? fail("缺少目录")
-      writeDocs(rules, dir)
-      writeFileSync(join(dir, "tsconfig.json"), botTsconfig(["arena.d.ts", "bot.ts"]))
-      if (!existsSync(join(dir, "bot.ts"))) writeFileSync(join(dir, "bot.ts"), BOT_TEMPLATE)
-      console.log(`已建好 ${dir}：先读 PROMPT.md，改 bot.ts，然后 npm run arena -- check ${rules.id} ${join(dir, "bot.ts")}`)
+      await cmdInit(pos)
       return
     }
     case "check": {
-      const rules = await loadRuleset(pos[0])
-      if (pos.length < 2) fail("缺少 bot 文件")
-      await cmdCheck(rules, pos.slice(1), opt)
+      const t = await target(pos, "check")
+      if (t.bots.length === 0) fail("缺少 bot 文件")
+      await cmdCheck(t.rules, t.bots, opt)
       return
     }
     case "run": {
-      const rules = await loadRuleset(pos[0])
-      await cmdRun(rules, pos.slice(1), opt)
+      const t = await target(pos, "run")
+      // bot 目录里不写对手：打基准 bot，人数不够就都补基准
+      if (t.mine && t.bots.length === 1) while (t.bots.length < t.rules.players.min) t.bots.push("baseline")
+      await cmdRun(t.rules, t.bots, opt)
+      return
+    }
+    case "view": {
+      const port = typeof opt.port === "string" ? Number(opt.port) : 5180
+      if (!Number.isInteger(port) || port < 1 || port > 65535) fail("--port 要是 1~65535 的整数")
+      serveViewer(pos[0] ?? "replays", port)
       return
     }
     default:
