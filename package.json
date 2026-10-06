@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test \"test/**/*.test.ts\"",
     "bench": "node src/cli/bench.ts",
+    "balance": "node src/cli/balance.ts",
     "viewer": "vite viewer",
     "viewer:build": "vite build viewer"
   },

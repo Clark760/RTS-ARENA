@@ -50,14 +50,16 @@ export function standardTypes(): Record<string, TypeSpec> {
       attack: { damage: 10, range: 1, cooldown: 8 },
       look: { shape: "diamond", label: "战" },
     },
+    // 弓手和战士输出（每 tick 1.25）、造兵时间相同，血少一半、贵 5 金，换来 4 格射程：
+    // 纯弓手打不过纯战士（要有前排），战士在前、弓手在后的混编比纯战士强（doc/设计.md「单位数值」有实验数据）
     archer: {
       kind: "unit",
       maxHp: 60,
-      cost: { gold: 90 },
-      buildTicks: 70,
+      cost: { gold: 80 },
+      buildTicks: 60,
       moveTicks: 3,
       sight: 7,
-      attack: { damage: 8, range: 4, cooldown: 10 },
+      attack: { damage: 10, range: 4, cooldown: 8 },
       look: { shape: "triangle", label: "弓" },
     },
     goldmine: {

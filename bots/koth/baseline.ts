@@ -1,5 +1,6 @@
 // 夺点的基准 bot：用来衡量新 bot 的标准对手。
-// - 经济、生产和歼灭的基准 bot 相同：工人优先补到 10 个，之后兵营不停地出战士，工人按"离主基地近、人少"分配到金矿。
+// - 经济和歼灭的基准 bot 相同：工人优先补到 10 个，工人按"离主基地近、人少"分配到金矿。
+// - 生产：兵营不停地出兵，开局先出 6 个战士顶住前期冲锋（弓手太脆），之后战士、弓手交替。
 // - 防守：主基地 12 格、兵营 9 格、工人 5 格内出现敌方单位就全军回防；兵不够时附近的工人也上。
 // - 占点：兵凑够 3 个、而且不少于估计的对方兵力（记住看到过、还没死的敌方兵）就去控制点，在点里分散站位，
 //   打靠近控制点、进入自己视野的敌人（射程内打血最少的战斗单位）。对方兵多时退回家门口：那里有工人帮忙、援兵也近。
@@ -11,6 +12,8 @@ const ALL_IN_WITHIN = 250
 const MAX_WORKERS = 11
 const MAX_PER_MINE = 3
 const ECO_FIRST = 10
+const OPENING_SOLDIERS = 6
+const PLAN: TypeName[] = ["soldier", "archer"]
 /** 打离控制点这么近的敌人 */
 const ZONE_GUARD = 8
 
@@ -107,9 +110,12 @@ export function onTick(view: View, cmd: Commands): void {
     cmd.produce(base, "worker")
     gold -= 50
   }
-  if (barracks && (barracks.queue?.length ?? 0) === 0 && (workers.length >= ECO_FIRST || !baseIdle || gold >= 125) && gold >= 75) {
-    cmd.produce(barracks, "soldier")
-    gold -= 75
+  // 开局先出几个战士顶住前期的冲锋，之后按 PLAN 混编
+  const next: TypeName = produced < OPENING_SOLDIERS ? "soldier" : PLAN[(produced - OPENING_SOLDIERS) % PLAN.length]
+  const cost = game.types[next].cost.gold ?? 0
+  if (barracks && (barracks.queue?.length ?? 0) === 0 && (workers.length >= ECO_FIRST || !baseIdle || gold >= 125) && gold >= cost) {
+    cmd.produce(barracks, next)
+    gold -= cost
     produced++
   }
   if (baseIdle && workers.length >= ECO_FIRST && workers.length < MAX_WORKERS && gold >= 50) {
