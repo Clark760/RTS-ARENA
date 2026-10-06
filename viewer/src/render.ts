@@ -29,6 +29,8 @@ interface EntView {
   start: number
   dur: number
   lastHp: number
+  /** 上次画的建造进度（100 = 建好了） */
+  lastBp: number
 }
 
 export class Renderer {
@@ -173,7 +175,7 @@ export class Renderer {
     const bar = new Graphics()
     root.addChild(bar)
     this.entLayer.addChild(root)
-    this.views.set(e.id, { root, body, bar, w, h, fx: e.x, fy: e.y, x: e.x, y: e.y, start: t, dur: 1, lastHp: -1 })
+    this.views.set(e.id, { root, body, bar, w, h, fx: e.x, fy: e.y, x: e.x, y: e.y, start: t, dur: 1, lastHp: -1, lastBp: -1 })
   }
 
   private drawMarkers(markers: Marker[]): void {
@@ -209,8 +211,11 @@ export class Renderer {
       const py = v.fy + (v.y - v.fy) * p
       v.root.position.set(px * TILE, py * TILE)
       const e = this.state.ents.get(id)
-      if (e && e.hp !== v.lastHp) {
+      if (e && (e.hp !== v.lastHp || (e.bp ?? 100) !== v.lastBp)) {
         v.lastHp = e.hp
+        v.lastBp = e.bp ?? 100
+        // 没建好的建筑画得淡一些
+        v.body.alpha = v.lastBp < 100 ? 0.4 : 1
         this.drawBar(v, e)
       }
     }
@@ -248,8 +253,13 @@ export class Renderer {
     const info = this.replay.types[e.type]
     const g = v.bar.clear()
     const max = info?.kind === "resource" ? null : info?.maxHp
-    if (!max || e.hp >= max) return // 满血不画
     const w = v.w * TILE - 2
+    // 建造进度：底边一条蓝色进度条
+    if (e.bp !== undefined) {
+      g.rect(1, v.h * TILE - 3, w, 2.5).fill(0x000000)
+      g.rect(1, v.h * TILE - 3, (w * e.bp) / 100, 2.5).fill(0x5aa9f2)
+    }
+    if (!max || e.hp >= max) return // 满血不画
     const frac = Math.max(0, e.hp / max)
     g.rect(1, -3, w, 2.5).fill(0x000000)
     g.rect(1, -3, w * frac, 2.5).fill(frac > 0.5 ? 0x6ee36e : frac > 0.25 ? 0xf2c14e : 0xf25f5c)

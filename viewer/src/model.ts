@@ -86,6 +86,13 @@ export function applyFrame(s: State, f: Frame): Delta {
     const e = s.ents.get(id)
     if (e) e.ord = ord
   }
+  const bp = f.bp ?? []
+  for (let i = 0; i < bp.length; i += 2) {
+    const e = s.ents.get(bp[i])
+    if (!e) continue
+    if (bp[i + 1] >= 100) delete e.bp
+    else e.bp = bp[i + 1]
+  }
   for (const id of f.die ?? []) {
     const e = s.ents.get(id)
     if (e) d.died.push(e)

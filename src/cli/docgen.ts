@@ -65,13 +65,17 @@ function costText(cost: Partial<Record<string, number>>): string {
 }
 
 export function unitTable(rules: Ruleset): string {
+  const defs = Object.entries(rules.types).map(([name, spec]) => ({ spec, d: resolveType(name, spec) }))
+  // 有能建造的单位时才加「能建造」一列
+  const building = defs.some(({ d }) => d.builds.length > 0)
   const rows = [
-    "| 类型 | 种类 | 占地 | 生命 | 造价 | 生产用时 | 走一格 | 视野 | 攻击（伤害/射程/冷却） | 采集（每次量/用时/容量） | 交货点 | 能生产 |",
-    "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    `| 类型 | 种类 | 占地 | 生命 | 造价 | ${building ? "生产用时 / 建造工作量" : "生产用时"} | 走一格 | 视野 | 攻击（伤害/射程/冷却） | 采集（每次量/用时/容量） | 交货点 | 能生产 |${building ? " 能建造 |" : ""}`,
+    `|---|---|---|---|---|---|---|---|---|---|---|---|${building ? "---|" : ""}`,
   ]
   const kindText = { unit: "单位", building: "建筑", resource: "资源点" }
-  for (const [name, spec] of Object.entries(rules.types)) {
-    const d = resolveType(name, spec)
+  const buildable = new Set(defs.flatMap(({ d }) => d.builds))
+  for (const { spec, d } of defs) {
+    const name = d.name
     const res = d.kind === "resource" ? `（产 ${d.resource}，储量 ${spec.amount ?? 0}）` : ""
     rows.push(
       [
@@ -88,9 +92,14 @@ export function unitTable(rules: Ruleset): string {
         d.gather ? `${d.gather.amount} / ${d.gather.ticks} / ${d.gather.capacity}` : "—",
         d.dropOff ? "是" : "—",
         d.produces.length ? d.produces.join("、") : "—",
+        ...(building ? [d.builds.length ? d.builds.join("、") : "—"] : []),
         "",
       ].join(" | ").trim(),
     )
+  }
+  if (building) {
+    const names = [...buildable].map((n) => "`" + n + "`").join("、")
+    rows.push("", `能被建造的建筑（${names}）的「建造工作量」：一个工人贴着地基每 tick 干 1，几个工人一起建按人数加快。`)
   }
   return rows.join("\n")
 }

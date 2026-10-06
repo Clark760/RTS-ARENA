@@ -31,6 +31,8 @@ export interface TypeSpec {
   gather?: TypeDef["gather"]
   dropOff?: boolean
   produces?: string[]
+  /** 能建造的建筑类型（只对单位有意义）；建筑的 buildTicks 就是建造工作量 */
+  builds?: string[]
   resource?: string | null
   /** 资源点默认储量（spawn 时可以另给） */
   amount?: number
@@ -63,10 +65,12 @@ export type Marker =
 
 /** 规则包发给自己的事件（本 tick 内发生的） */
 export type RuleEvent =
-  /** killer 是最后一击的玩家，-1 表示没有（如资源采完、规则移除） */
-  | { kind: "died"; id: number; type: string; owner: number; x: number; y: number; killer: number }
+  /** killer 是最后一击的玩家，-1 表示没有（如资源采完、规则移除、拆掉自己的地基）；unfinished 表示死的是没建好的建筑 */
+  | { kind: "died"; id: number; type: string; owner: number; x: number; y: number; killer: number; unfinished?: true }
   | { kind: "created"; id: number; type: string; owner: number }
   | { kind: "deposit"; player: number; resource: string; amount: number; by: number }
+  /** 工人建造的建筑建好了（放下地基时是 created） */
+  | { kind: "built"; id: number; type: string; owner: number }
 
 /** setup 阶段能用的接口 */
 export interface SetupContext {
@@ -180,6 +184,8 @@ export interface EntityState extends Rect {
   order: Order
   carrying: { resource: string; amount: number } | null
   queue: { type: string; ticksLeft: number }[]
+  /** 没建好的建筑：已完成和总工作量；建好的、规则包直接放的都是 null */
+  construction: { done: number; total: number } | null
   attackCd: number
   moveCd: number
   gatherCd: number
@@ -242,6 +248,8 @@ export interface EntSnap {
   /** 资源点为储量 */
   hp: number
   ord: string
+  /** 没建好的建筑：建造进度百分比（0～99） */
+  bp?: number
 }
 
 export interface PlayerSnap {
@@ -269,6 +277,8 @@ export interface Frame {
   /** [攻击者, 目标, ...] */
   shots?: number[]
   ord?: [number, string][]
+  /** [id, 建造进度百分比, ...]；100 表示建好了 */
+  bp?: number[]
   players?: PlayerSnap[]
   markers?: Marker[]
   status?: string

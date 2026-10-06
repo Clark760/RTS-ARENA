@@ -158,7 +158,9 @@ function updateUI(force = false): void {
       const hp = info?.kind === "resource" ? `储量 ${e.hp}` : `${e.hp} / ${info?.maxHp}`
       $("selected").innerHTML = html`<div class="kv"><span class="muted">id</span><span>#${e.id} ${e.type}</span>
         <span class="muted">归属</span><span>${owner}</span><span class="muted">位置</span><span>(${e.x}, ${e.y})</span>
-        <span class="muted">生命</span><span>${hp}</span><span class="muted">命令</span><span>${e.ord}</span></div>`.s
+        <span class="muted">生命</span><span>${hp}</span><span class="muted">命令</span><span>${e.ord}</span>${
+          e.bp === undefined ? "" : html`<span class="muted">建造</span><span>${e.bp}%（还没建好）</span>`
+        }</div>`.s
     }
   }
 

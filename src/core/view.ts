@@ -12,6 +12,7 @@ export function buildView(w: World, p: number): View {
     if (!w.visibleTo(p, e)) continue
     const v: Entity = { id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, w: e.w, h: e.h, hp: e.hp, maxHp: e.def.maxHp }
     if (e.def.kind === "resource") v.amount = e.amount
+    if (e.construction) v.construction = { ...e.construction }
     if (e.owner === p) {
       v.order = copyOrder(e.order)
       if (e.carrying) v.carrying = { ...e.carrying }

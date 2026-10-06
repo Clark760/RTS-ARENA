@@ -16,11 +16,15 @@ export function orderText(e: EntityState): string {
       return `attackMove (${o.x},${o.y})`
     case "gather":
       return o.returning ? `gather #${o.target} 回程` : `gather #${o.target}`
+    case "build":
+      return `build #${o.target}`
   }
 }
 
 function snapOf(e: EntityState): EntSnap {
-  return { id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, hp: e.def.kind === "resource" ? e.amount : e.hp, ord: orderText(e) }
+  const s: EntSnap = { id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, hp: e.def.kind === "resource" ? e.amount : e.hp, ord: orderText(e) }
+  if (e.construction) s.bp = Math.floor((100 * e.construction.done) / e.construction.total)
+  return s
 }
 
 function playerSnaps(w: World): PlayerSnap[] {
@@ -51,6 +55,7 @@ export class Recorder {
     const move: number[] = []
     const hp: number[] = []
     const ord: [number, string][] = []
+    const bp: number[] = []
     for (const e of w.ents.values()) {
       const prev = this.last.get(e.id)
       const cur = snapOf(e)
@@ -62,6 +67,7 @@ export class Recorder {
       if (prev.x !== cur.x || prev.y !== cur.y) move.push(e.id, cur.x, cur.y)
       if (prev.hp !== cur.hp) hp.push(e.id, cur.hp)
       if (prev.ord !== cur.ord) ord.push([e.id, cur.ord])
+      if (prev.bp !== cur.bp) bp.push(e.id, cur.bp ?? 100)
       this.last.set(e.id, cur)
     }
     const die: number[] = []
@@ -74,6 +80,7 @@ export class Recorder {
     if (die.length) f.die = die
     if (w.shots.length) f.shots = w.shots.slice()
     if (ord.length) f.ord = ord
+    if (bp.length) f.bp = bp
     const players = playerSnaps(w)
     const pj = JSON.stringify(players)
     if (pj !== this.lastPlayers) {

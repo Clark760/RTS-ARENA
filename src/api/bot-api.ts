@@ -29,7 +29,7 @@ export interface TypeDef {
   maxHp: number
   /** 造价 */
   cost: Partial<Record<ResourceName, number>>
-  /** 生产用时（tick） */
+  /** 生产用时（tick）。工人建造的建筑是建造工作量：一个工人贴着地基每 tick 干 1，几个工人一起建就快几倍 */
   buildTicks: number
   /** 走一格要几个 tick；0 表示不能移动 */
   moveTicks: number
@@ -43,6 +43,8 @@ export interface TypeDef {
   dropOff: boolean
   /** 能生产的类型 */
   produces: TypeName[]
+  /** 能建造的建筑类型（用 build 命令）；空数组表示不能建造 */
+  builds: TypeName[]
   /** 资源点产出的资源；不是资源点为 null */
   resource: ResourceName | null
 }
@@ -55,6 +57,8 @@ export type Order =
   | { kind: "attackMove"; x: number; y: number }
   /** returning 为 true 表示正带着资源回交货点 */
   | { kind: "gather"; target: number; returning: boolean }
+  /** 去建 target 这个没建好的建筑（走到贴着它，然后每 tick 干 1 份活） */
+  | { kind: "build"; target: number }
 
 /** 看得到的实体。建筑的 x、y 是占地左上角 */
 export interface Entity {
@@ -80,6 +84,11 @@ export interface Entity {
   queue?: { type: TypeName; ticksLeft: number }[]
   /** 还要几个 tick 才能再攻击，0 表示现在就能打（只有自己的、能攻击的实体有） */
   cooldown?: number
+  /**
+   * 没建好的建筑才有（谁都看得到）：done 是已完成的工作量，total 是总工作量（就是 buildTicks）。
+   * 没建好的建筑不能生产、不能当交货点、不能攻击，但会挡路、能被打。建好后没有这个字段
+   */
+  construction?: { done: number; total: number }
 }
 
 /** 公开的玩家信息 */
@@ -103,13 +112,16 @@ export type Command =
   | { kind: "stop"; unit: number }
   | { kind: "produce"; building: number; type: TypeName }
   | { kind: "cancel"; building: number }
+  | { kind: "build"; unit: number; type: TypeName; x: number; y: number }
 
 /** 上次调用 onTick 之后发生的、和你有关的事 */
 export type GameEvent =
   /** 命令没被执行，reason 说明原因 */
   | { kind: "rejected"; tick: number; command: Command; reason: string }
-  /** 你的新实体生产出来了 */
+  /** 你的新实体出现了：单位生产出来，或者 build 放下了地基（这时它还没建好） */
   | { kind: "created"; tick: number; id: number; type: TypeName }
+  /** 你的建筑建好了 */
+  | { kind: "built"; tick: number; id: number; type: TypeName }
   /** 你的实体、或你看得到的实体死了（资源点采完也算） */
   | { kind: "died"; tick: number; id: number; type: TypeName; owner: number; x: number; y: number }
   /** 你的实体挨打了；by 是攻击者 id，攻击者不一定在你视野里 */
@@ -156,6 +168,8 @@ export interface Game {
   fuel: number
   /** 每个玩家最多同时拥有多少个单位（建筑和资源点不算，生产队列里的算）；0 表示不限 */
   unitCap: number
+  /** 是否有战争迷雾（有的话只看得到己方和盟友实体视野里的东西，建造也只能建在视野里） */
+  fog: boolean
 }
 
 /** onTick 里用来下命令的对象。unit、building、target 可以传实体或 id */
@@ -172,8 +186,14 @@ export interface Commands {
   stop(unit: Entity | number): void
   /** 排进生产队列，立即扣钱（同一次调用里按顺序扣，钱不够的被拒）；队列最多 5 个 */
   produce(building: Entity | number, type: TypeName): void
-  /** 取消队列里最后一个，全额退款 */
+  /** 取消队列里最后一个，全额退款。对没建好的建筑：拆掉它，退还造价的 75%（向下取整） */
   cancel(building: Entity | number): void
+  /**
+   * 让 unit（能建造的单位）在左上角 (x, y) 建一座 type：立即放下地基、扣钱（同一次调用里和 produce 一起按顺序扣），
+   * 然后走过去建。地基占的格子要都在地图内、地形可走、没有任何实体，而且都在你方视野里（可以先用 canBuild 检查）。
+   * 对自己没建好的同类地基（左上角正好是 (x, y)）下这个命令，就是去接着建或者帮忙，不扣钱。
+   */
+  build(unit: Entity | number, type: TypeName, x: number, y: number): void
 }
 
 /** bot 文件导出的 onTick 的类型 */

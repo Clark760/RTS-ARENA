@@ -233,3 +233,46 @@ test("整局累计耗时超限：判停止", async () => {
   assert.match(fatal ?? "", /整局累计耗时/)
   b.dispose()
 })
+
+test("canBuild：地图内、地形可走、没有实体、有迷雾时每格都在己方视野里；cmd.build 的参数", async () => {
+  const game = (fog: boolean) =>
+    JSON.stringify({
+      me: 0,
+      width: 6,
+      height: 4,
+      fog,
+      terrain: ["......", "..#...", "......", "......"],
+      walkable: { ".": true, "#": false },
+      types: { hut: { kind: "building", w: 2, h: 2, sight: 1 }, peon: { kind: "unit", w: 1, h: 1, sight: 4 } },
+    })
+  const view = JSON.stringify({
+    tick: 0,
+    me: 0,
+    players: [{ team: 0 }, { team: 1 }],
+    entities: [
+      { id: 1, type: "peon", owner: 0, x: 0, y: 0, w: 1, h: 1 },
+      { id: 2, type: "peon", owner: 1, x: 5, y: 3, w: 1, h: 1 },
+    ],
+    events: [],
+  })
+  const src = `
+    export function onTick(view: View, cmd: Commands) {
+      const spots: [string, number, number][] = [["hut", 0, 0], ["hut", 1, 0], ["hut", 0, 1], ["hut", 3, 2], ["hut", 5, 0], ["peon", 0, 2], ["hut", 0.5, 1], ["hut", 4, 2]]
+      console.log(JSON.stringify(spots.map(([t, x, y]) => canBuild(view, t as TypeName, x, y))))
+      cmd.build(view.entities[0], "hut", 0, 1)
+    }`
+  const results: unknown[] = []
+  for (const fog of [true, false]) {
+    const b = await bot(src)
+    b.start(game(fog))
+    const r = b.tick(view)
+    results.push(JSON.parse(r.logs[0]))
+    assert.deepEqual(r.commands, [{ kind: "build", unit: 1, type: "hut", x: 0, y: 1 }])
+    b.dispose()
+  }
+  // 依次：压着自己的工人、压着岩石、可以、迷雾里看不见（无迷雾时可以）、超出地图、不是建筑、坐标不是整数、压着敌人
+  assert.deepEqual(results, [
+    [false, false, true, false, false, false, false, false],
+    [false, false, true, true, false, false, false, false],
+  ])
+})

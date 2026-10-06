@@ -35,6 +35,7 @@ export function resolveType(name: string, s: TypeSpec): TypeDef {
     gather: s.gather ?? null,
     dropOff: s.dropOff ?? false,
     produces: s.produces ?? [],
+    builds: s.kind === "unit" ? (s.builds ?? []) : [],
     resource: s.resource ?? null,
   }
 }
@@ -104,6 +105,9 @@ export class World implements SetupContext, RuleContext {
     this.simRng = new Mulberry32(mixSeed(seed, "sim"))
     this.idRng = new Mulberry32(mixSeed(seed, "ids"))
     for (const [name, spec] of Object.entries(rules.types)) this.types[name] = resolveType(name, spec)
+    for (const d of Object.values(this.types))
+      for (const b of d.builds)
+        if (this.types[b]?.kind !== "building") throw new Error(`规则包 ${rules.id}：${d.name} 的 builds 里 "${b}" 不是建筑类型`)
     this.players = names.map((name, id) => ({
       id,
       name,
@@ -201,6 +205,7 @@ export class World implements SetupContext, RuleContext {
       order: { kind: "idle" },
       carrying: null,
       queue: [],
+      construction: null,
       attackCd: 0,
       moveCd: 0,
       gatherCd: 0,
@@ -243,13 +248,21 @@ export class World implements SetupContext, RuleContext {
     return e
   }
 
+  /** 放下地基：生命从 1/10 开始，随建造进度涨到满（被打掉的不补） */
+  placeSite(type: string, owner: number, x: number, y: number): EntityState {
+    const e = this.spawnLive(type, owner, x, y)
+    e.construction = { done: 0, total: Math.max(1, e.def.buildTicks) }
+    e.hp = Math.max(1, Math.ceil(e.def.maxHp / 10))
+    return e
+  }
+
   /** 实体死亡或被移除：发事件、清占位 */
   destroy(e: EntityState, killer: number): void {
     if (!e.alive) return
     e.alive = false
     this.occupy(e, 0)
     this.ents.delete(e.id)
-    this.events.push({ kind: "died", id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, killer })
+    this.events.push({ kind: "died", id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, killer, ...(e.construction ? { unfinished: true as const } : {}) })
     for (const p of this.players) {
       if (p.id === e.owner || this.visibleTo(p.id, e))
         this.pushEvent(p.id, { kind: "died", tick: this.tick, id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y })
@@ -392,6 +405,7 @@ export class World implements SetupContext, RuleContext {
       decisionInterval: this.rules.decisionInterval,
       fuel: this.rules.fuel,
       unitCap: this.rules.unitCap,
+      fog: this.rules.fog,
     }
   }
 

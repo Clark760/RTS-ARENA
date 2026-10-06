@@ -1,5 +1,5 @@
 // 校验并执行 bot 的命令；不合法的命令变成 rejected 事件交还给 bot
-import type { Command } from "../api/bot-api.ts"
+import type { Command, TypeDef } from "../api/bot-api.ts"
 import { canHit } from "./sim.ts"
 import type { EntityState } from "./types.ts"
 import type { World } from "./world.ts"
@@ -8,6 +8,8 @@ import type { World } from "./world.ts"
 export const MAX_COMMANDS = 2000
 /** 生产队列上限 */
 export const MAX_QUEUE = 5
+/** 拆掉没建好的建筑退还造价的比例 */
+export const SITE_REFUND = 0.75
 
 function isInt(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v)
@@ -97,29 +99,85 @@ function applyOne(w: World, p: number, c: unknown): string | null {
     case "produce": {
       const type = cmd.type
       if (typeof type !== "string" || !w.types[type]) return `没有 "${String(type)}" 这种类型`
+      if (e.construction) return `#${e.id}（${e.type}）还没建好`
       if (!e.def.produces.includes(type)) return `#${e.id}（${e.type}）不能生产 ${type}`
       if (e.queue.length >= MAX_QUEUE) return `生产队列已满（最多 ${MAX_QUEUE} 个）`
       const def = w.types[type]
       const cap = w.rules.unitCap
       if (cap > 0 && def.kind === "unit" && w.unitCount(p) >= cap) return `单位数已到上限 ${cap}（含生产队列）`
-      const res = w.players[p].resources
-      for (const [r, n] of Object.entries(def.cost)) {
-        if ((res[r] ?? 0) < (n ?? 0)) return `${r} 不够：需要 ${n}，现有 ${res[r] ?? 0}`
-      }
-      for (const [r, n] of Object.entries(def.cost)) res[r] -= n ?? 0
+      const short = pay(w, p, def)
+      if (short) return short
       e.queue.push({ type, ticksLeft: def.buildTicks })
       return null
     }
     case "cancel": {
+      if (e.construction) {
+        const res = w.players[p].resources
+        for (const [r, n] of Object.entries(e.def.cost)) res[r] += Math.floor((n ?? 0) * SITE_REFUND)
+        w.destroy(e, -1)
+        return null
+      }
       const q = e.queue.pop()
       if (!q) return `#${e.id} 的生产队列是空的`
       const res = w.players[p].resources
       for (const [r, n] of Object.entries(w.types[q.type].cost)) res[r] += n ?? 0
       return null
     }
+    case "build": {
+      const type = cmd.type
+      if (typeof type !== "string" || !w.types[type]) return `没有 "${String(type)}" 这种类型`
+      if (!e.def.builds.includes(type))
+        return e.def.builds.length ? `#${e.id}（${e.type}）不能建造 ${type}，能建造：${e.def.builds.join("、")}` : `#${e.id}（${e.type}）不能建造`
+      const err = checkXY(w, cmd.x, cmd.y)
+      if (err) return err
+      const x = cmd.x as number
+      const y = cmd.y as number
+      // 自己没建好的同类地基：去接着建，不扣钱
+      const old = w.ents.get(w.staticOcc[y * w.width + x])
+      if (old && old.owner === p && old.type === type && old.x === x && old.y === y && old.construction) {
+        resetOrder(e, { kind: "build", target: old.id })
+        return null
+      }
+      const def = w.types[type]
+      const why = placeProblem(w, p, def, x, y)
+      if (why) return why
+      const short = pay(w, p, def)
+      if (short) return short
+      resetOrder(e, { kind: "build", target: w.placeSite(type, p, x, y).id })
+      return null
+    }
     default:
       return `未知命令 "${String(kind)}"`
   }
+}
+
+/** 扣造价；不够返回原因、一分不扣 */
+function pay(w: World, p: number, def: TypeDef): string | null {
+  const res = w.players[p].resources
+  for (const [r, n] of Object.entries(def.cost)) {
+    if ((res[r] ?? 0) < (n ?? 0)) return `${r} 不够：需要 ${n}，现有 ${res[r] ?? 0}`
+  }
+  for (const [r, n] of Object.entries(def.cost)) res[r] -= n ?? 0
+  return null
+}
+
+/**
+ * 地基能不能放在 (x, y)。先查每一格都在视野里，再查地形和实体：
+ * 看不见的格子里有没有东西不会从拒绝原因里漏出去。
+ */
+function placeProblem(w: World, p: number, def: TypeDef, x: number, y: number): string | null {
+  if (x + def.w > w.width || y + def.h > w.height) return `${def.name}（${def.w}×${def.h}）左上角放在 (${x}, ${y}) 会超出地图`
+  for (let yy = y; yy < y + def.h; yy++)
+    for (let xx = x; xx < x + def.w; xx++)
+      if (w.rules.fog && !w.vis[p][yy * w.width + xx]) return `(${xx}, ${yy}) 不在你方视野里，只能在看得见的地方建造`
+  for (let yy = y; yy < y + def.h; yy++)
+    for (let xx = x; xx < x + def.w; xx++) {
+      const i = yy * w.width + xx
+      if (!w.walk[i]) return `(${xx}, ${yy}) 的地形不能建造`
+      const o = w.ents.get(w.staticOcc[i] || w.unitOcc[i])
+      if (o) return `(${xx}, ${yy}) 有 #${o.id}（${o.type}）挡着`
+    }
+  return null
 }
 
 function checkXY(w: World, x: unknown, y: unknown): string | null {

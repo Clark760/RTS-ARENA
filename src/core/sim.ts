@@ -1,4 +1,4 @@
-// 每 tick 的结算：生产 → 战斗（同时结算）→ 死亡 → 移动（随机先后）→ 采集
+// 每 tick 的结算：生产 → 战斗（同时结算）→ 死亡 → 移动（随机先后）→ 建造 → 采集
 import { flowStep, UNREACHABLE } from "./nav.ts"
 import { attackable, rectDist, type World } from "./world.ts"
 import type { EntityState, Rect } from "./types.ts"
@@ -20,6 +20,7 @@ export function step(w: World): void {
   production(w)
   combat(w)
   movement(w)
+  construction(w)
   gathering(w)
 }
 
@@ -36,7 +37,7 @@ function setIdle(e: EntityState): void {
 
 function production(w: World): void {
   for (const b of w.ents.values()) {
-    if (b.queue.length === 0) continue
+    if (b.queue.length === 0 || b.construction) continue
     const q = b.queue[0]
     if (q.ticksLeft > 0) q.ticksLeft--
     if (q.ticksLeft > 0) continue
@@ -114,7 +115,7 @@ function combat(w: World): void {
   const hits: EntityState[] = []
   for (const e of w.ents.values()) {
     const atk = e.def.attack
-    if (!atk) continue
+    if (!atk || e.construction) continue
     if (e.attackCd > 0) e.attackCd--
     if (e.attackCd > 0) continue
     const t = attackTarget(w, e)
@@ -163,7 +164,7 @@ function nearestDropOff(w: World, e: EntityState): EntityState | null {
   let best: EntityState | null = null
   let bestD = 0
   for (const o of w.ents.values()) {
-    if (o.owner !== e.owner || !o.def.dropOff) continue
+    if (o.owner !== e.owner || !o.def.dropOff || o.construction) continue
     const d = rectDist(e, o)
     if (!best || d < bestD || (d === bestD && o.id < best.id)) {
       best = o
@@ -216,6 +217,14 @@ function moveGoal(w: World, e: EntityState): Goal | null {
       const node = w.ents.get(o.target)
       if (!node) return null // 采集阶段会处理
       return rectDist(e, node) <= 1 ? null : nearGoal(w, node, 1)
+    }
+    case "build": {
+      const site = w.ents.get(o.target)
+      if (!site || !site.construction) {
+        setIdle(e)
+        return null
+      }
+      return rectDist(e, site) <= 1 ? null : nearGoal(w, site, 1)
     }
   }
 }
@@ -398,6 +407,32 @@ function movement(w: World): void {
     if (e.moveCd > 0 || stepToward(w, e) !== "blocked") continue
     e.stuck++
     if (e.stuck >= STUCK_GIVE_UP && (e.order.kind === "move" || e.order.kind === "attackMove")) setIdle(e)
+  }
+}
+
+// ---------- 建造 ----------
+
+/** 贴着地基的建造者每人每 tick 干 1 份活；生命按进度从 1/10 涨到满（期间挨的打不补） */
+function construction(w: World): void {
+  for (const e of w.ents.values()) {
+    const o = e.order
+    if (o.kind !== "build") continue
+    const site = w.ents.get(o.target)
+    if (!site || !site.construction) {
+      setIdle(e)
+      continue
+    }
+    if (rectDist(e, site) > 1) continue
+    const c = site.construction
+    const hp0 = Math.max(1, Math.ceil(site.def.maxHp / 10))
+    const gain = (done: number) => Math.floor(((site.def.maxHp - hp0) * done) / c.total)
+    c.done++
+    site.hp += gain(c.done) - gain(c.done - 1)
+    if (c.done < c.total) continue
+    site.construction = null
+    for (const u of w.ents.values()) if (u.order.kind === "build" && u.order.target === site.id) setIdle(u)
+    w.events.push({ kind: "built", id: site.id, type: site.type, owner: site.owner })
+    if (site.owner >= 0) w.pushEvent(site.owner, { kind: "built", tick: w.tick, id: site.id, type: site.type })
   }
 }
 

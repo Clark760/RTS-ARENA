@@ -54,14 +54,39 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
     gather: function (u, t) { push({ kind: "gather", unit: idOf(u), target: idOf(t) }); },
     stop: function (u) { push({ kind: "stop", unit: idOf(u) }); },
     produce: function (b, type) { push({ kind: "produce", building: idOf(b), type: typeof type === "string" ? type : null }); },
-    cancel: function (b) { push({ kind: "cancel", building: idOf(b) }); }
+    cancel: function (b) { push({ kind: "cancel", building: idOf(b) }); },
+    build: function (u, type, x, y) {
+      push({ kind: "build", unit: idOf(u), type: typeof type === "string" ? type : null, x: num(x), y: num(y) });
+    }
   });
 
-  G.dist = function (a, b) {
+  function dist(a, b) {
     var aw = a.w || 1, ah = a.h || 1, bw = b.w || 1, bh = b.h || 1;
     var dx = Math.max(0, b.x - (a.x + aw - 1), a.x - (b.x + bw - 1));
     var dy = Math.max(0, b.y - (a.y + ah - 1), a.y - (b.y + bh - 1));
     return dx + dy;
+  }
+  G.dist = dist;
+
+  // 和引擎放地基的检查一致：在地图内、地形可走、没有实体、每格都在己方（含盟友）某个实体的视野里
+  G.canBuild = function (view, type, x, y) {
+    var g = G.game, d = g.types[type];
+    if (!d || d.kind !== "building" || x !== (x | 0) || y !== (y | 0)) return false;
+    if (x < 0 || y < 0 || x + d.w > g.width || y + d.h > g.height) return false;
+    var yy, xx, i, es = view.entities, team = view.players[view.me].team, r = { x: x, y: y, w: d.w, h: d.h };
+    for (yy = y; yy < y + d.h; yy++) for (xx = x; xx < x + d.w; xx++) if (!g.walkable[g.terrain[yy][xx]]) return false;
+    for (i = 0; i < es.length; i++) if (dist(es[i], r) === 0) return false;
+    if (!g.fog) return true;
+    for (yy = y; yy < y + d.h; yy++)
+      for (xx = x; xx < x + d.w; xx++) {
+        var seen = false, cell = { x: xx, y: yy };
+        for (i = 0; i < es.length && !seen; i++) {
+          var e = es[i];
+          if (e.owner >= 0 && view.players[e.owner].team === team && dist(e, cell) <= g.types[e.type].sight) seen = true;
+        }
+        if (!seen) return false;
+      }
+    return true;
   };
 
   function flush(err) {
