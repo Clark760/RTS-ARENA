@@ -51,7 +51,7 @@ interface Scene {
 }
 
 const sec = (fps: number, s: number) => Math.round(fps * s)
-/** 片头片尾、选手页、精彩对局标题卡的节奏：时长和页内动画都比原来快这么多倍（D-146，用户要求快 1.3 倍左右） */
+/** 片头片尾、选手页的节奏：时长和页内动画都比原来快这么多倍（D-146，用户要求快 1.3 倍左右；标题卡 D-149 退回原速） */
 export const BRISK = 1.3
 /** 平台拼出来的文字在名字前后留了空格（给英文名用的）；名字是中文时，汉字之间的空格去掉："98% 的 大肥鱼" → "98% 的大肥鱼" */
 export const tidy = (s: string) => s.replace(/([一-鿿）」』]) (?=[一-鿿（「『])/g, "$1")
@@ -165,7 +165,8 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
     const reasons = [...(tags.get(g.index) ?? []), ...(hl ? hl.reasons.map(relabel) : gameReasons(replay, g.names.map(display)).map(tidy))].slice(0, 4)
     scenes.push({
       label: `精彩对局 ${k + 1} 标题卡（第 ${g.index} 局）`,
-      data: { kind: "hlTitle", frames: sec(fps, readSecs(len(commentary) + 0.4 * len(...reasons), 2.5, 4.5, 8) / BRISK), speed: BRISK, no: k + 1, title, sides, result: `第 ${g.index} 局 · ${result} · 第 ${g.tick} tick · ${relabel(g.reason)}`, reasons, commentary },
+      // 标题卡要读的东西多（标题、对阵、结果、看点、解说），保持原来的速度（D-149：用户让标题卡退回原速）
+      data: { kind: "hlTitle", frames: sec(fps, readSecs(len(commentary) + 0.4 * len(...reasons), 2.5, 4.5, 8)), no: k + 1, title, sides, result: `第 ${g.index} 局 · ${result} · 第 ${g.tick} tick · ${relabel(g.reason)}`, reasons, commentary },
     })
     scenes.push({ label: `精彩对局 ${k + 1} 回放`, ...replayScene(replay, k + 1, title, commentary, seatOf.map((i, p) => ({ name: display(g.names[p]), color: color(i) })), result, fps) })
   })

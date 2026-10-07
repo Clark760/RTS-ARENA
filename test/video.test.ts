@@ -103,7 +103,9 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   const kinds = scenes.map((s) => s.data.kind)
   assert.equal(kinds[0], "brandOpen")
   // 片头片尾、选手页、标题卡的节奏加快：带 speed，时长按它缩短（片头 3.5 秒 → 2.7 秒）
-  for (const s of scenes.filter((x) => ["brandOpen", "player", "hlTitle", "brandClose"].includes(x.data.kind))) assert.equal((s.data as { speed?: number }).speed, 1.3)
+  for (const s of scenes.filter((x) => ["brandOpen", "player", "brandClose"].includes(x.data.kind))) assert.equal((s.data as { speed?: number }).speed, 1.3)
+  // 标题卡保持原速（要读的东西多）
+  for (const s of scenes.filter((x) => x.data.kind === "hlTitle")) assert.equal((s.data as { speed?: number }).speed, undefined)
   assert.equal(scenes[0].data.frames, Math.round((10 * 3.5) / 1.3))
   assert.equal(kinds.at(-1), "brandClose")
   // 片尾名单按脚本里的出场顺序
