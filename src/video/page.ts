@@ -136,18 +136,48 @@ export function installVideoPage(): void {
     return out
   }
 
-  /** 均衡折行：行数和 wrap 一样，但每行尽量一样长（免得最后一行只剩两三个字） */
+  /**
+   * 好看的折行：行数和 wrap 一样少，在这个前提下各行尽量一样长，并且尽量在标点后面断行（不把"谷歌之罪"拆到两行）；
+   * 英文单词和数字不拆开。按当前字体量，结果缓存起来（每帧都会画）
+   */
+  const niceCache = new Map<string, string[]>()
+  /** 句读：在它后面断行最自然 */
+  const PUNCT = "，。、；：？！”’）》」』】…,.;:?!)"
+  /** 除了最后一行，每行都停在标点上 */
+  const endsAtPunct = (lines: string[]) => lines.slice(0, -1).every((l) => PUNCT.includes(l.at(-1) ?? ""))
   function wrapBalanced(text: string, maxWidth: number): string[] {
-    const first = wrap(text, maxWidth)
-    if (first.length < 2) return first
-    let lo = maxWidth / first.length
-    let hi = maxWidth
-    for (let k = 0; k < 12; k++) {
-      const mid = (lo + hi) / 2
-      if (wrap(text, mid).length > first.length) lo = mid
-      else hi = mid
+    const key = `${g.font}|${maxWidth}|${text}`
+    const hit = niceCache.get(key)
+    if (hit) return hit
+    const ch = [...text]
+    const N = ch.length
+    const alnum = (c: string | undefined) => !!c && /[A-Za-z0-9.]/.test(c)
+    // 第 i 个字前面能不能断
+    const canBreak = (i: number) => i === N || (!NO_START.includes(ch[i]) && !(alnum(ch[i - 1]) && alnum(ch[i])))
+    const width = (i: number, j: number) => g.measureText(ch.slice(i, j).join("").trim()).width
+    const P = (0.35 * maxWidth) ** 2
+    // best[j]：前 j 个字排好的最小代价（先比行数，再比各行剩下的空白平方和 + 不在标点后断行的罚分）
+    const best: { lines: number; cost: number; from: number }[] = [{ lines: 0, cost: 0, from: -1 }]
+    for (let j = 1; j <= N; j++) {
+      best[j] = { lines: Infinity, cost: Infinity, from: -1 }
+      if (!canBreak(j)) continue
+      for (let i = j - 1; i >= 0; i--) {
+        if (best[i].lines === Infinity || (i > 0 && !canBreak(i))) continue
+        const w = width(i, j)
+        if (w > maxWidth && j - i > 1) break
+        const cost = best[i].cost + (maxWidth - w) ** 2 + (j < N && !PUNCT.includes(ch[j - 1]) ? P : 0)
+        const lines = best[i].lines + 1
+        if (lines < best[j].lines || (lines === best[j].lines && cost < best[j].cost)) best[j] = { lines, cost, from: i }
+      }
     }
-    return wrap(text, hi)
+    let out: string[]
+    if (best[N].lines === Infinity) out = wrap(text, maxWidth)
+    else {
+      out = []
+      for (let j = N; j > 0; j = best[j].from) out.unshift(ch.slice(best[j].from, j).join("").trim())
+    }
+    niceCache.set(key, out)
+    return out
   }
 
   function text(s: string, x: number, y: number, px: number, color: string, opts: { bold?: boolean; align?: CanvasTextAlign; mono?: boolean; alpha?: number } = {}): void {
@@ -219,6 +249,18 @@ export function installVideoPage(): void {
       g.font = font(px, true)
       const full = g.measureText(s.userText).width
       if (full > maxW && full <= maxW * 1.2) px = Math.floor((38 * maxW) / full)
+      else if (full > maxW) {
+        // 多行：字号缩一点（最多到 34）就能每行都停在标点上的话，就缩
+        const n0 = wrapBalanced(s.userText, maxW).length
+        for (let p = 38; p >= 34; p--) {
+          g.font = font(p, true)
+          const ls = wrapBalanced(s.userText, maxW)
+          if (ls.length <= n0 && endsAtPunct(ls)) {
+            px = p
+            break
+          }
+        }
+      }
       g.font = font(px, true)
       const lines = wrapBalanced(s.userText, maxW)
       const lh = Math.round(px * 1.42)
@@ -246,7 +288,7 @@ export function installVideoPage(): void {
     }
     if (s.theme) {
       g.font = font(28)
-      wrap(s.theme, W - 180).forEach((l, k) => text(l, 84, y + 30 + k * 40, 28, C.accent, { alpha: ease((i - 50) / 25) }))
+      wrapBalanced(s.theme, W - 180).forEach((l, k) => text(l, 84, y + 30 + k * 40, 28, C.accent, { alpha: ease((i - 50) / 25) }))
     }
     text(s.meta, 80, H - 60, 22, C.muted, { alpha: ease((i - 30) / 25) })
     watermark()
@@ -270,7 +312,7 @@ export function installVideoPage(): void {
     g.font = font(27)
     s.intro.forEach((line: string, k: number) => {
       const a = ease((i - 20 - k * 9) / 12)
-      const ls = wrap(line, 660)
+      const ls = wrapBalanced(line, 660)
       g.fillStyle = s.color
       g.globalAlpha = a
       g.beginPath()
@@ -362,7 +404,7 @@ export function installVideoPage(): void {
     })
     if (s.commentary) {
       g.font = font(28, true)
-      wrap(s.commentary, W - 200).forEach((l, k) => text(l, 84, y + 34 + k * 40, 28, C.accent, { bold: true, alpha: ease((i - 30) / 15) }))
+      wrapBalanced(s.commentary, W - 200).forEach((l, k) => text(l, 84, y + 34 + k * 40, 28, C.accent, { bold: true, alpha: ease((i - 30) / 15) }))
     }
     watermark()
   }
@@ -532,7 +574,7 @@ export function installVideoPage(): void {
     y += 40
     g.font = font(16)
     for (const ev of (f.events as string[]).slice(-7)) {
-      for (const l of wrap(ev, pw - 32).slice(0, 2)) {
+      for (const l of wrapBalanced(ev, pw - 32).slice(0, 2)) {
         text(l, x0 + 16, y, 16, C.text)
         y += 23
       }
@@ -561,7 +603,7 @@ export function installVideoPage(): void {
     let y = 120
     if (s.outro) {
       g.font = font(30, true)
-      for (const l of wrap(s.outro, W - 240)) {
+      for (const l of wrapBalanced(s.outro, W - 240)) {
         text(l, W / 2, y, 30, C.accent, { bold: true, align: "center", alpha: p })
         y += 44
       }

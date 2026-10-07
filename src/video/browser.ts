@@ -61,7 +61,12 @@ export async function launchBrowser(executable: string): Promise<Browser> {
     for (let i = 0; i < 150 && !port; i++) {
       await new Promise((r) => setTimeout(r, 100))
       const f = join(profile, "DevToolsActivePort")
-      if (existsSync(f)) port = readFileSync(f, "utf8").split("\n")[0].trim()
+      if (!existsSync(f)) continue
+      try {
+        port = readFileSync(f, "utf8").split("\n")[0].trim()
+      } catch {
+        // 浏览器还在写这个文件（Windows 上会 EBUSY），下一轮再读
+      }
     }
     if (!port) throw new Error(`浏览器没有启动调试端口（${executable}）`)
     let wsUrl = ""

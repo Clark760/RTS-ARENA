@@ -145,7 +145,7 @@ export interface VideoScript {
     name: string
     /** 显示的名字（最多 28 字），比如 "Gemini 3.8 flash High" */
     displayName?: string
-    /** 一行小字（最多 30 字），比如 "反重力"；也会出现在片尾的选手名单里 */
+    /** 一行小字（最多 40 字），比如 "反重力"，显示名用了外号时可以写 "DeepSeek V4.1 flash · DeepSeek Harness"；也会出现在片尾的选手名单里 */
     byline?: string
     /** 一句话定位（最多 30 字） */
     tagline: string
@@ -158,7 +158,7 @@ export interface VideoScript {
   outro?: string
 }
 
-export const SCRIPT_LIMITS = { title: 24, userText: 120, theme: 60, displayName: 28, byline: 30, tagline: 30, introLine: 50, introLines: 4, hlTitle: 24, commentary: 80, outro: 60, highlights: 5 }
+export const SCRIPT_LIMITS = { title: 24, userText: 120, theme: 60, displayName: 28, byline: 40, tagline: 30, introLine: 50, introLines: 4, hlTitle: 24, commentary: 80, outro: 60, highlights: 5 }
 
 /** 检查脚本，返回所有问题（空数组是没问题） */
 export function checkScript(s: unknown, series: SeriesFile): string[] {

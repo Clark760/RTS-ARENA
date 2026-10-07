@@ -50,6 +50,8 @@ interface Scene {
 }
 
 const sec = (fps: number, s: number) => Math.round(fps * s)
+/** 平台拼出来的文字在名字前后留了空格（给英文名用的）；名字是中文时，汉字之间的空格去掉："98% 的 大肥鱼" → "98% 的大肥鱼" */
+export const tidy = (s: string) => s.replace(/([一-鿿）」』]) (?=[一-鿿（「『])/g, "$1")
 /** 按要读的字数定时长（大约每秒读 11 个字），限制在 min～max 秒 */
 const readSecs = (chars: number, base: number, min: number, max: number) => Math.min(max, Math.max(min, base + chars / 11))
 const len = (...xs: (string | null | undefined)[]) => xs.reduce((a, x) => a + [...(x ?? "")].length, 0)
@@ -63,7 +65,7 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
   const sp = (name: string) => script.players.find((p) => p.name === name)
   const display = (name: string) => sp(name)?.displayName || name
   /** 把文字里的联赛名字换成显示名 */
-  const relabel = (s: string) => names.reduce((acc, n) => acc.split(n).join(display(n)), s)
+  const relabel = (s: string) => tidy(names.reduce((acc, n) => acc.split(n).join(display(n)), s))
   const scenes: Scene[] = []
   scenes.push({ label: "片头署名", data: { kind: "brandOpen", frames: sec(fps, 3.5), ruleset: series.ruleset.name } })
   const date = series.startedAt.slice(0, 10)
@@ -138,10 +140,10 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
       return { name: [...new Set(seats.map((p) => display(g.names[p])))].join("+"), color: color(seatOf[seats[0]]) }
     })
     const winners = [...new Set(g.winners.map((p) => display(g.names[p])))]
-    const result = winners.length ? `${winners.join("、")} 获胜` : "平局"
+    const result = tidy(winners.length ? `${winners.join("、")} 获胜` : "平局")
     const title = pick.title || sides.map((s) => s.name).join(" 对 ")
     const commentary = pick.commentary || null
-    const reasons = (hl ? hl.reasons.map(relabel) : gameReasons(replay, g.names.map(display))).slice(0, 4)
+    const reasons = (hl ? hl.reasons.map(relabel) : gameReasons(replay, g.names.map(display)).map(tidy)).slice(0, 4)
     scenes.push({
       label: `精彩对局 ${k + 1} 标题卡（第 ${g.index} 局）`,
       data: { kind: "hlTitle", frames: sec(fps, readSecs(len(commentary) + 0.4 * len(...reasons), 2.5, 4.5, 8)), no: k + 1, title, sides, result: `第 ${g.index} 局 · ${result} · 第 ${g.tick} tick · ${relabel(g.reason)}`, reasons, commentary },
@@ -326,7 +328,7 @@ function replayEvents(replay: Replay, seats: { name: string }[]): (t: number) =>
       const loss = owners.map((p) => `${name(p)} 损失 ${b.filter((d) => d.owner === p && d.t <= t).length}`).join("，")
       items.push({ t: b[0].t, text: t >= t1 ? `t${b[0].t}～${t1} 大战：${loss}` : `t${b[0].t} 起交战中：${loss}` })
     }
-    return items.sort((x, y) => x.t - y.t).map((e) => e.text)
+    return items.sort((x, y) => x.t - y.t).map((e) => tidy(e.text))
   }
 }
 

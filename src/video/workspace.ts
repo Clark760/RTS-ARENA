@@ -120,7 +120,7 @@ function videoPrompt(
   out.push("- **不知道的事别写成事实**：平台不知道每个 bot 是怎么写出来的、改了几轮。代码里的版本号（v3、v6 之类）和自称的绝招都是作者自己写的，只能说\"自称\"\"注释里写着\"。")
   out.push(`- **精彩对局**：挑 2～3 局（最多 ${L.highlights} 局），按想讲的故事排顺序。下面"精彩对局"里是联赛自动挑的，也可以从"全部对局"里挑别的（表里有每局双方的采集、损失、击杀，找"最快""最险""最惨烈"的局用得上）。解说里说的事要在战报里查得到：\`reports/\` 里有这几局：${reported.map((i) => `第 ${i} 局`).join("、")}；其他局在这个目录里运行 \`rts-arena report <回放文件>\` 看，回放文件名在"全部对局"表里。战报里的 P0、P1 是座位，顺序和对阵里的名字一样。`)
   out.push(`- **字数上限**（按字符算：汉字、字母、数字、空格、标点都算 1 个）：title ${L.title}、userText ${L.userText}、theme ${L.theme}、displayName ${L.displayName}、byline ${L.byline}、tagline ${L.tagline}、intro 1～${L.introLines} 句（建议 2～4 句）每句 ${L.introLine}、精彩对局 title ${L.hlTitle}、commentary ${L.commentary}、outro ${L.outro}。超了命令会报出来。`)
-  out.push("- **标题用字**：标题是粗体大字，\"一\"在粗体下像破折号，标题别用\"一\"开头、别连写\"一一\"（比如\"唯一一胜\"会看成\"唯——胜\"）。")
+  out.push("- **粗体字段别写\"一\"**：`title`、`tagline`、精彩对局的 `title` 和 `commentary`、`outro` 是粗体，\"一\"在粗体下就是一道横线，像破折号（\"唯一一胜\"看成\"唯——胜\"，\"只输一局\"看成\"只输—局\"）。数量写阿拉伯数字（\"只输 1 局\"），别的换个说法（\"一波\"→\"突袭\"，\"一边倒\"→\"倒向对面\"）；`intro`、`theme` 是常规字重，不受影响。")
   out.push("- 平台署名（片头片尾）是自动加的；介绍和解说里不要冒充平台的口吻。")
   out.push("")
   out.push("## 脚本格式（script.json）")

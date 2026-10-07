@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { after, test } from "node:test"
 import { checkScript, codeFacts, readSeries, videoBrief, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
-import { buildScenes, pacing, timelineOf } from "../src/video/render.ts"
+import { buildScenes, pacing, tidy, timelineOf } from "../src/video/render.ts"
 import type { Replay } from "../src/core/types.ts"
 
 const ROOT = join(import.meta.dirname, "..")
@@ -101,6 +101,12 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
     assert.ok(last.final && last.progress === 1 && last.ents.length > 0)
     assert.deepEqual(rs.frame!(Math.floor(rs.data.frames / 2)).ents, mid.ents)
   }
+})
+
+test("平台拼的文字：中文名前后的空格去掉，英文名的留着", () => {
+  assert.equal(tidy("联赛得分率 50% 的 Gemini 赢了 98% 的 大肥鱼"), "联赛得分率 50% 的 Gemini 赢了 98% 的大肥鱼")
+  assert.equal(tidy("t1044～1169 大战：大肥鱼 损失 7，Gemini 3.8 flash 损失 11"), "t1044～1169 大战：大肥鱼损失 7，Gemini 3.8 flash 损失 11")
+  assert.equal(tidy("大肥鱼 获胜"), "大肥鱼获胜")
 })
 
 test("回放变速：tick 随帧单调往前、首尾对齐；打起来的地方比没动静的地方放得慢", () => {
