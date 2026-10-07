@@ -1,6 +1,16 @@
 // 拓荒：开局只有主基地和工人，工人自己建兵营、箭塔、仓库；摧毁对方主基地获胜，到时间上限比击杀价值
 import type { RuleContext, Ruleset, TypeSpec } from "../../src/core/types.ts"
-import { baseStarts, STANDARD_TERRAIN, standardTypes, symmetricTerrain, spawnMirrored } from "../common/standard.ts"
+import {
+  baseStarts,
+  randomSymmetricMap,
+  spawnMirrored,
+  STANDARD_HOME,
+  STANDARD_OBSTACLE_CHARS,
+  STANDARD_SHAPES,
+  STANDARD_TERRAIN,
+  standardTypes,
+  symmetricTerrain,
+} from "../common/standard.ts"
 import type { Objectives } from "./objectives.ts"
 
 const W = 56
@@ -67,15 +77,36 @@ const ruleset: Ruleset = {
   types,
 
   setup(ctx) {
+    // 地图按种子随机生成（中心对称，两边一样）：家、分矿和把分矿隔开的那道墙固定，别的石墙、水和地图中间的两个矿每局不同；
+    // 生成不出合格的地图时用经典布局（D-141 之前的固定地图）
+    const FIXED_WALL = { ch: "#", x: 0, y: 16, w: 7, h: 2 }
+    const map = randomSymmetricMap(ctx.rng, {
+      width: W,
+      height: H,
+      symmetry: "point",
+      base: symmetricTerrain(W, H, ".", [FIXED_WALL]),
+      terrain: STANDARD_TERRAIN,
+      solid: [
+        { x: 2, y: 27, w: 1, h: 1 },
+        { x: 4, y: 28, w: 1, h: 1 },
+        { x: 2, y: 30, w: 1, h: 1 },
+      ],
+      // 家；分矿旁边留出建仓库的地方
+      keepClear: [STANDARD_HOME, { x: 0, y: 24, w: 9, h: 10 }],
+      obstacles: { count: [7, 10], shapes: STANDARD_SHAPES, chars: STANDARD_OBSTACLE_CHARS },
+      mines: [{ region: { x: 19, y: 12, w: 10, h: 9 }, offsets: [{ x: 0, y: 0 }, { x: 2, y: -2 }] }],
+      connect: [{ x: 7, y: 7 }, { x: 6, y: 28 }],
+    })
     ctx.setTerrain(
-      symmetricTerrain(W, H, ".", [
-        { ch: "#", x: 15, y: 0, w: 2, h: 8 },
-        { ch: "#", x: 0, y: 16, w: 7, h: 2 },
-        { ch: "#", x: 21, y: 5, w: 4, h: 3 },
-        { ch: "#", x: 11, y: 29, w: 3, h: 5 },
-        { ch: "#", x: 17, y: 20, w: 4, h: 2 },
-        { ch: "~", x: 26, y: 9, w: 4, h: 3 },
-      ]),
+      map?.terrain ??
+        symmetricTerrain(W, H, ".", [
+          { ch: "#", x: 15, y: 0, w: 2, h: 8 },
+          FIXED_WALL,
+          { ch: "#", x: 21, y: 5, w: 4, h: 3 },
+          { ch: "#", x: 11, y: 29, w: 3, h: 5 },
+          { ch: "#", x: 17, y: 20, w: 4, h: 2 },
+          { ch: "~", x: 26, y: 9, w: 4, h: 3 },
+        ]),
     )
     spawnMirrored(ctx, W, H, types, [
       { type: "base", owner: 0, x: 3, y: 3 },
@@ -93,10 +124,15 @@ const ruleset: Ruleset = {
       { type: "goldmine", owner: -1, x: 2, y: 27, amount: 600 },
       { type: "goldmine", owner: -1, x: 4, y: 28, amount: 600 },
       { type: "goldmine", owner: -1, x: 2, y: 30, amount: 600 },
-      // 地图中间
-      { type: "goldmine", owner: -1, x: 25, y: 17, amount: 700 },
-      { type: "goldmine", owner: -1, x: 27, y: 15, amount: 700 },
+      // 地图中间（随机地图里位置每局不同，见下面）
+      ...(map
+        ? []
+        : [
+            { type: "goldmine", owner: -1 as const, x: 25, y: 17, amount: 700 },
+            { type: "goldmine", owner: -1 as const, x: 27, y: 15, amount: 700 },
+          ]),
     ])
+    if (map) for (const m of map.mines) ctx.spawn("goldmine", -1, m.x, m.y, { amount: 700 })
     for (let p = 0; p < ctx.playerCount; p++) ctx.setResources(p, { gold: 300 })
   },
 

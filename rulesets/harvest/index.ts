@@ -1,6 +1,16 @@
 // 采集竞速：比谁先累计交货 1500 金。建筑都打不掉，但可以出兵去杀对方的工人
 import type { Ruleset } from "../../src/core/types.ts"
-import { standardStart, STANDARD_TERRAIN, standardTypes, symmetricTerrain, spawnMirrored } from "../common/standard.ts"
+import {
+  randomSymmetricMap,
+  spawnMirrored,
+  STANDARD_HOME,
+  STANDARD_OBSTACLE_CHARS,
+  STANDARD_SHAPES,
+  standardStart,
+  STANDARD_TERRAIN,
+  standardTypes,
+  symmetricTerrain,
+} from "../common/standard.ts"
 import type { Objectives } from "./objectives.ts"
 
 const W = 40
@@ -27,19 +37,38 @@ const ruleset: Ruleset = {
   types,
 
   setup(ctx) {
+    // 地图按种子随机生成（中心对称，两边一样）：家固定，石墙、水和两组争夺矿每局不同；
+    // 生成不出合格的地图时用经典布局（D-141 之前的固定地图）
+    const map = randomSymmetricMap(ctx.rng, {
+      width: W,
+      height: H,
+      symmetry: "point",
+      base: symmetricTerrain(W, H, ".", []),
+      terrain: STANDARD_TERRAIN,
+      keepClear: [STANDARD_HOME],
+      obstacles: { count: [3, 5], shapes: STANDARD_SHAPES, chars: STANDARD_OBSTACLE_CHARS },
+      mines: [
+        { region: { x: 12, y: 4, w: 9, h: 7 }, offsets: [{ x: 0, y: 0 }, { x: 2, y: 0 }] },
+        { region: { x: 4, y: 14, w: 9, h: 6 }, offsets: [{ x: 0, y: 0 }] },
+      ],
+      connect: [{ x: 7, y: 7 }],
+    })
     ctx.setTerrain(
-      symmetricTerrain(W, H, ".", [
-        { ch: "#", x: 13, y: 0, w: 2, h: 6 },
-        { ch: "#", x: 0, y: 13, w: 6, h: 2 },
-        { ch: "~", x: 18, y: 12, w: 4, h: 4 },
-      ]),
+      map?.terrain ??
+        symmetricTerrain(W, H, ".", [
+          { ch: "#", x: 13, y: 0, w: 2, h: 6 },
+          { ch: "#", x: 0, y: 13, w: 6, h: 2 },
+          { ch: "~", x: 18, y: 12, w: 4, h: 4 },
+        ]),
     )
     standardStart(ctx, W, H, types)
-    spawnMirrored(ctx, W, H, types, [
-      { type: "goldmine", owner: -1, x: 15, y: 8, amount: 500 },
-      { type: "goldmine", owner: -1, x: 17, y: 8, amount: 500 },
-      { type: "goldmine", owner: -1, x: 8, y: 16, amount: 500 },
-    ])
+    if (map) for (const m of map.mines) ctx.spawn("goldmine", -1, m.x, m.y, { amount: 500 })
+    else
+      spawnMirrored(ctx, W, H, types, [
+        { type: "goldmine", owner: -1, x: 15, y: 8, amount: 500 },
+        { type: "goldmine", owner: -1, x: 17, y: 8, amount: 500 },
+        { type: "goldmine", owner: -1, x: 8, y: 16, amount: 500 },
+      ])
     for (let p = 0; p < ctx.playerCount; p++) ctx.setResources(p, { gold: 200 })
   },
 

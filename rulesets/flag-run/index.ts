@@ -1,7 +1,14 @@
 // 规则包「夺旗」：每人一面旗插在家门口的旗台上，扛走敌旗、送回自己队的旗台得 1 分，本队先送回 3 面的赢。
 // 地图中央有巡逻的巨魔（中立），会追杀路过的旗手。主基地被拆就出局（分队时单位交给队友）。
 import type { MatchResult, Marker, Rect, RuleContext, Ruleset, SetupContext, TypeSpec } from "../../src/core/types.ts"
-import { rotateK, rotationalTerrain, STANDARD_TERRAIN, standardTypes } from "../common/standard.ts"
+import {
+  randomSymmetricMap,
+  rotateK,
+  rotationalTerrain,
+  STANDARD_OBSTACLE_CHARS,
+  STANDARD_TERRAIN,
+  standardTypes,
+} from "../common/standard.ts"
 import type { FlagInfo, Objectives } from "./objectives.ts"
 
 const S = 40
@@ -30,6 +37,22 @@ const MINES: Rect[] = [
   { x: 10, y: 1, w: 1, h: 1 },
 ]
 const WAYPOINT: Rect = { x: 19, y: 15, w: 1, h: 1 }
+/** 固定的地形：旗台所在的广场、广场旁边能建哨塔的两块高地 */
+const FIXED_TERRAIN = [
+  { ch: "+", ...PLAZA },
+  { ch: "^", x: 13, y: 8, w: 2, h: 2 },
+  { ch: "^", x: 8, y: 13, w: 2, h: 2 },
+]
+/** 经典布局（D-141 之前的固定地图）里的墙和正中的水塘；随机地图生成不出来时用 */
+const CLASSIC_WALLS = [
+  { ch: "#", x: 16, y: 5, w: 2, h: 8 },
+  { ch: "~", x: 18, y: 18, w: 4, h: 4 },
+]
+const SMALL_SHAPES: { w: [number, number]; h: [number, number] }[] = [
+  { w: [2, 5], h: [1, 2] },
+  { w: [1, 2], h: [2, 5] },
+  { w: [2, 3], h: [2, 3] },
+]
 
 const TERRAIN = {
   ...STANDARD_TERRAIN,
@@ -357,15 +380,18 @@ const ruleset: Ruleset = {
 
   setup(ctx) {
     resetState()
-    ctx.setTerrain(
-      rotationalTerrain(S, ".", [
-        { ch: "+", ...PLAZA },
-        { ch: "^", x: 13, y: 8, w: 2, h: 2 },
-        { ch: "^", x: 8, y: 13, w: 2, h: 2 },
-        { ch: "#", x: 16, y: 5, w: 2, h: 8 },
-        { ch: "~", x: 18, y: 18, w: 4, h: 4 },
-      ]),
-    )
+    // 地图按种子随机生成（四重旋转对称，四个角一样）：家、广场、高地、巨魔巡逻的路点固定，石墙和水每局不同
+    const map = randomSymmetricMap(ctx.rng, {
+      width: S,
+      height: S,
+      symmetry: "rot4",
+      base: rotationalTerrain(S, ".", FIXED_TERRAIN),
+      terrain: TERRAIN,
+      keepClear: [{ x: 0, y: 0, w: 15, h: 15 }, WAYPOINT],
+      obstacles: { count: [3, 6], shapes: SMALL_SHAPES, chars: STANDARD_OBSTACLE_CHARS },
+      connect: [{ x: 12, y: 12 }, { x: STAND.x, y: STAND.y }, { x: WAYPOINT.x, y: WAYPOINT.y }],
+    })
+    ctx.setTerrain(map?.terrain ?? rotationalTerrain(S, ".", [...FIXED_TERRAIN, ...CLASSIC_WALLS]))
     corner = cornersOf(ctx)
     waypoints = [0, 1, 2, 3].map((k) => rot(WAYPOINT, k))
     for (let p = 0; p < ctx.playerCount; p++) {

@@ -4,7 +4,17 @@
 // - 名次按队伍排：越晚全队出局越好；到时间上限时，还有人在场的队按全队击杀价值、再按主基地剩余生命排。
 // - 不分队时每人一队，就是各自为战。
 import type { RuleContext, Ruleset } from "../../src/core/types.ts"
-import { cornersFor, rotateK, rotationalTerrain, STANDARD_TERRAIN, standardTypes } from "../common/standard.ts"
+import {
+  cornersFor,
+  randomSymmetricMap,
+  rotateK,
+  rotationalTerrain,
+  STANDARD_HOME,
+  STANDARD_OBSTACLE_CHARS,
+  STANDARD_SHAPES,
+  STANDARD_TERRAIN,
+  standardTypes,
+} from "../common/standard.ts"
 import type { Objectives } from "./objectives.ts"
 
 const SIZE = 64
@@ -30,11 +40,20 @@ const MINES: { x: number; y: number; amount: number }[] = [
   { x: 3, y: 9, amount: 400 },
   { x: 5, y: 9, amount: 400 },
   { x: 8, y: 1, amount: 400 },
-  // 两家之间的中立矿
-  { x: 18, y: 14, amount: 500 },
-  { x: 20, y: 14, amount: 500 },
   // 地图正中，转四次正好是一个 2×2 的矿群
   { x: 31, y: 31, amount: 800 },
+]
+/** 两家之间的中立矿（一对，每个 500）：经典布局在 (18, 14)，随机地图里每局换地方 */
+const BETWEEN = [
+  { x: 0, y: 0 },
+  { x: 2, y: 0 },
+]
+const CLASSIC_BETWEEN = { x: 18, y: 14 }
+const CLASSIC_WALLS = [
+  { ch: "#", x: 14, y: 0, w: 2, h: 8 },
+  { ch: "#", x: 22, y: 6, w: 4, h: 3 },
+  { ch: "#", x: 8, y: 20, w: 3, h: 4 },
+  { ch: "~", x: 24, y: 24, w: 4, h: 3 },
 ]
 
 function size(type: string) {
@@ -140,19 +159,28 @@ const ruleset: Ruleset = {
   types,
 
   setup(ctx) {
-    ctx.setTerrain(
-      rotationalTerrain(SIZE, ".", [
-        { ch: "#", x: 14, y: 0, w: 2, h: 8 },
-        { ch: "#", x: 22, y: 6, w: 4, h: 3 },
-        { ch: "#", x: 8, y: 20, w: 3, h: 4 },
-        { ch: "~", x: 24, y: 24, w: 4, h: 3 },
-      ]),
-    )
-    for (const m of MINES)
+    // 地图按种子随机生成（四重旋转对称，四个角一样）：各角的家、家门口的矿和正中的矿群固定，
+    // 石墙、水和两家之间的那对矿每局不同；生成不出合格的地图时用经典布局（D-141 之前的固定地图）
+    const map = randomSymmetricMap(ctx.rng, {
+      width: SIZE,
+      height: SIZE,
+      symmetry: "rot4",
+      base: rotationalTerrain(SIZE, ".", []),
+      terrain: STANDARD_TERRAIN,
+      solid: [{ x: 31, y: 31, w: 1, h: 1 }],
+      keepClear: [STANDARD_HOME, { x: 28, y: 28, w: 8, h: 8 }],
+      obstacles: { count: [6, 8], shapes: STANDARD_SHAPES, chars: STANDARD_OBSTACLE_CHARS },
+      mines: [{ region: { x: 14, y: 10, w: 12, h: 10 }, offsets: BETWEEN }],
+      connect: [{ x: 7, y: 7 }, { x: 30, y: 30 }],
+    })
+    ctx.setTerrain(map?.terrain ?? rotationalTerrain(SIZE, ".", CLASSIC_WALLS))
+    const fixed = map ? MINES : [...MINES, ...BETWEEN.map((o) => ({ x: CLASSIC_BETWEEN.x + o.x, y: CLASSIC_BETWEEN.y + o.y, amount: 500 }))]
+    for (const m of fixed)
       for (let k = 0; k < 4; k++) {
         const r = rotateK(SIZE, { x: m.x, y: m.y, w: 1, h: 1 }, k)
         ctx.spawn("goldmine", -1, r.x, r.y, { amount: m.amount })
       }
+    if (map) for (const m of map.mines) ctx.spawn("goldmine", -1, m.x, m.y, { amount: 500 })
     seatCorners(ctx.teams).forEach((corner, p) => {
       for (const it of HOME) {
         const r = rotateK(SIZE, { x: it.x, y: it.y, ...size(it.type) }, corner)

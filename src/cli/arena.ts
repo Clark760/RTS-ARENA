@@ -7,7 +7,7 @@ import { runMatch, type MatchBot } from "../core/match.ts"
 import { mixSeed } from "../core/rng.ts"
 import type { Replay, Ruleset } from "../core/types.ts"
 import { compileBot, createBot } from "../sandbox/quickjs.ts"
-import { botTsconfig, buildDts, buildPrompt, lineups, setupWorld, typecheck, typecheckRuleset } from "./docgen.ts"
+import { botTsconfig, buildDts, buildPrompt, lineups, mapSection, setupWorld, typecheck, typecheckRuleset } from "./docgen.ts"
 import { serveViewer } from "./serve.ts"
 import {
   findRuleset,
@@ -60,6 +60,7 @@ const HELP = `用法：rts-arena <命令> [参数]
 
 在任何目录：
   list [规则包]                         列出规则包和现成的 bot（写了规则包就列出它的参考 bot 和打法）
+  map [规则包] [--seed N]               画出这个种子下的开局地图（地图随种子随机的规则包每局不一样；在 bot 目录里不用写规则包）
   docs  <规则包> [--out 目录]            生成 arena.d.ts 和 PROMPT.md（默认 ./out/<规则包>/）
   check <规则包> <bot>... [--ticks N]    检查指定的 bot
   run   <规则包> <bot>... [选项]         指定所有参赛 bot 打一局（或多局）
@@ -140,6 +141,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   check: { ticks: false },
   view: { port: false, open: true },
   report: { player: false, every: false, full: true },
+  map: { seed: false },
   "video-brief": { out: false },
   "video-init": { text: false },
   video: { script: false, out: false, preview: false, check: false, browser: false, fps: false },
@@ -924,9 +926,11 @@ async function cmdCheck(rules: Ruleset, src: RulesetRef, args: string[], opt: Re
       console.log(`${file}：${compiled.error}`)
       continue
     }
-    // 在每个位置上和不动的对手试打（默认 300 tick），抓开局阶段的运行错误
+    // 在每个位置上和不动的对手试打（默认 300 tick），抓开局阶段的运行错误。
+    // 每个位置换一个种子：地图随种子随机的规则包就是不同的图，写死坐标的 bot 在别的图上会露馅
     const n = rules.players.min
     for (let seat = 0; seat < n; seat++) {
+      const seed = 1 + seat
       const bots: MatchBot[] = []
       for (let p = 0; p < n; p++) {
         const code = p === seat ? compiled.code : IDLE_CODE
@@ -934,7 +938,7 @@ async function cmdCheck(rules: Ruleset, src: RulesetRef, args: string[], opt: Re
       }
       let replay: Replay
       try {
-        replay = runMatch({ ruleset: { ...rules, maxTicks: Math.min(rules.maxTicks, checkTicks) }, bots, seed: 1 })
+        replay = runMatch({ ruleset: { ...rules, maxTicks: Math.min(rules.maxTicks, checkTicks) }, bots, seed })
       } catch (e) {
         ok = false
         console.log(`${file}（位置 P${seat}）：试打时规则包出错：${(e as Error).message}`)
@@ -942,7 +946,7 @@ async function cmdCheck(rules: Ruleset, src: RulesetRef, args: string[], opt: Re
       }
       const st = replay.bots[seat]
       const errs = replay.frames.flatMap((f) => (f.errs ?? []).filter((e) => e.p === seat).map((e) => `第 ${f.t} tick：${e.msg}`))
-      const where = `${file}（位置 P${seat}）`
+      const where = `${file}（位置 P${seat}，种子 ${seed}）`
       if (st.status === "dead" || st.errors > 0 || st.fuelOuts > 0) {
         ok = false
         console.log(`${where}：试打 ${replay.result.tick} tick 出了问题${st.deadReason ? `，bot 停止运行：${st.deadReason}` : ""}`)
@@ -1148,6 +1152,16 @@ async function main(): Promise<void> {
   jsonMode = (command === "run" || command === "league") && rest.includes("--json")
   const { pos, opt } = parseArgs(command, rest)
   switch (command) {
+    case "map": {
+      // map [规则包] [--seed N]：画开局地图（和 PROMPT.md 里那一节一样）
+      const ref = pos[0] ?? readWorkspace()?.ruleset
+      if (!ref) fail("要写规则包：rts-arena map <规则包> [--seed N]（在 bot 目录里可以不写）")
+      const { rules } = await loadRuleset(ref)
+      const seed = typeof opt.seed === "string" ? Number(opt.seed) : 1
+      if (!Number.isInteger(seed)) fail("--seed 要是整数")
+      console.log(mapSection(rules, seed, pos[0] ?? rules.id))
+      return
+    }
     case "list": {
       // list <规则包>：这个规则包的参考 bot 和打法
       if (pos[0]) {

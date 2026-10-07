@@ -1,7 +1,15 @@
 // 规则包「烽火台」：工人在地图上的台址里建烽火台，独占台址的一方定期得分，先到目标分的赢。
 // 两侧台址被中立野怪占着，中央台址有守卫，要先清掉才能建。主基地被摧毁直接输。
 import type { RuleContext, Ruleset, TypeSpec } from "../../src/core/types.ts"
-import { spawnMirrored, STANDARD_TERRAIN, standardTypes, symmetricTerrain } from "../common/standard.ts"
+import {
+  randomSymmetricMap,
+  spawnMirrored,
+  STANDARD_OBSTACLE_CHARS,
+  STANDARD_SHAPES,
+  STANDARD_TERRAIN,
+  standardTypes,
+  symmetricTerrain,
+} from "../common/standard.ts"
 import type { Objectives, Site } from "./objectives.ts"
 
 const W = 36
@@ -128,12 +136,39 @@ const ruleset: Ruleset = {
   setup(ctx) {
     holders = SITES.map(() => -1)
     monsters = SITES.map(() => 0)
+    // 地图按种子随机生成（中心对称，两边一样）：家、5 个台址、矿和野怪的位置固定，石墙和水每局不同；
+    // 中央台址两边那两道横墙也固定：它们把两家之间的近路收到中央、从守卫身边过，速攻要先挨守卫的打。
+    // 参考 bot 联赛（D-141）：不固定时随机地图上 rush 的得分率 69%；固定后 56%，和经典图同样种子的 44% 差在误差内
+    // 生成不出合格的地图时用经典布局（D-141 之前的固定地图）
+    const FUNNEL = { ch: "#", x: 8, y: 12, w: 6, h: 2 }
+    const map = randomSymmetricMap(ctx.rng, {
+      width: W,
+      height: H,
+      symmetry: "point",
+      base: symmetricTerrain(W, H, ".", [FUNNEL]),
+      terrain: STANDARD_TERRAIN,
+      solid: [
+        { x: 12, y: 8, w: 1, h: 1 },
+        { x: 3, y: 15, w: 1, h: 1 },
+      ],
+      keepClear: [{ x: 0, y: 0, w: 10, h: 10 }, ...SITES.map((s) => ({ x: s.x, y: s.y, w: s.w, h: s.h }))],
+      obstacles: { count: [2, 4], shapes: STANDARD_SHAPES, chars: STANDARD_OBSTACLE_CHARS },
+      connect: [
+        { x: 6, y: 6 },
+        { x: home0.x + 1, y: home0.y + 1 },
+        { x: flank0.x + 3, y: flank0.y + 1 },
+        { x: 17, y: 11 },
+        { x: 13, y: 8 },
+        { x: 4, y: 15 },
+      ],
+    })
     ctx.setTerrain(
-      symmetricTerrain(W, H, ".", [
-        { ch: "#", x: 8, y: 12, w: 6, h: 2 },
-        { ch: "~", x: 16, y: 4, w: 4, h: 3 },
-        { ch: "#", x: 6, y: 16, w: 2, h: 5 },
-      ]),
+      map?.terrain ??
+        symmetricTerrain(W, H, ".", [
+          FUNNEL,
+          { ch: "~", x: 16, y: 4, w: 4, h: 3 },
+          { ch: "#", x: 6, y: 16, w: 2, h: 5 },
+        ]),
     )
     spawnMirrored(ctx, W, H, types, [
       { type: "base", owner: 0, x: BASE0.x, y: BASE0.y },

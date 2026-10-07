@@ -110,12 +110,12 @@ export function unitTable(rules: Ruleset): string {
  * 开局地图：用最少人数跑一遍规则包的 setup，画成带坐标的字符图，再列出资源点和各家开局的实体。
  * 开局由规则包决定，可能和种子、人数有关，这里画的是种子 1、最少人数时的样子
  */
-/** 跑一次规则包的 setup（种子 1），返回开局的局面；setup 出错就抛出 */
-export function setupWorld(rules: Ruleset, n: number, teams?: number[]): World {
+/** 跑一次规则包的 setup（默认种子 1），返回开局的局面；setup 出错就抛出 */
+export function setupWorld(rules: Ruleset, n: number, teams?: number[], seed = 1): World {
   const w = new World(
     rules,
     [...Array(n).keys()].map((i) => `P${i}`),
-    1,
+    seed,
     teams,
   )
   try {
@@ -135,18 +135,60 @@ export function lineups(rules: Ruleset): { label: string; n: number; teams?: num
   return out
 }
 
-export function mapSection(rules: Ruleset): string {
+/**
+ * 地图会不会随种子变：比几个种子的开局。不变返回 null；会变就说清楚哪些每局一样、哪些每局不同，提醒别把坐标写死
+ */
+export function mapVariety(rules: Ruleset, n: number, id = rules.id, seed = 1): string | null {
+  let worlds: World[]
+  try {
+    worlds = [1, 2, 3, 4, 5, 6].map((s) => setupWorld(rules, n, undefined, s))
+  } catch {
+    return null
+  }
+  const terrainVaries = worlds.some((w) => w.terrain.join("\n") !== worlds[0].terrain.join("\n"))
+  const keysOf = (w: World, pick: (e: ReturnType<World["entities"]>[number]) => boolean) =>
+    new Set(w.entities().filter(pick).map((e) => `${e.type}@${e.x},${e.y}@${e.owner}`))
+  const fixedIn = (pick: (e: ReturnType<World["entities"]>[number]) => boolean) => {
+    const sets = worlds.map((w) => keysOf(w, pick))
+    const fixed = [...sets[0]].filter((k) => sets.every((s) => s.has(k))).length
+    return { fixed, total: sets[0].size, varies: sets.some((s) => s.size !== sets[0].size) || fixed < sets[0].size }
+  }
+  const res = fixedIn((e) => e.def.kind === "resource")
+  const own = fixedIn((e) => e.def.kind !== "resource" && e.owner >= 0)
+  const neutral = fixedIn((e) => e.def.kind !== "resource" && e.owner < 0)
+  if (!terrainVaries && !res.varies && !own.varies && !neutral.varies) return null
+  const same: string[] = []
+  const diff: string[] = []
+  if (!own.varies) same.push("各家开局的建筑和单位")
+  else diff.push("各家开局的建筑和单位的位置")
+  if (res.fixed) same.push(`${res.fixed} 个资源点${res.varies ? "（家门口那些）" : ""}`)
+  if (res.varies) diff.push(res.fixed ? `其余 ${res.total - res.fixed} 个资源点的位置` : "资源点的位置")
+  if (terrainVaries) diff.push("墙、水这些地形")
+  if (neutral.varies) diff.push("中立单位的位置")
+  return [
+    `**这个规则包的地图每局按种子随机生成**：每局的种子不一样，地图也不一样；规则包保证地图对称（两人图中心对称，多人图四个角转 90° 一样），每家看到的地图相同，联赛里同一张图会换座位各打一次。下面画的只是种子 ${seed} 的一张。`,
+    "",
+    `- 每局都一样的：${same.length ? same.join("、") : "没有"}`,
+    `- 每局不同的：${diff.join("、")}`,
+    "",
+    `别把会变的坐标写死：开局从 \`game.terrain\` 读地形、从 \`view.entities\` 找资源点，路线、集结点、建筑位置都按当局的地图算。看别的种子的地图：\`rts-arena map ${id} --seed 2\`。`,
+  ].join("\n")
+}
+
+export function mapSection(rules: Ruleset, seed = 1, id = rules.id): string {
   const n = rules.players.min
   let w: World
   try {
-    w = setupWorld(rules, n)
+    w = setupWorld(rules, n, undefined, seed)
   } catch (e) {
     return `## 地图\n\n（画不出来：规则包的 setup 出错了：${(e as Error).message.split("\n")[0]}）`
   }
   const W = w.width
   const H = w.height
   const ents = w.entities()
-  const out = [`## 开局地图（${n} 人、种子 1 时的样子；${W}×${H}，左上角是 (0, 0)，x 向右、y 向下）`, ""]
+  const out = [`## 开局地图（${n} 人、种子 ${seed} 时的样子；${W}×${H}，左上角是 (0, 0)，x 向右、y 向下）`, ""]
+  const variety = mapVariety(rules, n, id, seed)
+  if (variety) out.push(variety, "")
   if (W * H <= 20_000) {
     const g = w.terrain.map((row) => row.split(""))
     for (const e of ents) {

@@ -65,7 +65,8 @@ export default ruleset
 
 - **实体类型**（`types`）：`kind` 是 `unit`、`building`、`resource`；单位只能 1×1。数值（生命、造价、生产用时、走一格几 tick、视野、攻击、采集、交货点、能生产、能建造 `builds`）的含义见 `api/ruleset.ts` 的 `TypeSpec` 和 `api/bot-api.ts` 的 `TypeDef`。`look` 决定回放里怎么画：`shape` 是 circle、square、triangle、diamond、hex，`label` 最多 2 个字，`color` 不写就按玩家上色。
 - **地形**（`terrain`）：每种地形一个字符，`{ walkable, color }`。
-- 平台的共用代码 `"rts-arena/standard"`（副本在 `api/standard.ts`）：标准单位 `standardTypes()`、标准地形 `STANDARD_TERRAIN`、两人中心对称地图 `mirror` / `symmetricTerrain` / `spawnMirrored` / `standardStart` / `baseStarts`、四角地图 `rotate90` / `rotateK` / `rotationalTerrain` / `cornersFor`，可以直接用，也可以复制一份改。
+- 平台的共用代码 `"rts-arena/standard"`（副本在 `api/standard.ts`）：标准单位 `standardTypes()`、标准地形 `STANDARD_TERRAIN`、两人中心对称地图 `mirror` / `symmetricTerrain` / `spawnMirrored` / `standardStart` / `baseStarts`、四角地图 `rotate90` / `rotateK` / `rotationalTerrain` / `cornersFor`、按种子生成对称随机地图 `randomSymmetricMap`（配套的 `STANDARD_HOME`、`STANDARD_SHAPES`、`STANDARD_OBSTACLE_CHARS`），可以直接用，也可以复制一份改。
+- **地图最好每局随机**（平台自带的规则包都是这样）：地图固定的话，bot 会对着这一张图调参数、写死路线，换张图就不行，联赛里同一组对手每局的结果也差不多。在 `setup` 里用 `randomSymmetricMap(ctx.rng, {...})`：给出底图（固定的特殊地形先画好）、要留空的区域（家、目标点……）、随机障碍的块数和形状、随机矿群的范围和阵型、必须走得通的点；它按种子在空地上成套地放障碍和矿（两人图中心对称、四人图四重旋转对称，每家看到的完全一样），再检查关键点和每个矿都走得到、不会绕太远，不合格就换一组重来；实在生成不出来返回 null，这时用你自己的固定布局。只用 `ctx.rng`，同一个种子永远是同一张图。用法照抄平台自带的规则包（比如 `rulesets/annihilation/index.ts`），生成出来的样子用 `rts-arena map <规则包目录> --seed N` 看。
 - **新增类型**：在标准单位上加，要给变量标上类型，不然 `kind: "building"` 会被推断成 string：
 
   ```ts

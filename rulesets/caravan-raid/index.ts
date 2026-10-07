@@ -1,7 +1,15 @@
 // 规则包「劫镖」：四条商路上定时有中立商队带着镖师过境，劫下商队、押回自己的主基地或货栈交货得分。
 // 队伍分数先到目标的队伍赢；主基地被摧毁的玩家出局，一队全出局就输。写法见 RULESET.md。
 import type { Marker, Rect, RuleContext, Ruleset, TypeSpec } from "../../src/core/types.ts"
-import { cornersFor, rotateK, rotationalTerrain, STANDARD_TERRAIN, standardTypes } from "../common/standard.ts"
+import {
+  cornersFor,
+  randomSymmetricMap,
+  rotateK,
+  rotationalTerrain,
+  STANDARD_OBSTACLE_CHARS,
+  STANDARD_TERRAIN,
+  standardTypes,
+} from "../common/standard.ts"
 import type { CaravanInfo, Objectives, RouteInfo } from "./objectives.ts"
 
 const SIZE = 40
@@ -37,11 +45,23 @@ const terrain = {
 
 // 地图：40×40，四重旋转对称。四条 2 格宽的商路把地图分成 3×3 的九块，四个角是玩家的家。
 const LANE0: Rect = { x: 25, y: 0, w: 2, h: SIZE }
+// 经典布局（D-141 之前的固定地图）；随机地图只换石头、水塘和四条边中间的中立矿，商路不变，所以判断商路用它就行
 const TERRAIN = rotationalTerrain(SIZE, ".", [
   { ch: "#", x: 17, y: 17, w: 3, h: 3 }, // 中间一块石头
   { ch: "~", x: 17, y: 4, w: 5, h: 2 }, // 四条边中间的水塘
   { ch: "=", ...LANE0 }, // 商路最后画
 ])
+/** 四条边中间那对中立矿（每个 400）的阵型；经典布局在 (18, 8) */
+const EDGE_MINES = [
+  { x: 0, y: 0 },
+  { x: 3, y: 0 },
+]
+const CLASSIC_EDGE = { x: 18, y: 8 }
+const SMALL_SHAPES: { w: [number, number]; h: [number, number] }[] = [
+  { w: [2, 5], h: [1, 2] },
+  { w: [1, 2], h: [2, 5] },
+  { w: [2, 3], h: [2, 3] },
+]
 
 function routeOf(k: number): RouteInfo {
   const lane = rotateK(SIZE, LANE0, k)
@@ -256,7 +276,19 @@ const ruleset: Ruleset = {
 
   setup(ctx) {
     resetState()
-    ctx.setTerrain(TERRAIN)
+    // 地图按种子随机生成（四重旋转对称，四个角一样）：家、商路固定，石头、水塘和四条边中间的那对矿每局不同
+    const map = randomSymmetricMap(ctx.rng, {
+      width: SIZE,
+      height: SIZE,
+      symmetry: "rot4",
+      base: rotationalTerrain(SIZE, ".", [{ ch: "=", ...LANE0 }]),
+      terrain,
+      keepClear: [{ x: 0, y: 0, w: 12, h: 12 }, LANE0],
+      obstacles: { count: [3, 5], shapes: SMALL_SHAPES, chars: STANDARD_OBSTACLE_CHARS },
+      mines: [{ region: { x: 15, y: 3, w: 6, h: 8 }, offsets: EDGE_MINES }],
+      connect: [{ x: 7, y: 7 }, { x: 24, y: 2 }, { x: 20, y: 20 }],
+    })
+    ctx.setTerrain(map?.terrain ?? TERRAIN)
     const n = ctx.playerCount
     teamCount = Math.max(...ctx.teams) + 1
     const realTeams = new Set(ctx.teams).size
@@ -281,11 +313,13 @@ const ruleset: Ruleset = {
       delivered[p] = 0
     }
     // 四条边中间的空地上各 2 个中立金矿（每个 400），谁都能去采
-    for (let k = 0; k < 4; k++)
-      for (const m of [{ x: 18, y: 8 }, { x: 21, y: 8 }]) {
-        const r = rotateK(SIZE, { x: m.x, y: m.y, w: 1, h: 1 }, k)
-        ctx.spawn("goldmine", -1, r.x, r.y, { amount: 400 })
-      }
+    if (map) for (const m of map.mines) ctx.spawn("goldmine", -1, m.x, m.y, { amount: 400 })
+    else
+      for (let k = 0; k < 4; k++)
+        for (const o of EDGE_MINES) {
+          const r = rotateK(SIZE, { x: CLASSIC_EDGE.x + o.x, y: CLASSIC_EDGE.y + o.y, w: 1, h: 1 }, k)
+          ctx.spawn("goldmine", -1, r.x, r.y, { amount: 400 })
+        }
     const markers: Marker[] = ROUTES.map((r) => ({ kind: "label", x: r.from.x, y: r.from.y, text: `商路${r.id}起点` }))
     ctx.setMarkers(markers)
     ctx.setStatus(`劫镖：第一批商队在 tick ${WAVE_FIRST} 出发，目标 ${target} 分`)

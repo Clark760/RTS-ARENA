@@ -1,7 +1,15 @@
 // 规则包「牧野争牛」：荒原上有野牛游荡，围住它就能驯服；把驯服的牛赶到自己建在草场上的牧栏边就持续得分。
 // 别人的牛也能偷；狼群定时从狼穴出来，冲着领先的队伍去。先攒够分数的队伍赢。玩法说明见 RULES.md。
 import type { MatchResult, Marker, RuleContext, RuleEntity, Ruleset, TypeSpec } from "../../src/core/types.ts"
-import { cornersFor, rotateK, rotationalTerrain, STANDARD_TERRAIN, standardTypes } from "../common/standard.ts"
+import {
+  cornersFor,
+  randomSymmetricMap,
+  rotateK,
+  rotationalTerrain,
+  STANDARD_OBSTACLE_CHARS,
+  STANDARD_TERRAIN,
+  standardTypes,
+} from "../common/standard.ts"
 import type { Objectives, Rect } from "./objectives.ts"
 
 const S = 40
@@ -18,6 +26,16 @@ const BISON_RESPAWN = 200
 const WILD: Rect = { x: 15, y: 15, w: 10, h: 10 }
 const DEN: Rect = { x: 19, y: 19, w: 2, h: 2 }
 const PASTURES: Rect[] = []
+/** 经典布局（D-141 之前的固定地图）里的墙和水；随机地图生成不出来时用 */
+const CLASSIC_WALLS = [
+  { ch: "#", x: 16, y: 8, w: 2, h: 3 },
+  { ch: "~", x: 6, y: 15, w: 2, h: 2 },
+]
+const SMALL_SHAPES: { w: [number, number]; h: [number, number] }[] = [
+  { w: [2, 5], h: [1, 2] },
+  { w: [1, 2], h: [2, 5] },
+  { w: [2, 3], h: [2, 3] },
+]
 for (let k = 0; k < 4; k++) PASTURES.push(rotateK(S, { x: 10, y: 10, w: 4, h: 4 }, k))
 for (let k = 0; k < 4; k++) PASTURES.push(rotateK(S, { x: 18, y: 2, w: 4, h: 4 }, k))
 
@@ -315,12 +333,18 @@ const ruleset: Ruleset = {
 
   setup(ctx) {
     resetState()
-    ctx.setTerrain(
-      rotationalTerrain(S, ".", [
-        { ch: "#", x: 16, y: 8, w: 2, h: 3 },
-        { ch: "~", x: 6, y: 15, w: 2, h: 2 },
-      ]),
-    )
+    // 地图按种子随机生成（四重旋转对称，四个角一样）：家、牧场、中间的荒原和狼窝固定，石墙和水每局不同
+    const map = randomSymmetricMap(ctx.rng, {
+      width: S,
+      height: S,
+      symmetry: "rot4",
+      base: rotationalTerrain(S, ".", []),
+      terrain: STANDARD_TERRAIN,
+      keepClear: [{ x: 0, y: 0, w: 13, h: 13 }, { x: 10, y: 10, w: 4, h: 4 }, { x: 18, y: 2, w: 4, h: 4 }, WILD],
+      obstacles: { count: [2, 3], shapes: SMALL_SHAPES, chars: STANDARD_OBSTACLE_CHARS },
+      connect: [{ x: 8, y: 8 }, { x: 12, y: 12 }, { x: 20, y: 4 }, { x: 17, y: 17 }],
+    })
+    ctx.setTerrain(map?.terrain ?? rotationalTerrain(S, ".", CLASSIC_WALLS))
     // 按队伍排好再分角：同队的坐相邻的角（2v2 是上边两角对下边两角）
     const order = [...Array(ctx.playerCount).keys()].sort((a, b) => ctx.teams[a] - ctx.teams[b] || a - b)
     const corners = cornersFor(ctx.playerCount)

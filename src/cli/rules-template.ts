@@ -8,7 +8,16 @@ import { buildDts, RULES_GLOBALS_DTS, rulesTsconfig } from "./docgen.ts"
 export const INDEX = `// 示例规则包「采金赛」：先累计交够 600 金的赢；主基地被摧毁直接输；到时间比交货量。从这里改起。
 // 写法见同目录的 RULESET.md。类型从 "rts-arena/ruleset" 导入（import type），共用的单位和地图工具从 "rts-arena/standard" 导入。
 import type { RuleContext, Ruleset } from "rts-arena/ruleset"
-import { baseStarts, spawnMirrored, STANDARD_TERRAIN, standardTypes, symmetricTerrain } from "rts-arena/standard"
+import {
+  baseStarts,
+  randomSymmetricMap,
+  spawnMirrored,
+  STANDARD_OBSTACLE_CHARS,
+  STANDARD_SHAPES,
+  STANDARD_TERRAIN,
+  standardTypes,
+  symmetricTerrain,
+} from "rts-arena/standard"
 import type { Objectives } from "./objectives.ts"
 
 const W = 32
@@ -36,12 +45,26 @@ const ruleset: Ruleset = {
   types,
 
   setup(ctx) {
-    // 左上角是玩家 0，右下角中心对称处是玩家 1
+    // 左上角是玩家 0，右下角中心对称处是玩家 1。
+    // 地图按种子随机（每局不同，bot 没法对着一张图调参数）：家固定，墙、水和中间那个大金矿的位置每局换，两边中心对称
+    const map = randomSymmetricMap(ctx.rng, {
+      width: W,
+      height: H,
+      symmetry: "point",
+      base: symmetricTerrain(W, H, ".", []),
+      terrain: STANDARD_TERRAIN,
+      keepClear: [{ x: 0, y: 0, w: 10, h: 9 }], // 家：主基地、兵营、工人、家门口的金矿
+      obstacles: { count: [2, 4], shapes: STANDARD_SHAPES, chars: STANDARD_OBSTACLE_CHARS },
+      mines: [{ region: { x: 11, y: 3, w: 6, h: 6 }, offsets: [{ x: 0, y: 0 }] }],
+      connect: [{ x: 5, y: 6 }], // 家门口；它的对称位置（对方家门口）和每个矿都要走得到
+    })
+    // 生成不出合格的地图（几乎不会）就用固定布局
     ctx.setTerrain(
-      symmetricTerrain(W, H, ".", [
-        { ch: "#", x: 10, y: 0, w: 2, h: 6 },
-        { ch: "~", x: 14, y: 9, w: 4, h: 2 },
-      ]),
+      map?.terrain ??
+        symmetricTerrain(W, H, ".", [
+          { ch: "#", x: 10, y: 0, w: 2, h: 6 },
+          { ch: "~", x: 14, y: 9, w: 4, h: 2 },
+        ]),
     )
     spawnMirrored(ctx, W, H, types, [
       { type: "base", owner: 0, x: 2, y: 2 },
@@ -51,8 +74,9 @@ const ruleset: Ruleset = {
       { type: "worker", owner: 0, x: 5, y: 4 },
       { type: "goldmine", owner: -1, x: 1, y: 7 },
       { type: "goldmine", owner: -1, x: 3, y: 7 },
-      { type: "goldmine", owner: -1, x: 14, y: 5, amount: 800 },
     ])
+    if (map) for (const m of map.mines) ctx.spawn("goldmine", -1, m.x, m.y, { amount: 800 })
+    else spawnMirrored(ctx, W, H, types, [{ type: "goldmine", owner: -1, x: 14, y: 5, amount: 800 }])
     for (let p = 0; p < ctx.playerCount; p++) ctx.setResources(p, { gold: 100 })
   },
 

@@ -1,12 +1,40 @@
 // 夺点：地图中央有一块控制点，只有一方的单位在里面时，这一方每 tick 得 1 分，先到 600 分赢；
 // 摧毁对方主基地也直接赢
 import type { RuleContext, Ruleset } from "../../src/core/types.ts"
-import { baseStarts, standardStart, STANDARD_TERRAIN, standardTypes, symmetricTerrain, spawnMirrored } from "../common/standard.ts"
+import {
+  baseStarts,
+  randomSymmetricMap,
+  spawnMirrored,
+  STANDARD_HOME,
+  STANDARD_OBSTACLE_CHARS,
+  STANDARD_SHAPES,
+  standardStart,
+  STANDARD_TERRAIN,
+  standardTypes,
+  symmetricTerrain,
+} from "../common/standard.ts"
 import type { Objectives } from "./objectives.ts"
 
 const W = 48
 const H = 32
 const ZONE = { x: 22, y: 14, w: 4, h: 4 }
+
+// 地图按种子随机生成（中心对称，两边一样）：家和正中的控制点固定，石墙、水和两个争夺矿每局不同；
+// 生成不出合格的地图时用经典布局（D-141 之前的固定地图）
+const CLASSIC_WALLS = [
+  { ch: "#", x: 14, y: 0, w: 2, h: 7 },
+  { ch: "#", x: 0, y: 14, w: 7, h: 2 },
+  { ch: "#", x: 19, y: 11, w: 3, h: 2 },
+  { ch: "#", x: 26, y: 11, w: 3, h: 2 },
+  { ch: "~", x: 8, y: 20, w: 4, h: 3 },
+  { ch: "#", x: 30, y: 4, w: 2, h: 6 },
+]
+/** 争夺矿的阵型（经典布局里在 (17, 6)） */
+const CONTESTED = [
+  { x: 0, y: 0 },
+  { x: 1, y: 2 },
+]
+const CLASSIC_ANCHOR = { x: 17, y: 6 }
 const TARGET = 600
 const types = standardTypes()
 
@@ -56,21 +84,22 @@ const ruleset: Ruleset = {
 
   setup(ctx) {
     resetState()
-    ctx.setTerrain(
-      symmetricTerrain(W, H, ".", [
-        { ch: "#", x: 14, y: 0, w: 2, h: 7 },
-        { ch: "#", x: 0, y: 14, w: 7, h: 2 },
-        { ch: "#", x: 19, y: 11, w: 3, h: 2 },
-        { ch: "#", x: 26, y: 11, w: 3, h: 2 },
-        { ch: "~", x: 8, y: 20, w: 4, h: 3 },
-        { ch: "#", x: 30, y: 4, w: 2, h: 6 },
-      ]),
-    )
+    const map = randomSymmetricMap(ctx.rng, {
+      width: W,
+      height: H,
+      symmetry: "point",
+      base: symmetricTerrain(W, H, ".", []),
+      terrain: STANDARD_TERRAIN,
+      keepClear: [STANDARD_HOME, ZONE],
+      margin: 2,
+      obstacles: { count: [7, 10], shapes: STANDARD_SHAPES, chars: STANDARD_OBSTACLE_CHARS },
+      mines: [{ region: { x: 13, y: 3, w: 12, h: 10 }, offsets: CONTESTED }],
+      connect: [{ x: 7, y: 7 }, { x: ZONE.x + 1, y: ZONE.y + 1 }],
+    })
+    ctx.setTerrain(map?.terrain ?? symmetricTerrain(W, H, ".", CLASSIC_WALLS))
     standardStart(ctx, W, H, types)
-    spawnMirrored(ctx, W, H, types, [
-      { type: "goldmine", owner: -1, x: 17, y: 6, amount: 600 },
-      { type: "goldmine", owner: -1, x: 18, y: 8, amount: 600 },
-    ])
+    if (map) for (const m of map.mines) ctx.spawn("goldmine", -1, m.x, m.y, { amount: 600 })
+    else spawnMirrored(ctx, W, H, types, CONTESTED.map((o) => ({ type: "goldmine", owner: -1 as const, x: CLASSIC_ANCHOR.x + o.x, y: CLASSIC_ANCHOR.y + o.y, amount: 600 })))
     for (let p = 0; p < ctx.playerCount; p++) ctx.setResources(p, { gold: 200 })
     ctx.setMarkers([{ kind: "zone", ...ZONE, owner: null, label: "控制点" }])
   },
