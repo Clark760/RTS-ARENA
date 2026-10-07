@@ -29,7 +29,7 @@ import { leagueStandings, leagueTables, standingsText, teamSplits, type LeagueGa
 import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
 import { excitement, finalScores, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
 import { scriptWarnings, videoBrief, type VideoScript } from "../video/brief.ts"
-import { renderLeagueVideo, timelineText } from "../video/render.ts"
+import { lintScript, renderLeagueVideo, timelineText } from "../video/render.ts"
 import { createVideoWorkspace, readVideoConfig, VIDEO_CONFIG } from "../video/workspace.ts"
 import { BASELINE as TEMPLATE_BASELINE, GREEDY as TEMPLATE_GREEDY, INDEX as TEMPLATE_INDEX, RUSH as TEMPLATE_RUSH, writeRulesTemplate } from "./rules-template.ts"
 
@@ -48,10 +48,11 @@ const HELP = `用法：rts-arena <命令> [参数]
                                         建一个联赛视频目录（默认 league-video）：给大模型的说明 PROMPT.md、选手代码、几局战报、
                                         联赛数据、待填的 script.json；--about 写用户补充的背景（外号对应哪个模型、以前的成绩……）。大模型写好脚本后在目录里运行 rts-arena video
   video-brief [联赛汇总] [--out 文件]   联赛视频的素材包（JSON，video-init 也会写一份）
-  video [联赛汇总] [--script 脚本.json] [--out 视频.mp4] [--preview 秒,秒|auto] [--check 秒,秒]
+  video [联赛汇总] [--script 脚本.json] [--out 视频.mp4] [--lint] [--preview 秒,秒|auto] [--check 秒,秒|auto]
                                         按脚本渲染 1920×1080 的联赛视频（片头片尾平台署名、标题和用户原话、选手介绍、排行榜、精彩对局），
                                         用本机的 Chrome / Edge 渲染；每次都列出每段从第几秒到第几秒。--preview 只出这几秒的预览图
-                                        （auto 是每段各一张），--check 出完视频后从成品里截图检查
+                                        （auto 是每段各一张，放在 preview/ 里），--check 出完视频后从成品里截图检查（auto 每段一张），
+                                        --lint 只核对脚本、列出每段字数和时间表（不开浏览器、不出图）
                                         （在 video-init 建的目录里不用写参数；脚本怎么写见 video-init 生成的 PROMPT.md）
   report [回放] [--player N] [--every T] [--full]
                                         文字战报：每隔 T tick 双方的经济、兵力、建筑，关键事件、战斗、损失、可能的问题
@@ -144,7 +145,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   map: { seed: false },
   "video-brief": { out: false },
   "video-init": { text: false, about: false },
-  video: { script: false, out: false, preview: false, check: false, browser: false, fps: false },
+  video: { script: false, out: false, preview: false, check: false, browser: false, fps: false, lint: true },
 }
 
 function parseArgs(command: string | undefined, argv: string[]): { pos: string[]; opt: Record<string, string | true> } {
@@ -1270,14 +1271,24 @@ async function main(): Promise<void> {
       }
       const secs = (v: string | true | undefined, what: string) => {
         if (v === undefined) return undefined
+        if (what === "--check" && v === "auto") return "auto" as const
         const list = String(v).split(",").map(Number)
-        if (list.some((x) => !Number.isFinite(x) || x < 0)) fail(`${what} 要写成用逗号隔开的秒数，比如 2,15,40${what === "--preview" ? "；或者写 auto，每段各出一张" : ""}`)
+        if (list.some((x) => !Number.isFinite(x) || x < 0)) fail(`${what} 要写成用逗号隔开的秒数，比如 2,15,40；或者写 auto，每段各一张`)
         return list
       }
       // 不影响出视频、但最好改的地方（粗体字段里的"一"像破折号……）
       for (const w of scriptWarnings(script)) console.log(`提醒：${w}`)
       const fps = typeof opt.fps === "string" ? Number(opt.fps) : 30
       if (!Number.isInteger(fps) || fps < 10 || fps > 60) fail("--fps 要是 10～60 的整数")
+      // --lint：只核对脚本、列出字数和时间表，不开浏览器
+      if (opt.lint) {
+        const r = lintScript(file, script, fps)
+        console.log(`字数（现在 / 上限，标点和空格也算）：\n${r.counts.map((c) => `  ${c}`).join("\n")}`)
+        if (r.errors.length) fail(`脚本有问题：\n- ${r.errors.join("\n- ")}`)
+        console.log(`每段的时间（整段 ${r.timeline.at(-1)?.to.toFixed(1)} 秒）：\n${timelineText(r.timeline)}`)
+        console.log(r.warnings.length ? `格式没问题，有 ${r.warnings.length} 条提醒（见上面）` : "格式没问题，也没有提醒")
+        return
+      }
       const out = typeof opt.out === "string" ? opt.out : cfg ? cfg.out : file.replace(/\.series\.json$/, ".mp4")
       const t0 = performance.now()
       let lastPct = -1

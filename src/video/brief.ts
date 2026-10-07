@@ -148,9 +148,9 @@ export interface VideoScript {
   /** 每个选手：name 要和联赛里的名字一样 */
   players: {
     name: string
-    /** 显示的名字（最多 28 字），比如 "Gemini 3.8 flash High" */
+    /** 显示的名字（最多 28 字），比如 "ModelX 2.0" 或者用户给的外号 */
     displayName?: string
-    /** 一行小字（最多 40 字），比如 "反重力"，显示名用了外号时可以写 "DeepSeek V4.1 flash · DeepSeek Harness"；也会出现在片尾的选手名单里 */
+    /** 一行小字（最多 40 字），比如编程工具 "ToolY"，显示名用了外号时可以写 "<模型名> · <编程工具>"；也会出现在片尾的选手名单里；不知道就不写 */
     byline?: string
     /** 一句话定位（最多 30 字） */
     tagline: string
@@ -352,7 +352,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
     scriptTemplate,
     rules: [
       "介绍要有依据：用户的原话、文件名、代码（开头的注释、写法特征、参数）和联赛成绩里看得到的才写，不编造没发生的事",
-      "文件名常见的写法是 \"模型名-编程工具\"，比如 \"GPT6.1sol-codex\" 是 codex 里的 GPT 6.1 sol；拆不开就照原样用",
+      "文件名常见的写法是 \"模型名-编程工具\"，比如 \"ModelX2.0-ToolY\" 是 ToolY 里的 ModelX 2.0（只是格式的例子）；拆不开、只是外号时就照原样用，不要猜是哪家模型；不知道作者就不写 byline",
       "语气跟着用户的原话走（调侃就调侃，正式就正式），但不贬低任何一方；成绩差的写它的特点和输在哪",
       "每个选手 1～4 句介绍（建议 2～4 句），每句不超过 50 字；tagline 不超过 30 字；byline 会出现在片尾的选手名单里",
       "精彩对局最多 5 局，解说一句话（不超过 80 字），别重复标题卡上自动列出的看点（highlights 里的 reasons）；index 用联赛的局号",

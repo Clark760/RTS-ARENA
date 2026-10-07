@@ -1,12 +1,12 @@
 // 联赛视频：把联赛汇总 + 大模型写的脚本排成一串场景（片头署名 → 标题和用户原话 → 选手介绍 → 排行榜 → 精彩对局 → 片尾署名），
 // 用本机的 Chrome / Edge 无头模式逐帧画出来、编成 MP4。回放场景每帧的局面在这边从回放算好再送进页面
-import { readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { basename, dirname, join, resolve } from "node:path"
 import { applyFrame, ReplayModel, type State } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
 import { findBrowser, launchBrowser } from "./browser.ts"
-import { checkScript, codeFacts, factTags, gameScores, readSeries, resolveBotFile, type SeriesFile, type VideoScript } from "./brief.ts"
+import { checkScript, codeFacts, factTags, gameScores, PLAYER_PAGE_CHARS, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { groupBattles } from "../cli/battles.ts"
@@ -38,7 +38,7 @@ export interface RenderOptions {
   width?: number
   height?: number
   /** 出完视频后，从成品里截这几秒的画面（PNG）检查 */
-  check?: number[]
+  check?: number[] | "auto"
   onProgress?: (done: number, total: number) => void
 }
 
@@ -224,6 +224,7 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
     types: typeNames.map((k) => ({ shape: replay.types[k].look?.shape ?? "circle", label: replay.types[k].look?.label ?? "", color: replay.types[k].look?.color ?? null, kind: replay.types[k].kind })),
     seatColors,
     legend,
+    tickNote: `时间单位 tick：1 秒 = ${replay.tickRate} tick，一局最多 ${replay.maxTicks} tick`,
   }
 }
 
@@ -459,6 +460,45 @@ function autoPreview(scenes: Scene[], fps: number): number[] {
   return out
 }
 
+/**
+ * 只核对脚本、不出图（video --lint）：格式错误、提醒、每个字段的字数和上限、时间表。
+ * 写脚本时反复用它，字数对了再出预览图
+ */
+export function lintScript(seriesFile: string, script: VideoScript, fps = 30): { errors: string[]; warnings: string[]; counts: string[]; timeline: TimelineItem[] } {
+  const series = readSeries(seriesFile)
+  const errors = checkScript(script, series)
+  const warnings = scriptWarnings(script)
+  const L = SCRIPT_LIMITS
+  const n = (s?: string) => [...(s ?? "")].length
+  const counts: string[] = []
+  const row = (k: string, v: unknown, max: number) => {
+    if (typeof v === "string") counts.push(`${k}：${n(v)} / ${max}${n(v) > max ? "  ← 超了" : ""}`)
+  }
+  row("title", script.title, L.title)
+  row("userText", script.userText, L.userText)
+  row("theme", script.theme, L.theme)
+  if (Array.isArray(script.rules)) {
+    script.rules.forEach((l, i) => row(`rules[${i}]`, l, L.rulesLine))
+    const total = script.rules.reduce((a, l) => a + n(l), 0)
+    counts.push(`rules 合计：${total} / ${RULES_PAGE_CHARS}${total > RULES_PAGE_CHARS ? "  ← 超了" : ""}`)
+  }
+  if (Array.isArray(script.players))
+    script.players.forEach((p, i) => {
+      row(`players[${i}]（${p.name}）.tagline`, p.tagline, L.tagline)
+      if (Array.isArray(p.intro)) p.intro.forEach((l, j) => row(`players[${i}].intro[${j}]`, l, L.introLine))
+      const total = n(p.tagline) + (Array.isArray(p.intro) ? p.intro.reduce((a, l) => a + n(l), 0) : 0)
+      counts.push(`players[${i}]（${p.name}）tagline 加 intro：${total} / ${PLAYER_PAGE_CHARS}${total > PLAYER_PAGE_CHARS ? "  ← 超了" : ""}`)
+    })
+  if (Array.isArray(script.highlights))
+    script.highlights.forEach((h, i) => {
+      row(`highlights[${i}]（第 ${h.index} 局）.title`, h.title, L.hlTitle)
+      row(`highlights[${i}]（第 ${h.index} 局）.commentary`, h.commentary, L.commentary)
+    })
+  row("outro", script.outro, L.outro)
+  const timeline = errors.length ? [] : timelineOf(buildScenes(series, script, seriesFile, fps), fps)
+  return { errors, warnings, counts, timeline }
+}
+
 export interface RenderResult {
   file: string | null
   seconds: number
@@ -516,8 +556,12 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
     const starts: number[] = []
     scenes.reduce((a, s) => (starts.push(a), a + s.data.frames), 0)
     const preview = o.preview === "auto" ? autoPreview(scenes, fps) : o.preview
+    const check = o.check === "auto" ? autoPreview(scenes, fps) : (o.check ?? [])
+    // 预览图放进 preview/ 子目录，不和视频目录里的说明、代码混在一起
+    const pstem = join(dirname(stem), "preview", basename(stem))
     if (preview?.length) {
-      cleanOld(stem, "preview")
+      mkdirSync(dirname(pstem), { recursive: true })
+      cleanOld(pstem, "preview")
       const withSheet = preview.length > 1
       if (withSheet) await browser.evaluate(`__sheetBegin(${preview.length}, 4)`)
       for (const [n, t] of preview.entries()) {
@@ -530,14 +574,14 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
         let rf: ReplayFrame | null = null
         if (sc.frame) for (let i = 0; i <= local; i++) rf = sc.frame(i)
         const png = await browser.evaluate<string>(`__png(${local}, ${JSON.stringify(rf)})`)
-        const file = `${stem}-${t}s.png`
+        const file = `${pstem}-${t}s.png`
         writeFileSync(file, Buffer.from(png, "base64"))
         images.push(file)
         if (withSheet) await browser.evaluate(`__sheetAdd(${n}, ${JSON.stringify(`${t} 秒 · ${sc.label}`)})`)
       }
       let sheet: string | undefined
       if (withSheet) {
-        sheet = `${stem}-总览.png`
+        sheet = `${pstem}-总览.png`
         writeFileSync(sheet, Buffer.from(await browser.evaluate<string>("__sheetPng()"), "base64"))
       }
       return { file: null, seconds: total / fps, frames: total, bytes: 0, images, probe: null, timeline, sheet }
@@ -562,10 +606,10 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
     const bytes = Buffer.concat(parts)
     writeFileSync(o.out, bytes)
     // 用浏览器把成品解一遍：时长、尺寸对不对，顺便截几张图
-    const probe = await browser.evaluate<{ duration: number; width: number; height: number; shots: string[] }>(`__probe(${JSON.stringify(o.check ?? [])})`)
+    const probe = await browser.evaluate<{ duration: number; width: number; height: number; shots: string[] }>(`__probe(${JSON.stringify(check)})`)
     cleanOld(stem, "check")
     probe.shots.forEach((b64, k) => {
-      const file = `${stem}-check-${o.check![k]}s.png`
+      const file = `${stem}-check-${check[k]}s.png`
       writeFileSync(file, Buffer.from(b64, "base64"))
       images.push(file)
     })

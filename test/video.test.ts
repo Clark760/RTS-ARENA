@@ -113,7 +113,8 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   assert.deepEqual(close.credits.slice(0, 2), ["基准 · 平台自带", "rush"])
   assert.deepEqual(kinds.slice(1, 6), ["title", "rules", "player", "player", "standings"])
   // 规则介绍：没写 rules 就用规则包的一句话简介；配第一局精彩对局的开局地图（有控制点标记）和单位图例（带近战 / 射程）
-  const rules = scenes[2].data as { lines: string[]; ents: number[]; markers: { kind: string }[]; legend: { name: string; detail: string }[] }
+  const rules = scenes[2].data as { lines: string[]; ents: number[]; markers: { kind: string }[]; legend: { name: string; detail: string }[]; tickNote: string }
+  assert.match(rules.tickNote, /1 秒 = 10 tick，一局最多 \d+ tick/)
   assert.equal(rules.lines.length, 1)
   assert.ok(rules.ents.length > 0 && rules.markers.some((m) => m.kind === "zone"))
   assert.ok(rules.legend.some((l) => l.name === "弓手" && /射程 4/.test(l.detail)) && rules.legend.some((l) => l.name === "战士" && /近战/.test(l.detail)))
@@ -184,6 +185,8 @@ test("video-init：视频目录里有说明、选手代码、战报、待填脚�
   assert.match(prompt, /### 联赛速查/)
   // 规则说明一起导出，PROMPT 里有规则介绍的写法
   assert.ok(existsSync(join(dir, "RULES.md")))
+  // 说明里的例子只用占位，不出现真实的模型名、外号（免得诱导大模型去猜这场的选手是谁写的）
+  assert.doesNotMatch(prompt, /DeepSeek|大肥鱼|GPT6\.1sol|Gemini/)
   assert.match(prompt, /3\. \*\*规则介绍\*\*/)
   assert.match(prompt, /照这个目录里的 `RULES\.md` 写/)
   assert.match(prompt, /\| 标题卡看点 \|/)
@@ -227,13 +230,19 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   writeFileSync(join(dir, "script.json"), JSON.stringify({ ...script, title: "唯一一胜" }))
   assert.match(sh(["video", "--preview", "1"], dir), /提醒：title 是粗体/)
   writeFileSync(join(dir, "script.json"), JSON.stringify(script))
+  // --lint：不出图，列出每个字段的字数和上限、时间表
+  const lint = sh(["video", "--lint"], dir)
+  assert.match(lint, /字数（现在 \/ 上限/)
+  assert.match(lint, /players\[0\]（baseline）tagline 加 intro：\d+ \/ 80/)
+  assert.match(lint, /每段的时间/)
+  assert.match(lint, /格式没问题/)
   const out = sh(["video", "--preview", "1,6"], dir)
   assert.match(out, /预览图/)
   assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～2\.7\s+秒  片头署名/)
-  assert.ok(statSync(join(dir, "夺点联赛-6s.png")).size > 10_000)
+  assert.ok(statSync(join(dir, "preview", "夺点联赛-6s.png")).size > 10_000)
   // 两张以上的预览拼一张总览
-  assert.match(out, /总览：夺点联赛-总览\.png/)
-  assert.ok(statSync(join(dir, "夺点联赛-总览.png")).size > 10_000)
+  assert.match(out, /总览：preview[\\/]夺点联赛-总览\.png/)
+  assert.ok(statSync(join(dir, "preview", "夺点联赛-总览.png")).size > 10_000)
   // auto：每段一张，回放段两张
   const auto = sh(["video", "--preview", "auto"], dir)
   const shots = /预览图：(.*)/.exec(auto)![1].split("、")

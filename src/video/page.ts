@@ -42,6 +42,8 @@ export type SceneData =
       types: { shape: string; label: string; color: string | null; kind: string }[]
       seatColors: string[]
       legend: { shape: string; label: string; color: string | null; kind: string; name: string; detail: string }[]
+      /** 左下角的小字：1 秒 = 多少 tick */
+      tickNote: string
     }
   | { kind: "standings"; frames: number; title: string; rows: { name: string; color: string; rank: number; record: string; rate: number; elo: number }[] }
   | { kind: "hlTitle"; frames: number; speed?: number; no: number; title: string; sides: { name: string; color: string }[]; result: string; reasons: string[]; commentary: string | null }
@@ -414,7 +416,7 @@ export function installVideoPage(): void {
     g.font = font(26)
     s.lines.forEach((line: string, k: number) => {
       const a = ease((i - 12 - k * 9) / 12)
-      const ls = wrapBalanced(line, 540)
+      const ls = wrapBalanced(line, 570)
       g.fillStyle = C.accent
       g.globalAlpha = a
       g.beginPath()
@@ -424,6 +426,7 @@ export function installVideoPage(): void {
       ls.forEach((l, j) => text(l, 110, y + j * 37, 26, C.text, { alpha: a }))
       y += ls.length * 37 + 18
     })
+    if (s.tickNote) text(s.tickNote, 80, H - 56, 17, C.muted, { alpha: ease((i - 20) / 15) })
     // 右边：开局地图
     const a2 = ease((i - 8) / 18)
     const boxW = 540
