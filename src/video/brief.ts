@@ -3,7 +3,9 @@
 // - 脚本（video --script）：大模型写的 JSON——视频标题、用户的原话、对原话的解读、每个选手的介绍、精彩对局的解说
 // 平台署名（片头、片尾）由渲染器固定加上，脚本去不掉
 import { existsSync, readFileSync } from "node:fs"
-import { basename, dirname, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
+import { finalScores } from "../cli/highlights.ts"
+import type { Replay } from "../core/types.ts"
 
 /** 联赛汇总文件（*.series.json）里视频要用到的部分 */
 export interface SeriesFile {
@@ -15,7 +17,7 @@ export interface SeriesFile {
   size?: number
   teams?: string | null
   participants: { name: string; file: string }[]
-  results: { index: number; seed: number; seats: number[]; names: string[]; teams: number[]; winners: number[]; reason: string; tick: number; replay: string }[]
+  results: { index: number; seed: number; seats: number[]; names: string[]; teams: number[]; winners: number[]; reason: string; tick: number; replay: string; scores?: number[] }[]
   summary: null | {
     standings: { index: number; name: string; rank: number; games: number; wins: number; draws: number; losses: number; rate: number; rateCi?: number; elo: number }[]
     matrix: { w: number; d: number; l: number }[][]
@@ -158,6 +160,9 @@ export interface VideoScript {
   outro?: string
 }
 
+/** 选手页最长 9 秒，大约读得完 100 字：tagline 加 intro 超了就提醒 */
+export const PLAYER_PAGE_CHARS = 100
+
 export const SCRIPT_LIMITS = { title: 24, userText: 120, theme: 60, displayName: 28, byline: 40, tagline: 30, introLine: 50, introLines: 4, hlTitle: 24, commentary: 80, outro: 60, highlights: 5 }
 
 /** 检查脚本，返回所有问题（空数组是没问题） */
@@ -222,9 +227,54 @@ export function scriptWarnings(s: unknown): string[] {
       bold.push([`highlights[${i}].title`, h?.title])
       bold.push([`highlights[${i}].commentary`, h?.commentary])
     })
-  return bold
+  const out = bold
     .filter((x): x is [string, string] => typeof x[1] === "string" && x[1].includes("一"))
     .map(([where, v]) => `${where} 是粗体，里面的"一"看起来像破折号："${v}"——数量写成阿拉伯数字，或者换个说法`)
+  // 选手页最长 9 秒：tagline 加 intro 太长读不完
+  if (Array.isArray(o.players))
+    o.players.forEach((p, i) => {
+      const n = [p?.tagline, ...(Array.isArray(p?.intro) ? p.intro : [])].reduce((a: number, x) => a + (typeof x === "string" ? [...x].length : 0), 0)
+      if (n > PLAYER_PAGE_CHARS) out.push(`players[${i}]（${p?.name}）的 tagline 加 intro 共 ${n} 字，选手页最长 9 秒，大约只读得完 ${PLAYER_PAGE_CHARS} 字：删一句或者写短些`)
+    })
+  return out
+}
+
+/** 每局的最终比分：联赛汇总里记了就用（D-144 起），没记就读回放算 */
+export function gameScores(series: SeriesFile, seriesFile: string): Map<number, number[]> {
+  const out = new Map<number, number[]>()
+  for (const r of series.results) {
+    if (r.scores) {
+      out.set(r.index, r.scores)
+      continue
+    }
+    const f = join(dirname(resolve(seriesFile)), r.replay)
+    if (existsSync(f)) out.set(r.index, finalScores(JSON.parse(readFileSync(f, "utf8")) as Replay))
+  }
+  return out
+}
+
+/**
+ * 联赛速查里的几条"全联赛之最"，挑中这几局时显示在标题卡上，排在看点最前面
+ * （写脚本的人在 PROMPT.md 的全部对局表里也看得到）：结束得最快的胜局、打得最久的、比分最接近的胜局
+ */
+export function factTags(series: SeriesFile, scores: Map<number, number[]>): Map<number, string[]> {
+  const tags = new Map<number, string[]>()
+  const add = (i: number, t: string) => tags.set(i, [...(tags.get(i) ?? []), t])
+  const decided = series.results.filter((r) => r.winners.length > 0)
+  const fast = [...decided].sort((a, b) => a.tick - b.tick || a.index - b.index)[0]
+  if (fast) add(fast.index, `全联赛结束得最快的胜局（${fast.tick} tick）`)
+  const slow = [...series.results].sort((a, b) => b.tick - a.tick || a.index - b.index)[0]
+  if (slow && slow !== fast) add(slow.index, `全联赛打得最久的局（${slow.tick} tick）`)
+  let best: { index: number; gap: number } | null = null
+  for (const r of decided) {
+    const sc = scores.get(r.index)
+    if (!sc || sc.every((v) => v === 0)) continue
+    const ws = Math.max(...r.winners.map((p) => sc[p]))
+    const ls = Math.max(...sc.filter((_, p) => !r.winners.includes(p)))
+    if (ws - ls >= 0 && (!best || ws - ls < best.gap)) best = { index: r.index, gap: ws - ls }
+  }
+  if (best) add(best.index, `全联赛比分最接近的胜局（只差 ${best.gap} 分）`)
+  return tags
 }
 
 export function readSeries(file: string): SeriesFile {

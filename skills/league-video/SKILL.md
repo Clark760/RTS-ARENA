@@ -13,7 +13,7 @@ description: 给 RTS Arena 的联赛生成视频。根据用户给的一段话�
 
 选手文件在压缩包里时先解压。Windows 上用系统自带的 `C:\Windows\System32\tar.exe -xf 包.rar`（Git Bash 里的 tar 解不了 RAR；包名是中文时先复制成英文名再解）。
 
-还没有联赛就先跑一场（选手文件放在当前目录，联赛名字就是文件名去掉 `.ts`）：
+还没有联赛就先跑一场（选手文件放在当前目录，联赛名字就是文件名去掉 `.ts`；规则包的名字用 `rts-arena list` 查）：
 
 ```bash
 rts-arena league <规则包> 选手A.ts 选手B.ts 选手C.ts --per-pair 20 --out league

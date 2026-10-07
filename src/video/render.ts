@@ -1,18 +1,18 @@
 // 联赛视频：把联赛汇总 + 大模型写的脚本排成一串场景（片头署名 → 标题和用户原话 → 选手介绍 → 排行榜 → 精彩对局 → 片尾署名），
 // 用本机的 Chrome / Edge 无头模式逐帧画出来、编成 MP4。回放场景每帧的局面在这边从回放算好再送进页面
-import { readFileSync, writeFileSync } from "node:fs"
+import { readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
-import { dirname, join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { applyFrame, ReplayModel, type State } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
 import { findBrowser, launchBrowser } from "./browser.ts"
-import { checkScript, codeFacts, readSeries, resolveBotFile, type SeriesFile, type VideoScript } from "./brief.ts"
+import { checkScript, codeFacts, factTags, gameScores, readSeries, resolveBotFile, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { groupBattles } from "../cli/battles.ts"
 
 /** 联赛没挑中的局：现场从回放算看点（不算爆冷） */
-function gameReasons(replay: Replay, seatNames: string[]): string[] {
+export function gameReasons(replay: Replay, seatNames: string[]): string[] {
   const f = gameFacts(replay)
   const sideName = (side: number) => [...new Set(seatNames.filter((_, p) => (replay.players[p]?.team ?? p) === side))].join("+")
   return excitement(f, null, sideName).reasons
@@ -126,6 +126,8 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
     },
   })
   // 精彩对局：脚本指定的，或者联赛挑的前 3 局
+  // 全联赛之最（最快、最久、比分最接近）的标签，挑中这几局时排在看点最前面
+  const tags = factTags(series, gameScores(series, seriesFile))
   const picks: { index: number; title?: string; commentary?: string }[] = script.highlights?.length
     ? script.highlights
     : (sum.highlights ?? []).slice(0, 3).map((h) => ({ index: h.index }))
@@ -143,17 +145,15 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
     const result = tidy(winners.length ? `${winners.join("、")} 获胜` : "平局")
     const title = pick.title || sides.map((s) => s.name).join(" 对 ")
     const commentary = pick.commentary || null
-    const reasons = (hl ? hl.reasons.map(relabel) : gameReasons(replay, g.names.map(display)).map(tidy)).slice(0, 4)
+    const reasons = [...(tags.get(g.index) ?? []), ...(hl ? hl.reasons.map(relabel) : gameReasons(replay, g.names.map(display)).map(tidy))].slice(0, 4)
     scenes.push({
       label: `精彩对局 ${k + 1} 标题卡（第 ${g.index} 局）`,
       data: { kind: "hlTitle", frames: sec(fps, readSecs(len(commentary) + 0.4 * len(...reasons), 2.5, 4.5, 8)), no: k + 1, title, sides, result: `第 ${g.index} 局 · ${result} · 第 ${g.tick} tick · ${relabel(g.reason)}`, reasons, commentary },
     })
     scenes.push({ label: `精彩对局 ${k + 1} 回放`, ...replayScene(replay, k + 1, title, commentary, seatOf.map((i, p) => ({ name: display(g.names[p]), color: color(i) })), result, fps) })
   })
-  const credits = series.participants.map((p) => {
-    const s = sp(p.name)
-    return `${s?.displayName || p.name}${s?.byline ? ` · ${s.byline}` : ""}`
-  })
+  // 片尾名单按脚本里的出场顺序
+  const credits = script.players.map((s) => `${s.displayName || s.name}${s.byline ? ` · ${s.byline}` : ""}`)
   scenes.push({ label: "总结、片尾署名和选手名单", data: { kind: "brandClose", frames: sec(fps, 6.5), outro: script.outro || null, credits: [...credits, "比赛、回放、精彩对局和这段视频都由平台自动生成"] } })
   return scenes
 }
@@ -337,7 +337,10 @@ function replayEvents(replay: Replay, seats: { name: string }[]): (t: number) =>
       wasAlive[i] = p.alive
     })
   }
-  const battles = groupBattles(deaths).filter((b) => b.length >= BIG_BATTLE)
+  // 门槛：死 6 个以上；这局最大的一仗都不到 6 个（夺点这类小规模交战）时，降到和战报一样的 3 个
+  const all = groupBattles(deaths)
+  const threshold = Math.max(3, Math.min(BIG_BATTLE, Math.max(0, ...all.map((b) => b.length))))
+  const battles = all.filter((b) => b.length >= threshold)
   return (t) => {
     const items = fixed.filter((e) => e.t <= t)
     for (const b of battles) {
@@ -345,7 +348,7 @@ function replayEvents(replay: Replay, seats: { name: string }[]): (t: number) =>
       const t1 = b[b.length - 1].t
       const owners = [...new Set(b.map((d) => d.owner))].sort((x, y) => x - y)
       const loss = owners.map((p) => `${name(p)} 损失 ${b.filter((d) => d.owner === p && d.t <= t).length}`).join("，")
-      items.push({ t: b[0].t, text: t >= t1 ? `t${b[0].t}～${t1} 大战：${loss}` : `t${b[0].t} 起交战中：${loss}` })
+      items.push({ t: b[0].t, text: t >= t1 ? `t${b[0].t}～${t1} ${b.length >= BIG_BATTLE ? "大战" : "交战"}：${loss}` : `t${b[0].t} 起交战中：${loss}` })
     }
     return items.sort((x, y) => x.t - y.t).map((e) => tidy(e.text))
   }
@@ -380,7 +383,7 @@ function autoPreview(scenes: Scene[], fps: number): number[] {
     const n = s.data.frames
     if (s.frame) {
       at(f + Math.round((n - sec(fps, 1.5)) / 2))
-      at(f + n - sec(fps, 0.7))
+      at(f + n - sec(fps, 1.5) - 1) // 最后定格之前的那一帧：终局的局面，不被"获胜"的横幅挡住
     } else at(f + Math.round(n * 0.7))
     f += n
   }
@@ -395,6 +398,16 @@ export interface RenderResult {
   images: string[]
   probe: { duration: number; width: number; height: number } | null
   timeline: TimelineItem[]
+  /** 预览总览图（几张以上的预览才有） */
+  sheet?: string
+}
+
+/** 删掉上一次出的预览图（或成品截图），免得越堆越多；只删这个命令自己起的文件名 */
+function cleanOld(stem: string, kind: "preview" | "check"): void {
+  const dir = dirname(resolve(stem))
+  const base = basename(stem).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const re = kind === "preview" ? new RegExp(`^${base}-([\\d.]+s|总览)\\.png$`) : new RegExp(`^${base}-check-[\\d.]+s\\.png$`)
+  for (const f of readdirSync(dir)) if (re.test(f)) unlinkSync(join(dir, f))
 }
 
 export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult> {
@@ -424,7 +437,10 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
     scenes.reduce((a, s) => (starts.push(a), a + s.data.frames), 0)
     const preview = o.preview === "auto" ? autoPreview(scenes, fps) : o.preview
     if (preview?.length) {
-      for (const t of preview) {
+      cleanOld(stem, "preview")
+      const withSheet = preview.length > 1
+      if (withSheet) await browser.evaluate(`__sheetBegin(${preview.length}, 4)`)
+      for (const [n, t] of preview.entries()) {
         const f = Math.max(0, Math.min(total - 1, Math.round(t * fps)))
         const k = starts.findLastIndex((st) => st <= f)
         const sc = scenes[k]
@@ -437,8 +453,14 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
         const file = `${stem}-${t}s.png`
         writeFileSync(file, Buffer.from(png, "base64"))
         images.push(file)
+        if (withSheet) await browser.evaluate(`__sheetAdd(${n}, ${JSON.stringify(`${t} 秒 · ${sc.label}`)})`)
       }
-      return { file: null, seconds: total / fps, frames: total, bytes: 0, images, probe: null, timeline }
+      let sheet: string | undefined
+      if (withSheet) {
+        sheet = `${stem}-总览.png`
+        writeFileSync(sheet, Buffer.from(await browser.evaluate<string>("__sheetPng()"), "base64"))
+      }
+      return { file: null, seconds: total / fps, frames: total, bytes: 0, images, probe: null, timeline, sheet }
     }
     // 码率按像素数算：1080p 约 8 Mbps
     await browser.evaluate(`__init(${JSON.stringify({ fps, bitrate: Math.round((width * height * fps) / 7.8) })})`)
@@ -461,6 +483,7 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
     writeFileSync(o.out, bytes)
     // 用浏览器把成品解一遍：时长、尺寸对不对，顺便截几张图
     const probe = await browser.evaluate<{ duration: number; width: number; height: number; shots: string[] }>(`__probe(${JSON.stringify(o.check ?? [])})`)
+    cleanOld(stem, "check")
     probe.shots.forEach((b64, k) => {
       const file = `${stem}-check-${o.check![k]}s.png`
       writeFileSync(file, Buffer.from(b64, "base64"))

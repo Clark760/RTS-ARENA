@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, w
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { after, test } from "node:test"
-import { checkScript, codeFacts, readSeries, scriptWarnings, videoBrief, type VideoScript } from "../src/video/brief.ts"
+import { checkScript, codeFacts, factTags, gameScores, readSeries, scriptWarnings, videoBrief, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
 import { buildScenes, pacing, tidy, timelineOf } from "../src/video/render.ts"
 import type { Replay } from "../src/core/types.ts"
@@ -77,11 +77,23 @@ const script: VideoScript = {
   outro: "完。",
 }
 
+test("联赛汇总记下每局比分；全联赛之最（最快、最久、比分最接近）的标签打在对应那局上", () => {
+  const series = readSeries(seriesFile)
+  assert.ok(series.results.every((r) => Array.isArray(r.scores) && r.scores.length === r.names.length))
+  const tags = factTags(series, gameScores(series, seriesFile))
+  const fastest = [...series.results].filter((r) => r.winners.length).sort((a, b) => a.tick - b.tick || a.index - b.index)[0]
+  assert.match(tags.get(fastest.index)!.join("；"), /全联赛结束得最快的胜局（\d+ tick）/)
+  assert.ok([...tags.values()].flat().some((t) => /比分最接近/.test(t)))
+})
+
 test("脚本提醒：粗体字段里的「一」像破折号，常规字重的介绍不管", () => {
   const w = scriptWarnings({ title: "唯一一胜", players: [{ name: "a", tagline: "只输 1 局", intro: ["一稿流"] }], highlights: [{ index: 1, commentary: "一波带走" }], outro: "完" })
   assert.equal(w.length, 2)
   assert.ok(w[0].startsWith("title 是粗体") && w[1].startsWith("highlights[0].commentary 是粗体"))
   assert.deepEqual(scriptWarnings(null), [])
+  // 选手页最长 9 秒：tagline 加 intro 超过 100 字提醒
+  const long = scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["很长".repeat(30), "很长".repeat(30)] }] })
+  assert.match(long[0], /players\[0\]（a）的 tagline 加 intro 共 122 字/)
 })
 
 test("场景编排：片头片尾署名、标题、每个选手、排名、精彩对局（标题卡 + 回放）", () => {
@@ -91,6 +103,9 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   const kinds = scenes.map((s) => s.data.kind)
   assert.equal(kinds[0], "brandOpen")
   assert.equal(kinds.at(-1), "brandClose")
+  // 片尾名单按脚本里的出场顺序
+  const close = scenes.at(-1)!.data as { credits: string[] }
+  assert.deepEqual(close.credits.slice(0, 2), ["基准 · 平台自带", "rush"])
   assert.deepEqual(kinds.slice(1, 5), ["title", "player", "player", "standings"])
   const hl = series.summary!.highlights!.slice(0, 3).length
   assert.equal(kinds.filter((k) => k === "replay").length, hl)
@@ -148,6 +163,8 @@ test("video-init：视频目录里有说明、选手代码、战报、待填脚�
   // 用户补充的背景、平台算好的联赛速查（最快的局、每人赢了谁输给谁）
   assert.match(prompt, /用户补充的背景\*\*：rush 是某某模型写的/)
   assert.match(prompt, /### 联赛速查/)
+  assert.match(prompt, /\| 标题卡看点 \|/)
+  assert.match(prompt, /全联赛结束得最快的胜局（\d+ tick）/)
   assert.match(prompt, /结束得最快的胜局：第 \d+ 局/)
   assert.match(prompt, /- baseline（第 \d 名）：赢 \d+ 局/)
   assert.match(prompt, /### 排名/)
@@ -188,6 +205,9 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   assert.match(out, /预览图/)
   assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～3\.5\s+秒  片头署名/)
   assert.ok(statSync(join(dir, "夺点联赛-6s.png")).size > 10_000)
+  // 两张以上的预览拼一张总览
+  assert.match(out, /总览：夺点联赛-总览\.png/)
+  assert.ok(statSync(join(dir, "夺点联赛-总览.png")).size > 10_000)
   // auto：每段一张，回放段两张
   const auto = sh(["video", "--preview", "auto"], dir)
   const shots = /预览图：(.*)/.exec(auto)![1].split("、")

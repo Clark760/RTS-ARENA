@@ -712,14 +712,43 @@ export function installVideoPage(): void {
     return frameNo
   }
   /** 画一帧，返回 PNG 的 data URL（预览用，不编码） */
-  w.__png = async (i: number, f: Any | null) => {
-    draw(f, i)
-    const blob = await canvas.convertToBlob({ type: "image/png" })
+  const pngBase64 = async (c: OffscreenCanvas) => {
+    const blob = await c.convertToBlob({ type: "image/png" })
     const buf = new Uint8Array(await blob.arrayBuffer())
     let s = ""
     for (let k = 0; k < buf.length; k += 0x8000) s += String.fromCharCode(...buf.subarray(k, k + 0x8000))
     return btoa(s)
   }
+  w.__png = async (i: number, f: Any | null) => {
+    draw(f, i)
+    return pngBase64(canvas)
+  }
+  // 预览总览：每张预览缩小拼在一张图上，上面标秒数和是哪一段（大模型先看这一张，有问题再打开单张）
+  const TW = 480
+  const TH = 270
+  const LH = 30
+  let sheet: OffscreenCanvas | null = null
+  let sheetCols = 4
+  w.__sheetBegin = (n: number, cols: number) => {
+    sheetCols = cols
+    sheet = new OffscreenCanvas(cols * TW, Math.ceil(n / cols) * (TH + LH))
+    const sg = sheet.getContext("2d")!
+    sg.fillStyle = "#05080f"
+    sg.fillRect(0, 0, sheet.width, sheet.height)
+    return true
+  }
+  w.__sheetAdd = (k: number, label: string) => {
+    const sg = sheet!.getContext("2d")!
+    const x = (k % sheetCols) * TW
+    const y = Math.floor(k / sheetCols) * (TH + LH)
+    sg.drawImage(canvas, x, y + LH, TW, TH)
+    sg.fillStyle = "#e8edf7"
+    sg.font = `bold 18px ${FONT}`
+    sg.textBaseline = "middle"
+    sg.fillText(label, x + 8, y + LH / 2, TW - 16)
+    return true
+  }
+  w.__sheetPng = async () => pngBase64(sheet!)
   w.__finish = async () => {
     await encoder!.flush()
     muxer!.finalize()

@@ -229,18 +229,31 @@ export interface Highlight {
 
 /**
  * 挑精彩对局：按精彩度从高到低，同一组对手最多 2 局，太平淡的（不到 20 分）不要；最多 limit 局。
+ * 同一组对手、同一方赢的先只挑 1 局（免得挑出两局一样的故事，比如两局都是同一个人爆冷赢同一个人），不够再补。
  * prefer 为 true 的局（在 bot 目录里跑联赛时，有自己的 bot 的局）排序时多算 15 分
  */
 export function pickHighlights(all: (Highlight & { key: string })[], limit: number, prefer: (h: Highlight) => boolean = () => false): Highlight[] {
-  const per = new Map<string, number>()
-  const out: Highlight[] = []
   const rank = (h: Highlight) => h.score + (prefer(h) ? 15 : 0)
-  for (const h of [...all].sort((a, b) => rank(b) - rank(a) || a.index - b.index)) {
-    if (out.length >= limit || h.score < 20) break
-    if ((per.get(h.key) ?? 0) >= 2) continue
-    per.set(h.key, (per.get(h.key) ?? 0) + 1)
-    const { key: _, ...rest } = h
-    out.push(rest)
-  }
-  return out
+  const sorted = [...all].filter((h) => h.score >= 20).sort((a, b) => rank(b) - rank(a) || a.index - b.index)
+  const per = new Map<string, number>()
+  const story = new Set<string>()
+  const picked = new Set<number>()
+  for (const strict of [true, false])
+    for (const h of sorted) {
+      if (picked.size >= limit) break
+      if (picked.has(h.index) || (per.get(h.key) ?? 0) >= 2) continue
+      const s = `${h.key}|${h.winner}`
+      if (strict && story.has(s)) continue
+      story.add(s)
+      per.set(h.key, (per.get(h.key) ?? 0) + 1)
+      picked.add(h.index)
+    }
+  return sorted.filter((h) => picked.has(h.index)).map(({ key: _, ...rest }) => rest)
+}
+
+/** 一局结束时各座位的分数（规则包的分数：歼灭是击杀价值、夺点是控制分……） */
+export function finalScores(replay: Replay): number[] {
+  let players = replay.initial.players
+  for (const f of replay.frames) if (f.players) players = f.players
+  return players.map((p) => Math.round(p.score))
 }

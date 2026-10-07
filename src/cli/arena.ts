@@ -27,7 +27,7 @@ import { PKG_ROOT } from "../paths.ts"
 import { buildReport } from "./report.ts"
 import { leagueStandings, leagueTables, standingsText, teamSplits, type LeagueGame, type LeagueResult } from "./league.ts"
 import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
-import { excitement, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
+import { excitement, finalScores, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
 import { scriptWarnings, videoBrief, type VideoScript } from "../video/brief.ts"
 import { renderLeagueVideo, timelineText } from "../video/render.ts"
 import { createVideoWorkspace, readVideoConfig, VIDEO_CONFIG } from "../video/workspace.ts"
@@ -677,6 +677,8 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
         ranking: replay.result.ranking,
         reason: replay.result.reason,
         tick: replay.result.tick,
+        /** 各座位的最终分数 */
+        scores: finalScores(replay),
         ms: Math.round(ms),
         replay: basename(file),
         logs,
@@ -1247,7 +1249,7 @@ async function main(): Promise<void> {
       console.log(`已建好联赛视频目录 ${dir}（联赛 ${file}）：${r.files.length} 个文件`)
       console.log(`  PROMPT.md    给大模型的说明：视频结构、怎么写、联赛数据（先读它）`)
       console.log(`  bots/        选手代码；reports/ 几局的战报；script.json 待填的脚本`)
-      console.log(`写好 script.json 后在 ${dir} 里运行：rts-arena video --preview auto 先看预览（每段一张），再 rts-arena video 出视频`)
+      console.log(`写好 script.json 后在 ${dir} 里运行：rts-arena video --preview auto 先看预览（每段一张，另有一张总览拼图），再 rts-arena video --check 5,60 出视频并从成品里截图检查`)
       return
     }
     case "video": {
@@ -1294,7 +1296,10 @@ async function main(): Promise<void> {
           },
         })
         console.log(`每段的时间（整段 ${r.seconds.toFixed(1)} 秒）：\n${timelineText(r.timeline)}`)
-        if (!r.file) console.log(`预览图：${r.images.join("、")}`)
+        if (!r.file) {
+          if (r.sheet) console.log(`总览：${r.sheet}（所有预览缩小拼在一张图上，先看它，有问题再打开单张）`)
+          console.log(`预览图：${r.images.join("、")}`)
+        }
         else {
           console.log(`已生成 ${r.file}：${r.seconds.toFixed(1)} 秒，${r.frames} 帧，${(r.bytes / 1e6).toFixed(1)} MB，用时 ${((performance.now() - t0) / 1000).toFixed(0)} 秒`)
           if (r.probe) console.log(`浏览器解码检查：时长 ${r.probe.duration.toFixed(1)} 秒，${r.probe.width}×${r.probe.height}`)

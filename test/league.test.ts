@@ -172,6 +172,12 @@ test("精彩对局：落后又反超算逆转，主基地差点被拆算险胜�
     pickHighlights([h(1, "a|b", 90), h(2, "a|b", 80), h(3, "a|b", 70), h(4, "a|c", 60), h(5, "b|c", 10)], 5).map((x) => x.index),
     [1, 2, 4],
   )
+  // 同一组对手、同一方赢的先只挑 1 局（不挑出两局一样的故事），另一方赢的那局排上来
+  const hw = (index: number, key: string, score: number, winner: string) => ({ ...h(index, key, score), winner })
+  assert.deepEqual(
+    pickHighlights([hw(1, "a|b", 90, "a"), hw(2, "a|b", 85, "a"), hw(3, "a|b", 80, "b"), hw(4, "a|c", 60, "a")], 5).map((x) => x.index),
+    [1, 3, 4],
+  )
 })
 
 test("对战接口开联赛：事件里有最新排名和最后的汇总；参数不对被拒", async () => {
