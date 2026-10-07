@@ -102,6 +102,9 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   const scenes = buildScenes(series, script, seriesFile, 10)
   const kinds = scenes.map((s) => s.data.kind)
   assert.equal(kinds[0], "brandOpen")
+  // 片头片尾、选手页、标题卡的节奏加快：带 speed，时长按它缩短（片头 3.5 秒 → 2.7 秒）
+  for (const s of scenes.filter((x) => ["brandOpen", "player", "hlTitle", "brandClose"].includes(x.data.kind))) assert.equal((s.data as { speed?: number }).speed, 1.3)
+  assert.equal(scenes[0].data.frames, Math.round((10 * 3.5) / 1.3))
   assert.equal(kinds.at(-1), "brandClose")
   // 片尾名单按脚本里的出场顺序
   const close = scenes.at(-1)!.data as { credits: string[] }
@@ -214,7 +217,7 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   writeFileSync(join(dir, "script.json"), JSON.stringify(script))
   const out = sh(["video", "--preview", "1,6"], dir)
   assert.match(out, /预览图/)
-  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～3\.5\s+秒  片头署名/)
+  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～2\.7\s+秒  片头署名/)
   assert.ok(statSync(join(dir, "夺点联赛-6s.png")).size > 10_000)
   // 两张以上的预览拼一张总览
   assert.match(out, /总览：夺点联赛-总览\.png/)

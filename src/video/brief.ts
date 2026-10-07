@@ -163,8 +163,8 @@ export interface VideoScript {
   outro?: string
 }
 
-/** 选手页最长 9 秒，大约读得完 100 字：tagline 加 intro 超了就提醒 */
-export const PLAYER_PAGE_CHARS = 100
+/** 选手页最长 7 秒左右（D-146 加快节奏后），大约读得完 80 字：tagline 加 intro 超了就提醒 */
+export const PLAYER_PAGE_CHARS = 80
 
 /** 规则页最长 12 秒，大约读得完 130 字 */
 export const RULES_PAGE_CHARS = 130
@@ -249,7 +249,7 @@ export function scriptWarnings(s: unknown): string[] {
   if (Array.isArray(o.players))
     o.players.forEach((p, i) => {
       const n = [p?.tagline, ...(Array.isArray(p?.intro) ? p.intro : [])].reduce((a: number, x) => a + (typeof x === "string" ? [...x].length : 0), 0)
-      if (n > PLAYER_PAGE_CHARS) out.push(`players[${i}]（${p?.name}）的 tagline 加 intro 共 ${n} 字，选手页最长 9 秒，大约只读得完 ${PLAYER_PAGE_CHARS} 字：删一句或者写短些`)
+      if (n > PLAYER_PAGE_CHARS) out.push(`players[${i}]（${p?.name}）的 tagline 加 intro 共 ${n} 字，选手页最长 7 秒左右，大约只读得完 ${PLAYER_PAGE_CHARS} 字：删一句或者写短些`)
     })
   return out
 }

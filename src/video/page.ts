@@ -4,11 +4,13 @@
 
 /** 一个场景的固定内容 */
 export type SceneData =
-  | { kind: "brandOpen"; frames: number; ruleset: string }
+  | { kind: "brandOpen"; frames: number; speed?: number; ruleset: string }
   | { kind: "title"; frames: number; ruleset: string; eyebrow: string; title: string; userText: string | null; theme: string | null; meta: string }
   | {
       kind: "player"
       frames: number
+      /** 页内动画快几倍（时长已经按它缩短） */
+      speed?: number
       color: string
       displayName: string
       name: string
@@ -42,7 +44,7 @@ export type SceneData =
       legend: { shape: string; label: string; color: string | null; kind: string; name: string; detail: string }[]
     }
   | { kind: "standings"; frames: number; title: string; rows: { name: string; color: string; rank: number; record: string; rate: number; elo: number }[] }
-  | { kind: "hlTitle"; frames: number; no: number; title: string; sides: { name: string; color: string }[]; result: string; reasons: string[]; commentary: string | null }
+  | { kind: "hlTitle"; frames: number; speed?: number; no: number; title: string; sides: { name: string; color: string }[]; result: string; reasons: string[]; commentary: string | null }
   | {
       kind: "replay"
       frames: number
@@ -58,7 +60,7 @@ export type SceneData =
       seats: { name: string; color: string }[]
       result: string
     }
-  | { kind: "brandClose"; frames: number; outro: string | null; credits: string[] }
+  | { kind: "brandClose"; frames: number; speed?: number; outro: string | null; credits: string[] }
 
 /** 回放场景每帧变化的部分 */
 export interface ReplayFrame {
@@ -798,14 +800,16 @@ export function installVideoPage(): void {
     const s = scene!
     g.setTransform(SCALE, 0, 0, SCALE, 0, 0)
     g.save()
-    if (s.kind === "brandOpen") brandOpen(s, i)
-    else if (s.kind === "title") title(s, i)
-    else if (s.kind === "rules") rules(s, i)
-    else if (s.kind === "player") player(s, i)
-    else if (s.kind === "standings") standings(s, i)
-    else if (s.kind === "hlTitle") hlTitle(s, i)
+    // 页内动画按 speed 加快（淡入淡出还是按实际帧数）
+    const a = i * (s.speed ?? 1)
+    if (s.kind === "brandOpen") brandOpen(s, a)
+    else if (s.kind === "title") title(s, a)
+    else if (s.kind === "rules") rules(s, a)
+    else if (s.kind === "player") player(s, a)
+    else if (s.kind === "standings") standings(s, a)
+    else if (s.kind === "hlTitle") hlTitle(s, a)
     else if (s.kind === "replay") replay(s, f ?? {}, i)
-    else if (s.kind === "brandClose") brandClose(s, i)
+    else if (s.kind === "brandClose") brandClose(s, a)
     g.restore()
     fade(i, s.frames)
     g.setTransform(1, 0, 0, 1, 0, 0)

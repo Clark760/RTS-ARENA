@@ -51,6 +51,8 @@ interface Scene {
 }
 
 const sec = (fps: number, s: number) => Math.round(fps * s)
+/** 片头片尾、选手页、精彩对局标题卡的节奏：时长和页内动画都比原来快这么多倍（D-146，用户要求快 1.3 倍左右） */
+export const BRISK = 1.3
 /** 平台拼出来的文字在名字前后留了空格（给英文名用的）；名字是中文时，汉字之间的空格去掉："98% 的 大肥鱼" → "98% 的大肥鱼" */
 export const tidy = (s: string) => s.replace(/([一-鿿）」』]) (?=[一-鿿（「『])/g, "$1")
 /** 按要读的字数定时长（大约每秒读 11 个字），限制在 min～max 秒 */
@@ -71,7 +73,7 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
   /** 把文字里的联赛名字换成显示名 */
   const relabel = (s: string) => tidy(names.reduce((acc, n) => acc.split(n).join(display(n)), s))
   const scenes: Scene[] = []
-  scenes.push({ label: "片头署名", data: { kind: "brandOpen", frames: sec(fps, 3.5), ruleset: series.ruleset.name } })
+  scenes.push({ label: "片头署名", data: { kind: "brandOpen", frames: sec(fps, 3.5 / BRISK), speed: BRISK, ruleset: series.ruleset.name } })
   const date = series.startedAt.slice(0, 10)
   scenes.push({
     label: "标题、用户原话和解读",
@@ -113,7 +115,8 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
       label: `选手 ${p.displayName || p.name}`,
       data: {
         kind: "player",
-        frames: sec(fps, readSecs(len(p.tagline, ...p.intro), -2.5, 6, 9)),
+        frames: sec(fps, readSecs(len(p.tagline, ...p.intro), -2.5, 6, 9) / BRISK),
+        speed: BRISK,
         color: color(i),
         displayName: p.displayName || p.name,
         name: p.name,
@@ -161,13 +164,13 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
     const reasons = [...(tags.get(g.index) ?? []), ...(hl ? hl.reasons.map(relabel) : gameReasons(replay, g.names.map(display)).map(tidy))].slice(0, 4)
     scenes.push({
       label: `精彩对局 ${k + 1} 标题卡（第 ${g.index} 局）`,
-      data: { kind: "hlTitle", frames: sec(fps, readSecs(len(commentary) + 0.4 * len(...reasons), 2.5, 4.5, 8)), no: k + 1, title, sides, result: `第 ${g.index} 局 · ${result} · 第 ${g.tick} tick · ${relabel(g.reason)}`, reasons, commentary },
+      data: { kind: "hlTitle", frames: sec(fps, readSecs(len(commentary) + 0.4 * len(...reasons), 2.5, 4.5, 8) / BRISK), speed: BRISK, no: k + 1, title, sides, result: `第 ${g.index} 局 · ${result} · 第 ${g.tick} tick · ${relabel(g.reason)}`, reasons, commentary },
     })
     scenes.push({ label: `精彩对局 ${k + 1} 回放`, ...replayScene(replay, k + 1, title, commentary, seatOf.map((i, p) => ({ name: display(g.names[p]), color: color(i) })), result, fps) })
   })
   // 片尾名单按脚本里的出场顺序
   const credits = script.players.map((s) => `${s.displayName || s.name}${s.byline ? ` · ${s.byline}` : ""}`)
-  scenes.push({ label: "总结、片尾署名和选手名单", data: { kind: "brandClose", frames: sec(fps, 6.5), outro: script.outro || null, credits: [...credits, "比赛、回放、精彩对局和这段视频都由平台自动生成"] } })
+  scenes.push({ label: "总结、片尾署名和选手名单", data: { kind: "brandClose", frames: sec(fps, 6.5 / BRISK), speed: BRISK, outro: script.outro || null, credits: [...credits, "比赛、回放、精彩对局和这段视频都由平台自动生成"] } })
   return scenes
 }
 
