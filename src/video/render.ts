@@ -10,6 +10,7 @@ import { checkScript, codeFacts, factTags, gameScores, readSeries, resolveBotFil
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { groupBattles } from "../cli/battles.ts"
+import { importRuleset, listRulesets } from "../cli/catalog.ts"
 
 /** 联赛没挑中的局：现场从回放算看点（不算爆冷） */
 export function gameReasons(replay: Replay, seatNames: string[]): string[] {
@@ -58,7 +59,10 @@ const len = (...xs: (string | null | undefined)[]) => xs.reduce((a, x) => a + [.
 /** 代码卡片上不值得占行的：空注释、分隔线 */
 const BLANKISH = /^\s*(?:\/\/+|\/\*+|\*+\/?)?\s*[-=*#~_/]*\s*$/
 
-export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile: string, fps: number): Scene[] {
+/** 规则包的单位数值（老回放里没记攻击数据时，规则介绍的图例从这里补） */
+type TypeSpecs = Record<string, { attack?: { damage: number; range: number; cooldown: number } | null }>
+
+export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile: string, fps: number, specs?: TypeSpecs): Scene[] {
   const sum = series.summary!
   const names = series.participants.map((p) => p.name)
   const color = (i: number) => PALETTE[i % PALETTE.length]
@@ -83,6 +87,15 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
       meta: `${names.length} 位选手 · ${series.results.length} 局 · ${date} · 规则包「${series.ruleset.name}」`,
     },
   })
+  // 规则介绍：脚本写的几句（不写就用规则包的一句话简介），右边是第一局精彩对局的开局地图和单位图例
+  const rulesLines = script.rules?.length ? script.rules : series.ruleset.summary ? [series.ruleset.summary] : []
+  const mapIndex = script.highlights?.[0]?.index ?? sum.highlights?.[0]?.index ?? series.results[0]?.index
+  const mapGame = series.results.find((r) => r.index === mapIndex)
+  if (mapGame) {
+    const replay = JSON.parse(readFileSync(join(dirname(resolve(seriesFile)), mapGame.replay), "utf8")) as Replay
+    const seatOf = mapGame.names.map((n) => names.indexOf(n))
+    scenes.push({ label: "规则介绍", data: rulesScene(replay, series.ruleset.name, rulesLines, `第 ${mapGame.index} 局的开局地图`, seatOf.map((i) => color(i)), fps, specs) })
+  }
   // 选手介绍：按脚本里的顺序
   for (const p of script.players) {
     const i = names.indexOf(p.name)
@@ -156,6 +169,53 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
   const credits = script.players.map((s) => `${s.displayName || s.name}${s.byline ? ` · ${s.byline}` : ""}`)
   scenes.push({ label: "总结、片尾署名和选手名单", data: { kind: "brandClose", frames: sec(fps, 6.5), outro: script.outro || null, credits: [...credits, "比赛、回放、精彩对局和这段视频都由平台自动生成"] } })
   return scenes
+}
+
+/** 单位、建筑的一句话数值（图例用）：造价、生命、攻击 */
+function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string]): string {
+  const parts: string[] = []
+  const cost = Object.values(t.cost ?? {}).reduce((a: number, c) => a + (c ?? 0), 0)
+  if (t.kind === "resource") return "可采集"
+  if (cost) parts.push(`${cost} 金`)
+  if (t.maxHp) parts.push(`${t.maxHp} 血`)
+  const attack = t.attack ?? spec?.attack
+  if (attack) parts.push(attack.range > 1 ? `射程 ${attack.range}` : "近战")
+  if (t.worker) parts.push("采矿、建造")
+  return parts.join(" · ")
+}
+
+/** 规则介绍的画面：文字 + 一局的开局地图 + 单位图例 */
+function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: string, seatColors: string[], fps: number, specs?: TypeSpecs): SceneData {
+  const typeNames = Object.keys(replay.types)
+  const ents: number[] = []
+  for (const e of replay.initial.entities) {
+    const t = replay.types[e.type]
+    if (t) ents.push(e.x, e.y, t.w ?? 1, t.h ?? 1, e.owner, typeNames.indexOf(e.type))
+  }
+  const order = { building: 0, unit: 1, resource: 2 } as Record<string, number>
+  const legend = typeNames
+    .map((k) => ({ k, t: replay.types[k] }))
+    .filter((x) => x.t.look?.label || x.t.kind === "resource")
+    .sort((a, b) => (order[a.t.kind] ?? 3) - (order[b.t.kind] ?? 3))
+    .slice(0, 10)
+    .map(({ k, t }) => ({ shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, kind: t.kind, name: TYPE_NAMES[k] ?? k, detail: typeDetail(t, specs?.[k]) }))
+  const chars = lines.reduce((a, l) => a + [...l].length, 0)
+  return {
+    kind: "rules",
+    frames: sec(fps, readSecs(chars, 4, 6, 12)),
+    ruleset,
+    lines,
+    mapNote,
+    width: replay.map.width,
+    height: replay.map.height,
+    terrain: replay.map.terrain,
+    colors: replay.map.colors,
+    ents,
+    markers: replay.initial.markers ?? [],
+    types: typeNames.map((k) => ({ shape: replay.types[k].look?.shape ?? "circle", label: replay.types[k].look?.label ?? "", color: replay.types[k].look?.color ?? null, kind: replay.types[k].kind })),
+    seatColors,
+    legend,
+  }
 }
 
 /**
@@ -415,7 +475,18 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
   const errs = checkScript(o.script, series)
   if (errs.length) throw new Error(`脚本有问题：\n- ${errs.join("\n- ")}`)
   const fps = o.fps ?? 30
-  const scenes = buildScenes(series, o.script, o.seriesFile, fps)
+  // 平台自带的规则包：读一下单位数值（老回放里没记攻击数据）
+  let specs: TypeSpecs | undefined
+  try {
+    if (listRulesets().includes(series.ruleset.id)) {
+      const r = await importRuleset(series.ruleset.id)
+      specs = r.types as TypeSpecs
+      series.ruleset.summary ??= r.summary
+    }
+  } catch {
+    specs = undefined
+  }
+  const scenes = buildScenes(series, o.script, o.seriesFile, fps, specs)
   const total = scenes.reduce((a, s) => a + s.data.frames, 0)
   const timeline = timelineOf(scenes, fps)
   const exe = findBrowser(o.browser)

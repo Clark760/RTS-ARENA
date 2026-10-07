@@ -106,7 +106,14 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   // 片尾名单按脚本里的出场顺序
   const close = scenes.at(-1)!.data as { credits: string[] }
   assert.deepEqual(close.credits.slice(0, 2), ["基准 · 平台自带", "rush"])
-  assert.deepEqual(kinds.slice(1, 5), ["title", "player", "player", "standings"])
+  assert.deepEqual(kinds.slice(1, 6), ["title", "rules", "player", "player", "standings"])
+  // 规则介绍：没写 rules 就用规则包的一句话简介；配第一局精彩对局的开局地图（有控制点标记）和单位图例（带近战 / 射程）
+  const rules = scenes[2].data as { lines: string[]; ents: number[]; markers: { kind: string }[]; legend: { name: string; detail: string }[] }
+  assert.equal(rules.lines.length, 1)
+  assert.ok(rules.ents.length > 0 && rules.markers.some((m) => m.kind === "zone"))
+  assert.ok(rules.legend.some((l) => l.name === "弓手" && /射程 4/.test(l.detail)) && rules.legend.some((l) => l.name === "战士" && /近战/.test(l.detail)))
+  const withRules = buildScenes(series, { ...script, rules: ["占住正中的控制点，点里只有你的单位时每 tick 得 1 分", "先拿满 600 分的赢"] }, seriesFile, 10)
+  assert.equal((withRules[2].data as { lines: string[] }).lines.length, 2)
   const hl = series.summary!.highlights!.slice(0, 3).length
   assert.equal(kinds.filter((k) => k === "replay").length, hl)
   // 时间表：每段都有名字，首尾相接
@@ -163,6 +170,10 @@ test("video-init：视频目录里有说明、选手代码、战报、待填脚�
   // 用户补充的背景、平台算好的联赛速查（最快的局、每人赢了谁输给谁）
   assert.match(prompt, /用户补充的背景\*\*：rush 是某某模型写的/)
   assert.match(prompt, /### 联赛速查/)
+  // 规则说明一起导出，PROMPT 里有规则介绍的写法
+  assert.ok(existsSync(join(dir, "RULES.md")))
+  assert.match(prompt, /3\. \*\*规则介绍\*\*/)
+  assert.match(prompt, /照这个目录里的 `RULES\.md` 写/)
   assert.match(prompt, /\| 标题卡看点 \|/)
   assert.match(prompt, /全联赛结束得最快的胜局（\d+ tick）/)
   assert.match(prompt, /结束得最快的胜局：第 \d+ 局/)

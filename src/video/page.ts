@@ -22,6 +22,25 @@ export type SceneData =
       rank: number
       total: number
     }
+  | {
+      kind: "rules"
+      frames: number
+      ruleset: string
+      /** 脚本写的规则介绍（不写就是规则包的一句话简介） */
+      lines: string[]
+      /** 地图下面的小字："第 N 局的开局地图" */
+      mapNote: string
+      width: number
+      height: number
+      terrain: string[]
+      colors: Record<string, string>
+      /** [x, y, w, h, 座位(-1 中立), 类型下标] 一组 6 个 */
+      ents: number[]
+      markers: ({ kind: "zone"; x: number; y: number; w: number; h: number; owner: number | null; label?: string; color?: string } | { kind: "label"; x: number; y: number; text: string; owner?: number | null })[]
+      types: { shape: string; label: string; color: string | null; kind: string }[]
+      seatColors: string[]
+      legend: { shape: string; label: string; color: string | null; kind: string; name: string; detail: string }[]
+    }
   | { kind: "standings"; frames: number; title: string; rows: { name: string; color: string; rank: number; record: string; rate: number; elo: number }[] }
   | { kind: "hlTitle"; frames: number; no: number; title: string; sides: { name: string; color: string }[]; result: string; reasons: string[]; commentary: string | null }
   | {
@@ -350,6 +369,129 @@ export function installVideoPage(): void {
     watermark()
   }
 
+  /** 画一个单位、建筑或资源点的形状（和回放一样的几种） */
+  function shapeAt(shape: string, x: number, y: number, w: number, h: number, color: string): void {
+    const cx = x + w / 2
+    const cy = y + h / 2
+    const r = Math.min(w, h) / 2
+    g.fillStyle = color
+    g.strokeStyle = "rgba(0,0,0,0.6)"
+    g.lineWidth = 1
+    g.beginPath()
+    if (shape === "square") g.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 2)
+    else if (shape === "triangle") {
+      g.moveTo(cx, y)
+      g.lineTo(x + w, y + h)
+      g.lineTo(x, y + h)
+      g.closePath()
+    } else if (shape === "diamond") {
+      g.moveTo(cx, y)
+      g.lineTo(x + w, cy)
+      g.lineTo(cx, y + h)
+      g.lineTo(x, cy)
+      g.closePath()
+    } else if (shape === "hex")
+      for (let a = 0; a < 6; a++) {
+        const ang = (Math.PI / 3) * a + Math.PI / 6
+        if (a === 0) g.moveTo(cx + r * Math.cos(ang), cy + r * Math.sin(ang))
+        else g.lineTo(cx + r * Math.cos(ang), cy + r * Math.sin(ang))
+      }
+    else g.arc(cx, cy, r, 0, Math.PI * 2)
+    g.closePath()
+    g.fill()
+    g.stroke()
+  }
+
+  function rules(s: Any, i: number): void {
+    background()
+    const p = ease(i / 15)
+    text("规则", 80, 110, 26, C.accent, { bold: true, alpha: p })
+    text(`${s.ruleset}怎么玩`, 80, 180, 52, C.text, { bold: true, alpha: p })
+    // 左边：规则介绍，逐句出现
+    let y = 262
+    g.font = font(26)
+    s.lines.forEach((line: string, k: number) => {
+      const a = ease((i - 12 - k * 9) / 12)
+      const ls = wrapBalanced(line, 540)
+      g.fillStyle = C.accent
+      g.globalAlpha = a
+      g.beginPath()
+      g.arc(90, y - 9, 5, 0, Math.PI * 2)
+      g.fill()
+      g.globalAlpha = 1
+      ls.forEach((l, j) => text(l, 110, y + j * 37, 26, C.text, { alpha: a }))
+      y += ls.length * 37 + 18
+    })
+    // 右边：开局地图
+    const a2 = ease((i - 8) / 18)
+    const boxW = 540
+    const boxH = 330
+    const tile = Math.min(boxW / s.width, boxH / s.height)
+    const mx = 700 + (boxW - s.width * tile) / 2
+    const my = 92
+    g.globalAlpha = a2
+    for (let yy = 0; yy < s.height; yy++)
+      for (let xx = 0; xx < s.width; xx++) {
+        g.fillStyle = s.colors[s.terrain[yy][xx]] ?? "#333"
+        g.fillRect(mx + xx * tile, my + yy * tile, tile + 0.3, tile + 0.3)
+      }
+    const seatColor = (o: number) => (o >= 0 ? (s.seatColors[o] ?? "#ccc") : "#9aa0a6")
+    for (const m of s.markers as Any[]) {
+      if (m.kind !== "zone") continue
+      const col = m.color ?? (m.owner === null || m.owner === undefined || m.owner < 0 ? "#c8ccd4" : seatColor(m.owner))
+      g.fillStyle = col
+      g.globalAlpha = a2 * 0.3
+      g.fillRect(mx + m.x * tile, my + m.y * tile, m.w * tile, m.h * tile)
+      g.globalAlpha = a2
+      g.strokeStyle = col
+      g.lineWidth = 1.5
+      g.setLineDash([4, 3])
+      g.strokeRect(mx + m.x * tile, my + m.y * tile, m.w * tile, m.h * tile)
+      g.setLineDash([])
+      if (m.label) text(m.label, mx + m.x * tile, my + m.y * tile - 4, 12, col, { bold: true, alpha: a2 })
+    }
+    const e = s.ents as number[]
+    for (let k = 0; k < e.length; k += 6) {
+      const [x, yy, w, h, o, ti] = e.slice(k, k + 6)
+      const ty = s.types[ti]
+      g.globalAlpha = a2
+      shapeAt(ty.shape, mx + x * tile, my + yy * tile, w * tile, h * tile, ty.color ?? seatColor(o))
+    }
+    g.globalAlpha = 1
+    text(s.mapNote, mx, my + s.height * tile + 24, 15, C.muted, { alpha: a2 })
+    // 地图下面：单位图例（形状、字、名字、造价和数值）
+    // 6 项以内排一栏，多了排两栏；说明超出栏宽就截断
+    const ly = my + s.height * tile + 58
+    const cols = s.legend.length > 6 ? 2 : 1
+    const colW = (s.width * tile) / cols
+    s.legend.forEach((it: Any, k: number) => {
+      const col = k % cols
+      const lx = mx + col * colW
+      const yy = ly + Math.floor(k / cols) * 34
+      const a = ease((i - 20 - k * 3) / 12)
+      g.globalAlpha = a
+      shapeAt(it.shape, lx, yy - 18, 22, 22, it.color ?? (it.kind === "resource" ? "#e0b53a" : s.seatColors[0] ?? "#4ea1ff"))
+      g.globalAlpha = 1
+      if (it.label) {
+        g.font = font(12, true)
+        g.textAlign = "center"
+        g.fillStyle = "#fff"
+        g.globalAlpha = a
+        g.fillText(it.label, lx + 11, yy - 3)
+        g.globalAlpha = 1
+        g.textAlign = "left"
+      }
+      text(it.name, lx + 32, yy - 1, 18, C.text, { bold: true, alpha: a })
+      g.font = font(18, true)
+      const nw = g.measureText(it.name).width
+      g.font = font(14)
+      let detail = it.detail as string
+      while (detail && 40 + nw + g.measureText(detail).width > colW - 12) detail = detail.slice(0, -1)
+      text(detail + (detail.length < it.detail.length ? "…" : ""), lx + 40 + nw, yy - 1, 14, C.muted, { alpha: a })
+    })
+    watermark()
+  }
+
   function standings(s: Any, i: number): void {
     background()
     text(s.title, 80, 110, 44, C.text, { bold: true, alpha: ease(i / 15) })
@@ -658,6 +800,7 @@ export function installVideoPage(): void {
     g.save()
     if (s.kind === "brandOpen") brandOpen(s, i)
     else if (s.kind === "title") title(s, i)
+    else if (s.kind === "rules") rules(s, i)
     else if (s.kind === "player") player(s, i)
     else if (s.kind === "standings") standings(s, i)
     else if (s.kind === "hlTitle") hlTitle(s, i)

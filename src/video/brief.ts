@@ -11,7 +11,8 @@ import type { Replay } from "../core/types.ts"
 export interface SeriesFile {
   format: string
   kind?: string
-  ruleset: { id: string; name: string }
+  /** summary 是规则包的一句话简介、dir 是规则包目录（D-145 起记下，视频的规则介绍用） */
+  ruleset: { id: string; name: string; summary?: string; dir?: string }
   startedAt: string
   games: number
   size?: number
@@ -142,6 +143,8 @@ export interface VideoScript {
   userText?: string
   /** 对用户原话的解读、整场联赛的一句话导语（最多 60 字） */
   theme?: string
+  /** 规则介绍：写给没玩过的观众，1～4 句、每句最多 45 字（不写就用规则包的一句话简介） */
+  rules?: string[]
   /** 每个选手：name 要和联赛里的名字一样 */
   players: {
     name: string
@@ -163,7 +166,10 @@ export interface VideoScript {
 /** 选手页最长 9 秒，大约读得完 100 字：tagline 加 intro 超了就提醒 */
 export const PLAYER_PAGE_CHARS = 100
 
-export const SCRIPT_LIMITS = { title: 24, userText: 120, theme: 60, displayName: 28, byline: 40, tagline: 30, introLine: 50, introLines: 4, hlTitle: 24, commentary: 80, outro: 60, highlights: 5 }
+/** 规则页最长 12 秒，大约读得完 130 字 */
+export const RULES_PAGE_CHARS = 130
+
+export const SCRIPT_LIMITS = { rulesLine: 45, rulesLines: 4, title: 24, userText: 120, theme: 60, displayName: 28, byline: 40, tagline: 30, introLine: 50, introLines: 4, hlTitle: 24, commentary: 80, outro: 60, highlights: 5 }
 
 /** 检查脚本，返回所有问题（空数组是没问题） */
 export function checkScript(s: unknown, series: SeriesFile): string[] {
@@ -181,6 +187,10 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
   str(o.userText, "userText", L.userText)
   str(o.theme, "theme", L.theme)
   str(o.outro, "outro", L.outro)
+  if (o.rules !== undefined) {
+    if (!Array.isArray(o.rules) || o.rules.length < 1 || o.rules.length > L.rulesLines) errs.push(`rules 要是 1～${L.rulesLines} 句的数组`)
+    else o.rules.forEach((line, j) => str(line, `rules[${j}]`, L.rulesLine, true))
+  }
   const names = series.participants.map((p) => p.name)
   if (!Array.isArray(o.players)) errs.push("players 要是数组，每个选手一项")
   else {
@@ -230,6 +240,11 @@ export function scriptWarnings(s: unknown): string[] {
   const out = bold
     .filter((x): x is [string, string] => typeof x[1] === "string" && x[1].includes("一"))
     .map(([where, v]) => `${where} 是粗体，里面的"一"看起来像破折号："${v}"——数量写成阿拉伯数字，或者换个说法`)
+  // 规则页最长 12 秒
+  if (Array.isArray(o.rules)) {
+    const n = o.rules.reduce((a: number, x) => a + (typeof x === "string" ? [...x].length : 0), 0)
+    if (n > RULES_PAGE_CHARS) out.push(`rules 共 ${n} 字，规则页最长 12 秒，大约只读得完 ${RULES_PAGE_CHARS} 字：删一句或者写短些`)
+  }
   // 选手页最长 9 秒：tagline 加 intro 太长读不完
   if (Array.isArray(o.players))
     o.players.forEach((p, i) => {
@@ -323,6 +338,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
   const scriptTemplate: VideoScript = {
     title: `待填：视频标题（上面已经有一行「${s.ruleset.name}联赛」，不用重复）`,
     userText: "待填：用户的原话",
+    rules: ["待填：怎么赢（照 RULES.md 写给没玩过的观众）", "待填：最关键的机制或特别的单位"],
     theme: "待填：对原话的解读、整场联赛的一句话导语",
     players: players.map((p) => ({ name: p.name, displayName: "待填", byline: "待填", tagline: "待填", intro: ["待填", "待填"] })),
     highlights: (sum.highlights ?? []).slice(0, 3).map((h) => ({ index: h.index, title: "待填（可删）", commentary: "待填（可删）" })),

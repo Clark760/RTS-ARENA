@@ -346,7 +346,7 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
   const series = {
     format: "rts-arena-series",
     version: 1,
-    ruleset: { id: rules.id, name: rules.name },
+    ruleset: { id: rules.id, name: rules.name, summary: rules.summary ?? "", dir: src.dir },
     startedAt: new Date().toISOString(),
     seed: baseSeed,
     games,
@@ -594,7 +594,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
     format: "rts-arena-series",
     version: 1,
     kind: "league",
-    ruleset: { id: rules.id, name: rules.name },
+    ruleset: { id: rules.id, name: rules.name, summary: rules.summary ?? "", dir: src.dir },
     startedAt: new Date().toISOString(),
     seed: baseSeed,
     games: total,
