@@ -1104,6 +1104,7 @@ const CHECK_TICKS = 300
 const IDLE_CODE = "export function onTick() {}"
 
 const BOT_TEMPLATE = `// 一个最简单的 bot：闲着的采集单位去采最近的资源点。从这里改起（还不会生产，也不会打仗）。
+// 每改一版都要在这个目录里运行 rts-arena check、rts-arena league 真的打几局，看结果再改（见 PROMPT.md 开头）。
 
 export function onTick(view: View, cmd: Commands): void {
   const mine = view.entities.filter((e) => e.owner === view.me)
@@ -1142,10 +1143,12 @@ async function cmdInit(pos: string[]): Promise<void> {
   const where = dir === "." ? "当前目录" : ` ${dir} `
   if (created) {
     const at = dir === "." ? "" : `在 ${dir} 里`
-    console.log(`已在${where}建好「${rules.name}」的 bot 目录。先读 PROMPT.md，改 ${bot}，然后${at}运行：`)
-    console.log(`  rts-arena check              检查`)
+    console.log(`已在${where}建好「${rules.name}」的 bot 目录。先读 PROMPT.md，改 ${bot}；每改一版都要${at}真的运行这几个命令、看结果再改（只写代码不跑对战，bot 的问题发现不了）：`)
+    console.log(`  rts-arena check              类型检查 + 在每个位置试打`)
     console.log(`  rts-arena run --games 10     和基准 bot 打 10 局`)
-    console.log(`  rts-arena view               看回放`)
+    console.log(`  rts-arena league             和所有参考 bot 循环对打`)
+    console.log(`  rts-arena report             看最新一局的战报`)
+    console.log(`  rts-arena view               在网页里看回放`)
   } else console.log(`已更新${where}的说明书和接口（「${rules.name}」），${bot} 没动`)
 }
 

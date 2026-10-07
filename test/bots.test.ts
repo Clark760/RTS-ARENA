@@ -38,6 +38,10 @@ for (const rules of [annihilation, koth, harvest, melee, frontier, beacons, wild
     assert.ok(own.length >= 3, own.map((b) => b.name).join("、"))
     assert.equal(own[0].name, "baseline")
     const prompt = buildPrompt(rules, rulesetDir(rules.id), buildDts(rules, rulesetDir(rules.id)))
+    // 说明书一开头就要求自己跑对战（有的 agent 只写代码不执行命令），排在「玩法」之前
+    const runFirst = prompt.indexOf("## 最重要：写完必须自己跑对战")
+    assert.ok(runFirst > 0 && runFirst < prompt.indexOf("## 玩法"))
+    assert.match(prompt, /rts-arena league\s+# 3\. 和所有参考 bot 循环对打/)
     for (const b of bots) {
       assert.ok(b.file.startsWith(b.name === "idle" ? join(ROOT, "bots") : join(ROOT, "rulesets", rules.id, "bots")), b.file)
       assert.ok(b.about.length >= 10, `${b.name} 第一行没写打法`)

@@ -46,7 +46,7 @@ mkdir my-bot && cd my-bot
 rts-arena init melee          # 建 bot 目录：arena.json、bot.ts 模板、PROMPT.md、arena.d.ts、tsconfig.json
 ```
 
-把 `PROMPT.md` 发给大模型（或自己读），改 `bot.ts`，然后在这个目录里：
+把 `PROMPT.md` 发给大模型（或自己读），改 `bot.ts`，然后在这个目录里**真的运行命令打几局、看结果再改**（PROMPT.md 开头也这样要求大模型：只写代码不跑对战的 bot 往往连最简单的对手都打不过；交付时要报告跑过的命令和联赛得分率）：
 
 ```bash
 rts-arena check                    # 类型检查 + 在每个位置上和不动的对手试打 300 tick

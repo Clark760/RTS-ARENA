@@ -109,6 +109,8 @@ export function onTick(view: View, cmd: Commands): void {
 
 ## 本地调试
 
+写完一定要真的跑（见说明书开头「最重要：写完必须自己跑对战」）：每改一版都执行下面的命令打几局、看结果再改，交付时报告跑过的命令和联赛得分率。
+
 在你的 bot 目录里（`rts-arena init <规则包>` 建的，有 `arena.json`）：
 
 ```bash

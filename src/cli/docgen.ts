@@ -303,6 +303,30 @@ function buildersLine(rules: Ruleset): string {
   return list.length ? `- 建造：${list.join("；")}（见平台通用说明的「建造」）` : "- 建造：这个规则包没有能建造的单位，cmd.build 用不上（平台通用说明里的「建造」一节可以跳过）"
 }
 
+/**
+ * 说明书开头的"必须自己跑对战"：有的 agent 只写代码、不执行命令，交上来的 bot 从没打过一局。
+ * 放在最前面，写成固定的工作循环，并要求交付时报告跑过的命令和结果
+ */
+const RUN_FIRST = [
+  "## 最重要：写完必须自己跑对战",
+  "",
+  '**每改一版 bot，都要在这个 bot 目录里执行命令、真的打几局，看结果再改。** 你能执行命令（终端、Bash、shell 工具）就一定要用，不要只读代码、凭推断觉得"应该能赢"——没打过的 bot 几乎都有没发现的问题：命令被拒、工人闲着、单位卡在墙边、连最简单的对手都打不过。',
+  "",
+  "每一版按这个顺序跑：",
+  "",
+  "```bash",
+  "rts-arena check                    # 1. 类型检查 + 在每个位置试打（每个位置一张不同的地图）；有报错、被拒命令先修",
+  "rts-arena run --games 10 --quiet   # 2. 和基准 bot 打 10 局，看胜率",
+  "rts-arena league                   # 3. 和所有参考 bot 循环对打，看总的得分率、输给了谁",
+  "rts-arena report                   # 4. 看最新一局的战报；输的局重点看最后的「可能的问题」",
+  "```",
+  "",
+  "- 命令的输出就是改 bot 的依据：报错和被拒命令、战报里的「可能的问题」、联赛里输给了谁。改完再从第 1 步跑起。",
+  '- 交付时写清楚：跑了哪些命令、最后一版的联赛得分率、对每个参考 bot 的胜负。**没跑过对战，就不要说"测试通过"或"应该能赢"。**',
+  "- 提示找不到 `rts-arena` 命令时，先问用户平台装在哪、怎么运行，不要跳过这一步。",
+  '- 实在没法执行命令（环境不允许）时，直接告诉用户："我这里不能运行命令，请你在 bot 目录里运行 `rts-arena league`，把输出贴给我。"拿到结果再改。',
+].join("\n")
+
 export function buildPrompt(rules: Ruleset, dir: string, dts: string): string {
   const rulesMd = readFileSync(join(dir, "RULES.md"), "utf8").trim()
   const platform = readFileSync(join(PKG_ROOT, "src", "api", "PLATFORM.md"), "utf8").trim()
@@ -323,6 +347,8 @@ export function buildPrompt(rules: Ruleset, dir: string, dts: string): string {
     `# 「${rules.name}」bot 编写说明`,
     "",
     `> 由 \`arena docs ${rules.id}\` 生成。你要写一个 TypeScript 文件控制一方，和别的 bot 对战。接口的完整定义在文末（也在同目录的 arena.d.ts 里）。`,
+    "",
+    RUN_FIRST,
     "",
     "## 玩法",
     "",
