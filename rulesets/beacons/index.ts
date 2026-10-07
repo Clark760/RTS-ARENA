@@ -31,7 +31,7 @@ const types: Record<string, TypeSpec> = {
     cost: { gold: 75 },
     buildTicks: 60,
     sight: 6,
-    look: { shape: "hex", label: "烽" },
+    look: { shape: "hex", label: "烽", name: "烽火台" },
   },
   beast: {
     kind: "unit",
@@ -39,7 +39,7 @@ const types: Record<string, TypeSpec> = {
     moveTicks: 0,
     sight: 3,
     attack: { damage: 6, range: 1, cooldown: 10 },
-    look: { shape: "triangle", label: "兽", color: "#6b8e23" },
+    look: { shape: "triangle", label: "兽", color: "#6b8e23", name: "野怪" },
   },
   guardian: {
     kind: "unit",
@@ -47,7 +47,7 @@ const types: Record<string, TypeSpec> = {
     moveTicks: 0,
     sight: 3,
     attack: { damage: 12, range: 1, cooldown: 10 },
-    look: { shape: "triangle", label: "守", color: "#8b4513" },
+    look: { shape: "triangle", label: "守", color: "#8b4513", name: "守卫" },
   },
 }
 

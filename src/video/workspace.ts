@@ -198,7 +198,7 @@ function videoPrompt(
   out.push("rts-arena video --lint                # 只核对脚本：格式、每段字数和上限、时间表（不出图，几秒钟），字数对了再出预览")
   out.push("rts-arena video --preview auto        # 每段各出一张预览图（放在 preview/ 里，另有一张总览拼图），先看排版、字有没有挤出去")
   out.push("rts-arena video --preview 12.5,40     # 只看这几秒（秒数从上一条命令列出的时间表里找）")
-  out.push("rts-arena video --check auto          # 出视频，并从成品里每段截一张图检查（也可以写秒数：--check 5,60）")
+  out.push("rts-arena video --check auto          # 出视频，并从成品里每段截一张图检查（也放在 preview/ 里；也可以写秒数：--check 5,60）")
   out.push("```")
   out.push("")
   out.push(`不写参数时用这个目录的 \`script.json\`，视频输出成 \`${rs}联赛.mp4\`（\`--out\` 可以改），1920×1080。脚本格式不对时命令会列出所有问题，照着改。预览图要逐张打开看。`)

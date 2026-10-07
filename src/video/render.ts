@@ -24,6 +24,10 @@ export const PALETTE = ["#4ea1ff", "#ff5d5d", "#5ee08a", "#f5c542", "#c77dff", "
 export const PALETTE_NAMES = ["蓝", "红", "绿", "黄", "紫", "青", "橙", "草绿"]
 /** 标准单位的中文名（事件文字用）；规则包自己的类型用原名 */
 const TYPE_NAMES: Record<string, string> = { base: "主基地", barracks: "兵营", worker: "工人", soldier: "战士", archer: "弓手", goldmine: "金矿", tower: "箭塔", depot: "仓库" }
+/** 类型的中文名：规则包写了 look.name 就用它，否则常见类型用上面的表，再不行显示类型名 */
+function typeName(replay: Replay, k: string): string {
+  return replay.types[k]?.look?.name ?? TYPE_NAMES[k] ?? k
+}
 
 export interface RenderOptions {
   seriesFile: string
@@ -39,6 +43,8 @@ export interface RenderOptions {
   height?: number
   /** 出完视频后，从成品里截这几秒的画面（PNG）检查 */
   check?: number[] | "auto"
+  /** 预览图和检查截图放在哪个目录（默认视频旁边的 preview/）；--out 指到别处时截图也不跟过去 */
+  imagesDir?: string
   onProgress?: (done: number, total: number) => void
 }
 
@@ -62,7 +68,7 @@ const len = (...xs: (string | null | undefined)[]) => xs.reduce((a, x) => a + [.
 const BLANKISH = /^\s*(?:\/\/+|\/\*+|\*+\/?)?\s*[-=*#~_/]*\s*$/
 
 /** 规则包的单位数值（老回放里没记攻击数据时，规则介绍的图例从这里补） */
-type TypeSpecs = Record<string, { attack?: { damage: number; range: number; cooldown: number } | null; gather?: unknown; builds?: string[] }>
+type TypeSpecs = Record<string, { attack?: { damage: number; range: number; cooldown: number } | null; gather?: unknown; builds?: string[]; look?: { name?: string } }>
 
 export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile: string, fps: number, specs?: TypeSpecs): Scene[] {
   const sum = series.summary!
@@ -72,6 +78,15 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
   const display = (name: string) => sp(name)?.displayName || name
   /** 把文字里的联赛名字换成显示名 */
   const relabel = (s: string) => tidy(names.reduce((acc, n) => acc.split(n).join(display(n)), s))
+  // 读回放；老回放里没记中文名（look.name）时用当前规则包里写的
+  const loadReplay = (file: string) => {
+    const r = JSON.parse(readFileSync(join(dirname(resolve(seriesFile)), file), "utf8")) as Replay
+    for (const [k, t] of Object.entries(r.types)) {
+      const name = specs?.[k]?.look?.name
+      if (name && t.look && !t.look.name) t.look = { ...t.look, name }
+    }
+    return r
+  }
   const scenes: Scene[] = []
   scenes.push({ label: "片头署名", data: { kind: "brandOpen", frames: sec(fps, 3.5 / BRISK), speed: BRISK, ruleset: series.ruleset.name } })
   const date = series.startedAt.slice(0, 10)
@@ -94,7 +109,7 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
   const mapIndex = script.highlights?.[0]?.index ?? sum.highlights?.[0]?.index ?? series.results[0]?.index
   const mapGame = series.results.find((r) => r.index === mapIndex)
   if (mapGame) {
-    const replay = JSON.parse(readFileSync(join(dirname(resolve(seriesFile)), mapGame.replay), "utf8")) as Replay
+    const replay = loadReplay(mapGame.replay)
     const seatOf = mapGame.names.map((n) => names.indexOf(n))
     scenes.push({ label: "规则介绍", data: rulesScene(replay, series.ruleset.name, rulesLines, `第 ${mapGame.index} 局的开局地图`, seatOf.map((i) => color(i)), fps, specs) })
   }
@@ -151,7 +166,7 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
   picks.forEach((pick, k) => {
     const g = series.results.find((r) => r.index === pick.index)!
     const hl = sum.highlights?.find((h) => h.index === pick.index)
-    const replay = JSON.parse(readFileSync(join(dirname(resolve(seriesFile)), g.replay), "utf8")) as Replay
+    const replay = loadReplay(g.replay)
     // 每个座位是哪个参赛者
     const seatOf = g.names.map((n) => names.indexOf(n))
     const sides = [...new Set(g.teams)].map((t) => {
@@ -207,7 +222,7 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
     .filter((x) => x.t.look?.label || x.t.kind === "resource")
     .sort((a, b) => (order[a.t.kind] ?? 3) - (order[b.t.kind] ?? 3))
     .slice(0, 10)
-    .map(({ k, t }) => ({ shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, kind: t.kind, name: TYPE_NAMES[k] ?? k, detail: typeDetail(t, specs?.[k]) }))
+    .map(({ k, t }) => ({ shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, kind: t.kind, name: typeName(replay, k), detail: typeDetail(t, specs?.[k]) }))
   const chars = lines.reduce((a, l) => a + [...l].length, 0)
   return {
     kind: "rules",
@@ -220,7 +235,7 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
     terrain: replay.map.terrain,
     colors: replay.map.colors,
     ents,
-    markers: replay.initial.markers ?? [],
+    markers: replay.initial.markers?.length ? replay.initial.markers : (replay.frames.find((f) => f.markers?.length)?.markers ?? []),
     types: typeNames.map((k) => ({ shape: replay.types[k].look?.shape ?? "circle", label: replay.types[k].look?.label ?? "", color: replay.types[k].look?.color ?? null, kind: replay.types[k].kind })),
     seatColors,
     legend,
@@ -349,7 +364,7 @@ function replayScene(replay: Replay, no: number, title: string, commentary: stri
       final: i >= playFrames,
       fast: i < playFrames && pace.fast(i),
       markers: state.markers,
-      status: relabelSeats(state.status, seats),
+      status: relabelSeats(state.status, seats, false),
     }
   }
   return {
@@ -359,8 +374,13 @@ function replayScene(replay: Replay, no: number, title: string, commentary: stri
 }
 
 /** 规则包写的文字里的 P0、P1……换成选手名字（汉字之间的空格去掉） */
-function relabelSeats(s: string, seats: { name: string }[]): string {
-  return tidy(s.replace(/(?<![A-Za-z])P(\d+)/g, (m, d) => seats[Number(d)]?.name ?? m))
+/**
+ * 把规则包文字里的 P0、P1 换成选手名。句子（事件）顺便去掉中文名前后的空格；
+ * 状态栏不去（规则包常用空格隔开几项，比如"台址 P0 P1 空"，去掉就粘成一串）
+ */
+export function relabelSeats(s: string, seats: { name: string }[], sentence = true): string {
+  const out = s.replace(/(?<![A-Za-z])P(\d+)/g, (m, d) => seats[Number(d)]?.name ?? m)
+  return sentence ? tidy(out) : out
 }
 
 /** 侧栏里算"大战"的门槛：一场死 6 个以上 */
@@ -377,7 +397,7 @@ function replayEvents(replay: Replay, seats: { name: string }[]): (t: number) =>
   const s = new ReplayModel(replay).initialState()
   const team = (p: number) => replay.players[p]?.team ?? p
   const name = (p: number) => (p >= 0 ? (seats[p]?.name ?? `P${p}`) : "中立")
-  const tn = (type: string) => TYPE_NAMES[type] ?? type
+  const tn = (type: string) => typeName(replay, type)
   let contact = false
   const wasAlive = s.players.map((p) => p.alive)
   for (const f of replay.frames) {
@@ -557,8 +577,8 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
     scenes.reduce((a, s) => (starts.push(a), a + s.data.frames), 0)
     const preview = o.preview === "auto" ? autoPreview(scenes, fps) : o.preview
     const check = o.check === "auto" ? autoPreview(scenes, fps) : (o.check ?? [])
-    // 预览图放进 preview/ 子目录，不和视频目录里的说明、代码混在一起
-    const pstem = join(dirname(stem), "preview", basename(stem))
+    // 预览图、检查截图放进 preview/ 子目录，不和视频目录里的说明、代码混在一起
+    const pstem = join(o.imagesDir ?? join(dirname(stem), "preview"), basename(stem))
     if (preview?.length) {
       mkdirSync(dirname(pstem), { recursive: true })
       cleanOld(pstem, "preview")
@@ -607,9 +627,10 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
     writeFileSync(o.out, bytes)
     // 用浏览器把成品解一遍：时长、尺寸对不对，顺便截几张图
     const probe = await browser.evaluate<{ duration: number; width: number; height: number; shots: string[] }>(`__probe(${JSON.stringify(check)})`)
-    cleanOld(stem, "check")
+    if (check.length) mkdirSync(dirname(pstem), { recursive: true })
+    cleanOld(pstem, "check")
     probe.shots.forEach((b64, k) => {
-      const file = `${stem}-check-${check[k]}s.png`
+      const file = `${pstem}-check-${check[k]}s.png`
       writeFileSync(file, Buffer.from(b64, "base64"))
       images.push(file)
     })

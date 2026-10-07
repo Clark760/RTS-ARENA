@@ -166,6 +166,10 @@ test("精彩对局：落后又反超算逆转，主基地差点被拆算险胜�
   assert.ok(ex.score > 60 && ex.score <= 100, String(ex.score))
   // bot 出错扣分
   assert.ok(excitement({ ...f, trouble: true }, null, (s) => names[s]).score < ex.score - 25)
+  // 每项都没到写出来的门槛（几样都沾一点）：往后排，看点写占分最多那项的实际数字，不空着
+  const mild = { ...f, materialLow: { ...f.materialLow!, ratio: 0.9 }, leadChanges: 1, killedRatio: 0.3, battles: 1, biggestBattle: 4, winnerBaseMin: 0.9, finalScores: { winner: 400, foe: 280 } }
+  const exMild = excitement(mild, null, (s) => names[s])
+  assert.deepEqual(exMild.reasons, ["比分 400 : 280"])
   // 挑：同一组对手最多 2 局，不到 20 分的不要
   const h = (index: number, key: string, score: number) => ({ index, seed: 1, replay: `g${index}.json`, who: key, winner: null, tick: 1, score, reasons: [], key })
   assert.deepEqual(

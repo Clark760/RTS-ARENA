@@ -27,9 +27,9 @@ const POST_MIN_ENEMY_BASE = 10
 
 const types: Record<string, TypeSpec> = {
   ...standardTypes(),
-  post: { kind: "building", w: 2, h: 2, maxHp: 600, cost: { gold: 120 }, buildTicks: 80, sight: 5, dropOff: true, look: { shape: "hex", label: "栈" } },
-  caravan: { kind: "unit", maxHp: 250, moveTicks: 5, sight: 3, look: { shape: "diamond", label: "镖" } },
-  guard: { kind: "unit", maxHp: 120, moveTicks: 3, sight: 6, attack: { damage: 10, range: 1, cooldown: 8 }, look: { shape: "circle", label: "师", color: "#b5651d" } },
+  post: { kind: "building", w: 2, h: 2, maxHp: 600, cost: { gold: 120 }, buildTicks: 80, sight: 5, dropOff: true, look: { shape: "hex", label: "栈", name: "货栈" } },
+  caravan: { kind: "unit", maxHp: 250, moveTicks: 5, sight: 3, look: { shape: "diamond", label: "镖", name: "商队" } },
+  guard: { kind: "unit", maxHp: 120, moveTicks: 3, sight: 6, attack: { damage: 10, range: 1, cooldown: 8 }, look: { shape: "circle", label: "师", color: "#b5651d", name: "镖师" } },
 }
 // 主基地加厚、能还手：拆家很难，主要靠劫镖分胜负
 types.base.maxHp = 2000

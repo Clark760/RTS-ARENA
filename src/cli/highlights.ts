@@ -210,6 +210,19 @@ export function excitement(f: GameFacts, upset: { level: number; text: string } 
     .filter((p) => p.text)
     .sort((a, b) => b.v - a.v)
     .map((p) => p.text!)
+  // 每项都没到写出来的门槛（几样都沾一点凑出来的分）：往后排，看点写占分最多那项的实际数字，免得标题卡上空着
+  if (!reasons.length) {
+    score -= 10
+    const soft = [
+      back <= 0 ? null : scoreBack >= matBack ? `t${f.scoreLow!.t} 时 ${W} 比分落后 ${Math.round(f.scoreLow!.mine)} : ${Math.round(f.scoreLow!.theirs)}` : `t${f.materialLow!.t} 时 ${W} 的兵力和建筑只有 ${name(f.materialLow!.foe)} 的 ${Math.round(f.materialLow!.ratio * 100)}%`,
+      f.leadChanges > 0 ? `优势换手 ${f.leadChanges} 次` : null,
+      f.killedRatio > 0 ? `造出来的单位和建筑打掉了 ${Math.round(f.killedRatio * 100)}%` : null,
+      f.battles > 0 ? `${f.battles} 场大战（最大一场死了 ${f.biggestBattle} 个）` : null,
+      f.winner === null ? null : scoreClose >= baseClose && fs0 ? `比分 ${Math.round(fs0.winner)} : ${Math.round(fs0.foe)}` : baseClose > 0 ? `${W} 的主基地一度只剩 ${Math.round(f.winnerBaseMin! * 100)}% 血` : null,
+    ]
+    const best = soft.map((text, i) => ({ text, v: parts[i].v })).filter((p) => p.text && p.v > 0).sort((a, b) => b.v - a.v)[0]
+    if (best) reasons.push(best.text!)
+  }
   if (f.trouble) reasons.push("（有 bot 出错，扣了分）")
   return { score: Math.round(score), reasons }
 }

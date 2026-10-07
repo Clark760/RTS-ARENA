@@ -1253,7 +1253,7 @@ async function main(): Promise<void> {
       console.log(`已建好联赛视频目录 ${dir}（联赛 ${file}）：${r.files.length} 个文件`)
       console.log(`  PROMPT.md    给大模型的说明：视频结构、怎么写、联赛数据（先读它）`)
       console.log(`  bots/        选手代码；reports/ 几局的战报；script.json 待填的脚本`)
-      console.log(`写好 script.json 后在 ${dir} 里运行：rts-arena video --preview auto 先看预览（每段一张，另有一张总览拼图），再 rts-arena video --check 5,60 出视频并从成品里截图检查`)
+      console.log(`写好 script.json 后在 ${dir} 里运行：先 rts-arena video --lint 核对字数和时间表，再 rts-arena video --preview auto 看预览（每段一张，另有一张总览拼图），最后 rts-arena video --check auto 出视频并从成品里每段截一张检查（图都在 preview/ 里）`)
       return
     }
     case "video": {
@@ -1297,6 +1297,8 @@ async function main(): Promise<void> {
           seriesFile: file,
           script,
           out,
+          // 在视频目录里运行时，预览和检查截图都放这里的 preview/（--out 指到别处也一样）
+          imagesDir: cfg ? "preview" : undefined,
           browser: typeof opt.browser === "string" ? opt.browser : undefined,
           fps,
           preview: opt.preview === "auto" ? "auto" : secs(opt.preview, "--preview"),

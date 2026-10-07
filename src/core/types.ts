@@ -10,6 +10,8 @@ export interface Look {
   shape: Shape
   /** 图形上写的一个字（可选） */
   label?: string
+  /** 中文名（可选，最多 6 个字）：联赛视频的单位图例、战况里用它；不写时常见类型（工人、兵营……）用平台的中文名，其余显示类型名 */
+  name?: string
   /** 固定颜色；不填按所属玩家上色（中立为灰色） */
   color?: string
 }

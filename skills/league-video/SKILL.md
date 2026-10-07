@@ -57,7 +57,7 @@ rts-arena video-init league my-video --text "要展示给观众的原话"
 cd my-video
 rts-arena video --lint                      # 只核对脚本：格式、每段字数和上限、时间表（不出图），字数对了再往下
 rts-arena video --preview auto              # 每段各画一张（PNG，放在 preview/ 里，另有一张总览拼图），先看总览再逐张细看
-rts-arena video --check auto                # 出视频（默认输出成 <规则包>联赛.mp4，--out 可以改），并从成品里每段截一张检查
+rts-arena video --check auto                # 出视频（默认输出成 <规则包>联赛.mp4，--out 可以改），并从成品里每段截一张检查（也放在 preview/ 里）
 ```
 
 每次运行都会列出每段从第几秒到第几秒，要细看某一段就 `--preview 秒,秒`。脚本格式不对、字数超了，命令会列出所有问题，照着改；输出里的"提醒"（比如粗体字段里的"一"）不挡出视频，但也照着改。预览图要逐张打开看：字有没有挤出画面、介绍是不是太长、名字和颜色对不对。

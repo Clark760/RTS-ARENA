@@ -62,7 +62,7 @@ const TERRAIN = {
 
 const types: Record<string, TypeSpec> = {
   ...standardTypes(),
-  flag: { kind: "building", w: 1, h: 1, maxHp: 0, sight: 6, look: { shape: "diamond", label: "旗" } },
+  flag: { kind: "building", w: 1, h: 1, maxHp: 0, sight: 6, look: { shape: "diamond", label: "旗", name: "旗" } },
   tower: {
     kind: "building",
     w: 2,
@@ -72,7 +72,7 @@ const types: Record<string, TypeSpec> = {
     buildTicks: 100,
     sight: 6,
     attack: { damage: 8, range: 4, cooldown: 10 },
-    look: { shape: "hex", label: "塔" },
+    look: { shape: "hex", label: "塔", name: "哨塔" },
   },
   troll: {
     kind: "unit",
@@ -80,7 +80,7 @@ const types: Record<string, TypeSpec> = {
     moveTicks: 4,
     sight: 6,
     attack: { damage: 14, range: 1, cooldown: 12 },
-    look: { shape: "circle", label: "魔", color: "#6a8f4e" },
+    look: { shape: "circle", label: "魔", color: "#6a8f4e", name: "巨魔" },
   },
 }
 types.base.maxHp = 2500

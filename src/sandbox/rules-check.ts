@@ -105,6 +105,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
       else {
         if (look.label !== undefined && (typeof look.label !== "string" || [...look.label].length > 2)) bad(`${at}.look.label 最多 2 个字`)
         if (look.color !== undefined && (typeof look.color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(look.color))) bad(`${at}.look.color 要写成 "#rrggbb"`)
+        if (look.name !== undefined && (typeof look.name !== "string" || [...look.name].length < 1 || [...look.name].length > 6)) bad(`${at}.look.name 要写 1～6 个字`)
       }
     }
   }

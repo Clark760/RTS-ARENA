@@ -1,13 +1,13 @@
 // 联赛视频：素材包（代码风格指标、成绩）、脚本检查、场景编排；本机有 Chrome / Edge 时再真的渲染一段
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { after, test } from "node:test"
 import { checkScript, codeFacts, factTags, gameScores, readSeries, scriptWarnings, videoBrief, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
-import { buildScenes, pacing, tidy, timelineOf } from "../src/video/render.ts"
+import { buildScenes, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
 import type { Replay } from "../src/core/types.ts"
 
 const ROOT = join(import.meta.dirname, "..")
@@ -149,7 +149,26 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   }
 })
 
+test("规则页：开局快照里没有标记（规则包第 1 个 tick 才放）时用回放里第一次出现的；图例用规则包写的中文名 look.name", () => {
+  const dir = join(TMP, "lg-nomark")
+  cpSync(join(TMP, "lg"), dir, { recursive: true })
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".json") && !x.endsWith(".series.json"))) {
+    const r = JSON.parse(readFileSync(join(dir, f), "utf8")) as Replay
+    r.initial.markers = []
+    r.types.archer.look = { ...r.types.archer.look!, name: "射手" }
+    writeFileSync(join(dir, f), JSON.stringify(r))
+  }
+  const sf = join(dir, basename(seriesFile))
+  const rules = buildScenes(readSeries(sf), script, sf, 10)[2].data as { markers: { kind: string }[]; legend: { name: string }[] }
+  assert.ok(rules.markers.some((m) => m.kind === "zone"))
+  assert.ok(rules.legend.some((l) => l.name === "射手") && rules.legend.some((l) => l.name === "战士"))
+})
+
 test("平台拼的文字：中文名前后的空格去掉，英文名的留着", () => {
+  // 规则包的状态栏用空格隔开几项，换成选手名后空格要留着；事件句子照样去掉
+  const seats = [{ name: "大肥鱼" }, { name: "哈基米" }]
+  assert.equal(relabelSeats("台址 P0 P1 空 争", seats, false), "台址 大肥鱼 哈基米 空 争")
+  assert.equal(relabelSeats("P1 夺下控制点", seats), "哈基米夺下控制点")
   assert.equal(tidy("联赛得分率 50% 的 Gemini 赢了 98% 的 大肥鱼"), "联赛得分率 50% 的 Gemini 赢了 98% 的大肥鱼")
   assert.equal(tidy("t1044～1169 大战：大肥鱼 损失 7，Gemini 3.8 flash 损失 11"), "t1044～1169 大战：大肥鱼损失 7，Gemini 3.8 flash 损失 11")
   assert.equal(tidy("大肥鱼 获胜"), "大肥鱼获胜")
@@ -252,5 +271,5 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   const full = sh(["video", "--out", "v.mp4", "--fps", "10", "--check", "2"], dir)
   assert.match(full, /浏览器解码检查：时长 [\d.]+ 秒，1920×1080/)
   assert.ok(statSync(join(dir, "v.mp4")).size > 100_000)
-  assert.ok(existsSync(join(dir, "v-check-2s.png")))
+  assert.ok(existsSync(join(dir, "preview", "v-check-2s.png")))
 })

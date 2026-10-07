@@ -32,6 +32,11 @@ for (const rules of [annihilation, koth, harvest, melee, frontier, beacons, wild
     assert.equal(typecheck(rules, rulesetDir(rules.id), files), "")
   })
 
+  test(`「${rules.name}」自己加的实体类型都写了中文名（look.name，视频图例和战况用）`, () => {
+    const common = new Set(["base", "barracks", "worker", "soldier", "archer", "goldmine", "tower", "depot"])
+    for (const [k, t] of Object.entries(rules.types)) if (!common.has(k) || (k === "tower" && rules.id === "flag-run")) assert.ok(t.look.name, `${k} 没写 look.name`)
+  })
+
   test(`「${rules.name}」的参考 bot 和规则包放在一起，每个都写了打法、列进 PROMPT.md，至少有 3 种打法`, () => {
     const bots = referenceBots(rulesetDir(rules.id))
     const own = bots.filter((b) => b.name !== "idle")

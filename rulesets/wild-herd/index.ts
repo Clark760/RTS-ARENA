@@ -41,15 +41,15 @@ for (let k = 0; k < 4; k++) PASTURES.push(rotateK(S, { x: 18, y: 2, w: 4, h: 4 }
 
 const types: Record<string, TypeSpec> = {
   ...standardTypes(),
-  pen: { kind: "building", w: 2, h: 2, maxHp: 500, cost: { gold: 100 }, buildTicks: 80, sight: 4, look: { shape: "hex", label: "栏" } },
-  bison: { kind: "unit", maxHp: 160, moveTicks: 4, sight: 4, attack: { damage: 6, range: 1, cooldown: 10 }, look: { shape: "circle", label: "牛" } },
+  pen: { kind: "building", w: 2, h: 2, maxHp: 500, cost: { gold: 100 }, buildTicks: 80, sight: 4, look: { shape: "hex", label: "栏", name: "牧栏" } },
+  bison: { kind: "unit", maxHp: 160, moveTicks: 4, sight: 4, attack: { damage: 6, range: 1, cooldown: 10 }, look: { shape: "circle", label: "牛", name: "野牛" } },
   wolf: {
     kind: "unit",
     maxHp: 90,
     moveTicks: 3,
     sight: 6,
     attack: { damage: 9, range: 1, cooldown: 8 },
-    look: { shape: "triangle", label: "狼", color: "#a33b2b" },
+    look: { shape: "triangle", label: "狼", color: "#a33b2b", name: "狼" },
   },
 }
 types.worker.builds = ["barracks", "pen"]
