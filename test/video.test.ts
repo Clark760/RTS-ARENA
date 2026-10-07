@@ -87,13 +87,16 @@ test("联赛汇总记下每局比分；全联赛之最（最快、最久、比�
 })
 
 test("脚本提醒：粗体字段里的「一」像破折号，常规字重的介绍不管", () => {
-  const w = scriptWarnings({ title: "唯一一胜", players: [{ name: "a", tagline: "只输 1 局", intro: ["一稿流"] }], highlights: [{ index: 1, commentary: "一波带走" }], outro: "完" })
+  const w = scriptWarnings({ title: "唯一一胜", players: [{ name: "a", tagline: "只输 1 局", intro: ["一稿流"] }], highlights: [{ index: 1, commentary: "一波带走" }], outro: "完" }).filter((x) => x.includes("是粗体"))
   assert.equal(w.length, 2)
   assert.ok(w[0].startsWith("title 是粗体") && w[1].startsWith("highlights[0].commentary 是粗体"))
   assert.deepEqual(scriptWarnings(null), [])
-  // 选手页最长 9 秒：tagline 加 intro 超过 100 字提醒
-  const long = scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["很长".repeat(30), "很长".repeat(30)] }] })
-  assert.match(long[0], /players\[0\]（a）的 tagline 加 intro 共 122 字/)
+  // 选手页：tagline 加 intro 超过 170 字读不完，少于 100 字页面显得空，都提醒（和最初的视频一样写 3～4 句、120～170 字）
+  const long = scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["很长".repeat(45), "很长".repeat(45)] }] })
+  assert.match(long[0], /players\[0\]（a）的 tagline 加 intro 共 182 字/)
+  const short = scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["很短".repeat(20)] }] })
+  assert.match(short[0], /players\[0\]（a）的 tagline 加 intro 只有 42 字，选手页显得空/)
+  assert.deepEqual(scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["正好".repeat(60)] }] }), [])
 })
 
 test("场景编排：片头片尾署名、标题、每个选手、排名、精彩对局（标题卡 + 回放）", () => {
@@ -252,7 +255,7 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   // --lint：不出图，列出每个字段的字数和上限、时间表
   const lint = sh(["video", "--lint"], dir)
   assert.match(lint, /字数（现在 \/ 上限/)
-  assert.match(lint, /players\[0\]（baseline）tagline 加 intro：\d+ \/ 80/)
+  assert.match(lint, /players\[0\]（baseline）tagline 加 intro：\d+ \/ 170  ← 偏少/)
   assert.match(lint, /每段的时间/)
   assert.match(lint, /格式没问题/)
   const out = sh(["video", "--preview", "1,6"], dir)

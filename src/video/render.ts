@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from "node:path"
 import { applyFrame, ReplayModel, type State } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
 import { findBrowser, launchBrowser } from "./browser.ts"
-import { checkScript, codeFacts, factTags, gameScores, PLAYER_PAGE_CHARS, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
+import { checkScript, codeFacts, factTags, gameScores, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { groupBattles } from "../cli/battles.ts"
@@ -130,7 +130,7 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
       label: `选手 ${p.displayName || p.name}`,
       data: {
         kind: "player",
-        // 按字数算：读字速度按每秒 11 字的 1.3 倍（约 14 字），4.6～6.9 秒（原来公式在 80 字以内一律卡在下限，D-148）
+        // 按字数算：读字速度按每秒 11 字的 1.3 倍（约 14 字），4.6～6.9 秒（D-148）；正常写 120～170 字时就是 6.9 秒（D-152）
         frames: sec(fps, Math.min(9 / BRISK, Math.max(6 / BRISK, len(p.tagline, ...p.intro) / (11 * BRISK)))),
         speed: BRISK,
         color: color(i),
@@ -507,7 +507,7 @@ export function lintScript(seriesFile: string, script: VideoScript, fps = 30): {
       row(`players[${i}]（${p.name}）.tagline`, p.tagline, L.tagline)
       if (Array.isArray(p.intro)) p.intro.forEach((l, j) => row(`players[${i}].intro[${j}]`, l, L.introLine))
       const total = n(p.tagline) + (Array.isArray(p.intro) ? p.intro.reduce((a, l) => a + n(l), 0) : 0)
-      counts.push(`players[${i}]（${p.name}）tagline 加 intro：${total} / ${PLAYER_PAGE_CHARS}${total > PLAYER_PAGE_CHARS ? "  ← 超了" : ""}`)
+      counts.push(`players[${i}]（${p.name}）tagline 加 intro：${total} / ${PLAYER_PAGE_CHARS}${total > PLAYER_PAGE_CHARS ? "  ← 超了" : total < PLAYER_PAGE_MIN ? `  ← 偏少（写到 120 字以上）` : ""}`)
     })
   if (Array.isArray(script.highlights))
     script.highlights.forEach((h, i) => {

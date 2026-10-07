@@ -154,7 +154,7 @@ export interface VideoScript {
     byline?: string
     /** 一句话定位（最多 30 字） */
     tagline: string
-    /** 介绍，1～4 句（建议 2～4 句），每句最多 50 字 */
+    /** 介绍，1～4 句（建议 3～4 句），每句最多 50 字 */
     intro: string[]
   }[]
   /** 精彩对局的解说；不写就用联赛挑的精彩对局、不加解说 */
@@ -163,8 +163,12 @@ export interface VideoScript {
   outro?: string
 }
 
-/** 选手页最长 7 秒左右（D-146 加快节奏后），大约读得完 80 字：tagline 加 intro 超了就提醒 */
-export const PLAYER_PAGE_CHARS = 80
+/**
+ * 选手页的文字量：和最初的视频一样 3～4 句、120～170 字（D-152，用户：介绍页文字太少，保持和原来一样多，
+ * 原来的文字密度在现在的时长下刚刚好）。tagline 加 intro 超过上限、少于下限都提醒
+ */
+export const PLAYER_PAGE_CHARS = 170
+export const PLAYER_PAGE_MIN = 100
 
 /** 规则页最长 12 秒，大约读得完 130 字 */
 export const RULES_PAGE_CHARS = 130
@@ -245,11 +249,12 @@ export function scriptWarnings(s: unknown): string[] {
     const n = o.rules.reduce((a: number, x) => a + (typeof x === "string" ? [...x].length : 0), 0)
     if (n > RULES_PAGE_CHARS) out.push(`rules 共 ${n} 字，规则页最长 12 秒，大约只读得完 ${RULES_PAGE_CHARS} 字：删一句或者写短些`)
   }
-  // 选手页最长 9 秒：tagline 加 intro 太长读不完
+  // 选手页：tagline 加 intro 太长读不完，太少页面显得空
   if (Array.isArray(o.players))
     o.players.forEach((p, i) => {
       const n = [p?.tagline, ...(Array.isArray(p?.intro) ? p.intro : [])].reduce((a: number, x) => a + (typeof x === "string" ? [...x].length : 0), 0)
       if (n > PLAYER_PAGE_CHARS) out.push(`players[${i}]（${p?.name}）的 tagline 加 intro 共 ${n} 字，选手页最长 7 秒左右，大约只读得完 ${PLAYER_PAGE_CHARS} 字：删一句或者写短些`)
+      else if (n < PLAYER_PAGE_MIN) out.push(`players[${i}]（${p?.name}）的 tagline 加 intro 只有 ${n} 字，选手页显得空：写到 3～4 句、120～${PLAYER_PAGE_CHARS} 字（对照代码和战绩再写几句）`)
     })
   return out
 }
@@ -354,7 +359,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
       "介绍要有依据：用户的原话、文件名、代码（开头的注释、写法特征、参数）和联赛成绩里看得到的才写，不编造没发生的事",
       "文件名常见的写法是 \"模型名-编程工具\"，比如 \"ModelX2.0-ToolY\" 是 ToolY 里的 ModelX 2.0（只是格式的例子）；拆不开、只是外号时就照原样用，不要猜是哪家模型；不知道作者就不写 byline",
       "语气跟着用户的原话走（调侃就调侃，正式就正式），但不贬低任何一方；成绩差的写它的特点和输在哪",
-      "每个选手 1～4 句介绍（建议 2～4 句），每句不超过 50 字；tagline 不超过 30 字；byline 会出现在片尾的选手名单里",
+      "每个选手 1～4 句介绍（建议 3～4 句，tagline 加 intro 一共 120～170 字），每句不超过 50 字；tagline 不超过 30 字；byline 会出现在片尾的选手名单里",
       "精彩对局最多 5 局，解说一句话（不超过 80 字），别重复标题卡上自动列出的看点（highlights 里的 reasons）；index 用联赛的局号",
       "平台署名（片头、片尾的 RTS Arena）由渲染器固定加上，不用写进脚本，也去不掉",
     ],
