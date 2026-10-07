@@ -29,7 +29,7 @@ import { leagueStandings, leagueTables, standingsText, teamSplits, type LeagueGa
 import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
 import { excitement, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
 import { videoBrief, type VideoScript } from "../video/brief.ts"
-import { renderLeagueVideo } from "../video/render.ts"
+import { renderLeagueVideo, timelineText } from "../video/render.ts"
 import { createVideoWorkspace, readVideoConfig, VIDEO_CONFIG } from "../video/workspace.ts"
 import { BASELINE as TEMPLATE_BASELINE, GREEDY as TEMPLATE_GREEDY, INDEX as TEMPLATE_INDEX, RUSH as TEMPLATE_RUSH, writeRulesTemplate } from "./rules-template.ts"
 
@@ -48,10 +48,11 @@ const HELP = `用法：rts-arena <命令> [参数]
                                         建一个联赛视频目录（默认 league-video）：给大模型的说明 PROMPT.md、选手代码、几局战报、
                                         联赛数据、待填的 script.json；大模型写好脚本后在目录里运行 rts-arena video
   video-brief [联赛汇总] [--out 文件]   联赛视频的素材包（JSON，video-init 也会写一份）
-  video [联赛汇总] [--script 脚本.json] [--out 视频.mp4] [--preview 秒,秒] [--check 秒,秒]
+  video [联赛汇总] [--script 脚本.json] [--out 视频.mp4] [--preview 秒,秒|auto] [--check 秒,秒]
                                         按脚本渲染 1920×1080 的联赛视频（片头片尾平台署名、标题和用户原话、选手介绍、排行榜、精彩对局），
-                                        用本机的 Chrome / Edge 渲染；--preview 只出这几秒的预览图，--check 出完视频后从成品里截图检查
-                                        （在 video-init 建的目录里不用写参数；写法见平台仓库的 skills/league-video/SKILL.md）
+                                        用本机的 Chrome / Edge 渲染；每次都列出每段从第几秒到第几秒。--preview 只出这几秒的预览图
+                                        （auto 是每段各一张），--check 出完视频后从成品里截图检查
+                                        （在 video-init 建的目录里不用写参数；脚本怎么写见 video-init 生成的 PROMPT.md）
   report [回放] [--player N] [--every T] [--full]
                                         文字战报：每隔 T tick 双方的经济、兵力、建筑，关键事件、战斗、损失、可能的问题
                                         （不写回放就看 ./replays 里最新的一局；不写 --player 就按你的 bot 坐的座位写；
@@ -801,26 +802,41 @@ function highlightsText(list: Highlight[]): string {
   return lines.join("\n")
 }
 
-/** 联赛汇总文件：给了文件就用它；给了目录或者没给，就找里面（默认 ./replays）最新的一场联赛 */
-function findLeagueSeries(arg: string | undefined): string {
-  const dir = arg === undefined ? "replays" : arg
+/** 目录里（和下一层子目录里）联赛的汇总文件 */
+function leagueSeriesIn(dir: string): string[] {
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) return []
+  const out: string[] = []
+  for (const f of readdirSync(dir)) {
+    const p = join(dir, f)
+    if (f.endsWith(".series.json")) out.push(p)
+    else if (!f.startsWith(".") && f !== "node_modules" && statSync(p).isDirectory())
+      for (const g of readdirSync(p)) if (g.endsWith(".series.json")) out.push(join(p, g))
+  }
+  return out.filter((f) => {
+    try {
+      return (JSON.parse(readFileSync(f, "utf8")) as { kind?: string }).kind === "league"
+    } catch {
+      return false
+    }
+  })
+}
+
+/**
+ * 联赛汇总文件：给了文件就用它；给了目录就找里面（和下一层子目录）最新的一场联赛；
+ * 没给就依次找 ./replays、当前目录和它的下一层子目录
+ */
+function findLeagueSeries(arg: string | undefined, cmd: string): string {
   if (arg !== undefined && !(existsSync(arg) && statSync(arg).isDirectory())) {
     if (!existsSync(arg)) fail(`找不到 ${arg}`)
     return arg
   }
-  if (!existsSync(dir)) fail(`${dir} 不存在；写成 rts-arena video <联赛汇总 *.series.json>`)
-  const leagues = readdirSync(dir)
-    .filter((f) => f.endsWith(".series.json"))
-    .map((f) => join(dir, f))
-    .filter((f) => {
-      try {
-        return (JSON.parse(readFileSync(f, "utf8")) as { kind?: string }).kind === "league"
-      } catch {
-        return false
-      }
-    })
-    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
-  return leagues[0] ?? fail(`${dir} 里没有联赛的汇总文件（先跑 rts-arena league）`)
+  const where = arg !== undefined ? [arg] : ["replays", "."]
+  for (const dir of where) {
+    const leagues = leagueSeriesIn(dir).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
+    if (leagues.length > 1) say(`（${dir} 里有 ${leagues.length} 场联赛，用最新的 ${leagues[0]}；要用别的就写成 rts-arena ${cmd} <联赛汇总>）`)
+    if (leagues.length) return leagues[0]
+  }
+  fail(`没找到联赛的汇总文件（*.series.json）：找过 ${where.map((d) => (d === "." ? "当前目录" : d)).join("、")}和下一层子目录。先跑 rts-arena league，或者写成 rts-arena ${cmd} <联赛汇总 *.series.json>`)
 }
 
 /** 只在 --json 时输出的事件 */
@@ -1195,7 +1211,7 @@ async function main(): Promise<void> {
       return
     }
     case "video-brief": {
-      const file = findLeagueSeries(pos[0])
+      const file = findLeagueSeries(pos[0], "video-brief")
       const brief = videoBrief(file)
       const json = JSON.stringify(brief, null, 2)
       if (typeof opt.out === "string") {
@@ -1205,20 +1221,22 @@ async function main(): Promise<void> {
       return
     }
     case "video-init": {
-      const file = findLeagueSeries(pos[0])
-      const dir = pos[1] ?? "league-video"
+      // 只写了一个还不存在的名字：当成要建的目录，联赛自己找
+      const onlyDir = pos.length === 1 && !existsSync(pos[0])
+      const file = findLeagueSeries(onlyDir ? undefined : pos[0], "video-init")
+      const dir = (onlyDir ? pos[0] : pos[1]) ?? "league-video"
       if (existsSync(join(dir, "script.json"))) fail(`${dir} 里已经有 script.json 了：换个目录名，或者删掉它再建（别把写好的脚本覆盖了）`)
       const r = createVideoWorkspace(file, dir, typeof opt.text === "string" ? opt.text : undefined)
       console.log(`已建好联赛视频目录 ${dir}（联赛 ${file}）：${r.files.length} 个文件`)
       console.log(`  PROMPT.md    给大模型的说明：视频结构、怎么写、联赛数据（先读它）`)
       console.log(`  bots/        选手代码；reports/ 几局的战报；script.json 待填的脚本`)
-      console.log(`写好 script.json 后在 ${dir} 里运行：rts-arena video --preview 2,10,40 先看预览，再 rts-arena video 出视频`)
+      console.log(`写好 script.json 后在 ${dir} 里运行：rts-arena video --preview auto 先看预览（每段一张），再 rts-arena video 出视频`)
       return
     }
     case "video": {
       // 在 video-init 建的目录里：联赛、脚本、输出文件都有默认值
       const cfg = pos[0] === undefined ? readVideoConfig(".") : null
-      const file = cfg ? cfg.series : findLeagueSeries(pos[0])
+      const file = cfg ? cfg.series : findLeagueSeries(pos[0], "video")
       if (cfg && !existsSync(file)) fail(`找不到联赛汇总 ${file}（${VIDEO_CONFIG} 里记的）`)
       const scriptFile = typeof opt.script === "string" ? opt.script : cfg ? "script.json" : null
       if (!scriptFile) fail("要用 --script 给出脚本（JSON）；先用 rts-arena video-init 建一个视频目录，或者 rts-arena video-brief 拿素材包和脚本模板")
@@ -1231,7 +1249,7 @@ async function main(): Promise<void> {
       const secs = (v: string | true | undefined, what: string) => {
         if (v === undefined) return undefined
         const list = String(v).split(",").map(Number)
-        if (list.some((x) => !Number.isFinite(x) || x < 0)) fail(`${what} 要写成用逗号隔开的秒数，比如 2,15,40`)
+        if (list.some((x) => !Number.isFinite(x) || x < 0)) fail(`${what} 要写成用逗号隔开的秒数，比如 2,15,40${what === "--preview" ? "；或者写 auto，每段各出一张" : ""}`)
         return list
       }
       const fps = typeof opt.fps === "string" ? Number(opt.fps) : 30
@@ -1246,7 +1264,7 @@ async function main(): Promise<void> {
           out,
           browser: typeof opt.browser === "string" ? opt.browser : undefined,
           fps,
-          preview: secs(opt.preview, "--preview"),
+          preview: opt.preview === "auto" ? "auto" : secs(opt.preview, "--preview"),
           check: secs(opt.check, "--check"),
           onProgress: (done, total) => {
             const pct = Math.floor((done / total) * 10) * 10
@@ -1256,7 +1274,8 @@ async function main(): Promise<void> {
             }
           },
         })
-        if (!r.file) console.log(`预览图：${r.images.join("、")}（整段视频 ${r.seconds.toFixed(1)} 秒）`)
+        console.log(`每段的时间（整段 ${r.seconds.toFixed(1)} 秒）：\n${timelineText(r.timeline)}`)
+        if (!r.file) console.log(`预览图：${r.images.join("、")}`)
         else {
           console.log(`已生成 ${r.file}：${r.seconds.toFixed(1)} 秒，${r.frames} 帧，${(r.bytes / 1e6).toFixed(1)} MB，用时 ${((performance.now() - t0) / 1000).toFixed(0)} 秒`)
           if (r.probe) console.log(`浏览器解码检查：时长 ${r.probe.duration.toFixed(1)} 秒，${r.probe.width}×${r.probe.height}`)

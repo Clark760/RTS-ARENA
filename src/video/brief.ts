@@ -145,16 +145,16 @@ export interface VideoScript {
     name: string
     /** 显示的名字（最多 28 字），比如 "Gemini 3.8 flash High" */
     displayName?: string
-    /** 一行小字（最多 30 字），比如 "反重力 出品" */
+    /** 一行小字（最多 30 字），比如 "反重力"；也会出现在片尾的选手名单里 */
     byline?: string
     /** 一句话定位（最多 30 字） */
     tagline: string
-    /** 介绍，2～4 句，每句最多 50 字 */
+    /** 介绍，1～4 句（建议 2～4 句），每句最多 50 字 */
     intro: string[]
   }[]
   /** 精彩对局的解说；不写就用联赛挑的精彩对局、不加解说 */
   highlights?: { index: number; title?: string; commentary?: string }[]
-  /** 片尾前的一句总结（最多 60 字） */
+  /** 片尾署名页最上面的一句总结（最多 60 字，可以不写） */
   outro?: string
 }
 
@@ -169,8 +169,8 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
   const str = (v: unknown, name: string, max: number, required = false) => {
     if (v === undefined && !required) return
     if (typeof v !== "string" || (required && v.trim() === "")) errs.push(`${name} 要是字符串${required ? "（不能为空）" : ""}`)
-    else if ([...v].length > max) errs.push(`${name} 最多 ${max} 字（现在 ${[...v].length} 字）：${v.slice(0, 20)}…`)
-    else if (v.includes("待填")) errs.push(`${name} 还是"待填"`)
+    else if (v.includes("待填")) errs.push(`${name} 还是"待填"${required ? "" : "（不要的话整个字段删掉）"}`)
+    else if ([...v].length > max) errs.push(`${name} 最多 ${max} 字（现在 ${[...v].length} 字，标点和空格也算）：${v.slice(0, 20)}…`)
   }
   str(o.title, "title", L.title)
   str(o.userText, "userText", L.userText)
@@ -252,7 +252,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
     }
   })
   const scriptTemplate: VideoScript = {
-    title: `${s.ruleset.name}联赛`,
+    title: `待填：视频标题（上面已经有一行「${s.ruleset.name}联赛」，不用重复）`,
     userText: "待填：用户的原话",
     theme: "待填：对原话的解读、整场联赛的一句话导语",
     players: players.map((p) => ({ name: p.name, displayName: "待填", byline: "待填", tagline: "待填", intro: ["待填", "待填"] })),
@@ -269,8 +269,8 @@ export function videoBrief(seriesFile: string): VideoBrief {
       "介绍要有依据：用户的原话、文件名、代码（开头的注释、写法特征、参数）和联赛成绩里看得到的才写，不编造没发生的事",
       "文件名常见的写法是 \"模型名-编程工具\"，比如 \"GPT6.1sol-codex\" 是 codex 里的 GPT 6.1 sol；拆不开就照原样用",
       "语气跟着用户的原话走（调侃就调侃，正式就正式），但不贬低任何一方；成绩差的写它的特点和输在哪",
-      "每个选手 2～4 句介绍，每句不超过 50 字；tagline 不超过 30 字",
-      "精彩对局最多 5 局，解说一句话（不超过 80 字）；index 用联赛的局号",
+      "每个选手 1～4 句介绍（建议 2～4 句），每句不超过 50 字；tagline 不超过 30 字；byline 会出现在片尾的选手名单里",
+      "精彩对局最多 5 局，解说一句话（不超过 80 字），别重复标题卡上自动列出的看点（highlights 里的 reasons）；index 用联赛的局号",
       "平台署名（片头、片尾的 RTS Arena）由渲染器固定加上，不用写进脚本，也去不掉",
     ],
   }

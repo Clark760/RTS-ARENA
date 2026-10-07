@@ -7,7 +7,8 @@ import { join } from "node:path"
 import { after, test } from "node:test"
 import { checkScript, codeFacts, readSeries, videoBrief, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
-import { buildScenes } from "../src/video/render.ts"
+import { buildScenes, pacing, timelineOf } from "../src/video/render.ts"
+import type { Replay } from "../src/core/types.ts"
 
 const ROOT = join(import.meta.dirname, "..")
 const CLI = join(ROOT, "src", "cli", "arena.ts")
@@ -86,12 +87,39 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   assert.deepEqual(kinds.slice(1, 5), ["title", "player", "player", "standings"])
   const hl = series.summary!.highlights!.slice(0, 3).length
   assert.equal(kinds.filter((k) => k === "replay").length, hl)
-  // 回放场景每帧都能算出局面，最后一帧定格显示结果
+  // 时间表：每段都有名字，首尾相接
+  const tl = timelineOf(scenes, 10)
+  assert.equal(tl[0].label, "片头署名")
+  assert.ok(tl.every((x, k) => x.label && (k === 0 || x.from === tl[k - 1].to)))
+  assert.ok(tl.some((x) => /^选手 基准$/.test(x.label)) && tl.some((x) => /^精彩对局 1 回放$/.test(x.label)))
+  // 回放场景每帧都能算出局面，最后一帧定格显示结果；往回要的帧从头重算，结果一样
   const rs = scenes.find((s) => s.data.kind === "replay")
   if (rs) {
+    const mid = rs.frame!(Math.floor(rs.data.frames / 2))
     let last = rs.frame!(0)
     for (let i = 1; i < rs.data.frames; i++) last = rs.frame!(i)
     assert.ok(last.final && last.progress === 1 && last.ents.length > 0)
+    assert.deepEqual(rs.frame!(Math.floor(rs.data.frames / 2)).ents, mid.ents)
+  }
+})
+
+test("回放变速：tick 随帧单调往前、首尾对齐；打起来的地方比没动静的地方放得慢", () => {
+  const series = readSeries(seriesFile)
+  const g = [...series.results].sort((a, b) => b.tick - a.tick)[0]
+  const replay = JSON.parse(readFileSync(join(TMP, "lg", g.replay), "utf8")) as Replay
+  const n = 200
+  const p = pacing(replay, n)
+  const ticks = Array.from({ length: n }, (_, i) => p.tickOf(i))
+  assert.equal(ticks[0], 0)
+  assert.equal(ticks[n - 1], replay.result.tick)
+  assert.ok(ticks.every((t, i) => i === 0 || t >= ticks[i - 1]))
+  // 每帧推进的 tick：快进的帧比不快进的帧多
+  const step = (i: number) => ticks[i + 1] - ticks[i]
+  const fast = ticks.slice(0, -1).map((_, i) => i).filter((i) => p.fast(i))
+  const slow = ticks.slice(0, -1).map((_, i) => i).filter((i) => !p.fast(i))
+  if (fast.length && slow.length) {
+    const avg = (xs: number[]) => xs.reduce((a, i) => a + step(i), 0) / xs.length
+    assert.ok(avg(fast) > avg(slow) * 1.5)
   }
 })
 
@@ -107,9 +135,24 @@ test("video-init：视频目录里有说明、选手代码、战报、待填脚�
   assert.ok(readdirSync(join(dir, "reports")).some((f) => /^game-\d+\.md$/.test(f)))
   const tmpl = JSON.parse(readFileSync(join(dir, "script.json"), "utf8")) as VideoScript
   assert.equal(tmpl.userText, "用户的一句话")
+  // 写给大模型的：每段显示在哪、自动看点别重复、每人的颜色、每局数据
+  assert.match(prompt, /别重复看点/)
+  assert.match(prompt, /byline` 会出现在片尾/)
+  assert.match(prompt, /视频里的颜色：蓝色/)
+  assert.match(prompt, /每局数据/)
+  assert.match(prompt, /--preview auto/)
   const again = spawnSync(process.execPath, [CLI, "video-init", "lg", "vd"], { cwd: TMP, encoding: "utf8" })
   assert.equal(again.status, 1)
   assert.match(again.stderr, /已经有 script\.json/)
+  // 只写目录名：联赛自己找（当前目录的下一层子目录 lg 里）
+  sh(["video-init", "vd2"])
+  assert.ok(existsSync(join(TMP, "vd2", "PROMPT.md")))
+  // 哪儿都没有联赛：报错里写的是 video-init 自己
+  const empty = mkdtempSync(join(tmpdir(), "rts-video-empty-"))
+  const none = spawnSync(process.execPath, [CLI, "video-init"], { cwd: empty, encoding: "utf8" })
+  rmSync(empty, { recursive: true, force: true })
+  assert.equal(none.status, 1)
+  assert.match(none.stderr, /rts-arena video-init <联赛汇总/)
 })
 
 test("渲染：在视频目录里不写参数出预览图；本机有浏览器时出一段 1920×1080 的 MP4 并用浏览器解码检查", { skip: findBrowser() ? false : "本机没有 Chrome / Edge" }, () => {
@@ -117,7 +160,14 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   writeFileSync(join(dir, "script.json"), JSON.stringify(script))
   const out = sh(["video", "--preview", "1,6"], dir)
   assert.match(out, /预览图/)
+  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～3\.5\s+秒  片头署名/)
   assert.ok(statSync(join(dir, "夺点联赛-6s.png")).size > 10_000)
+  // auto：每段一张，回放段两张
+  const auto = sh(["video", "--preview", "auto"], dir)
+  const shots = /预览图：(.*)/.exec(auto)![1].split("、")
+  const segs = auto.split("\n").filter((l) => /^\s+[\d.]+～/.test(l))
+  assert.equal(shots.length, segs.length + segs.filter((l) => l.endsWith("回放")).length)
+  assert.ok(shots.every((f) => existsSync(join(dir, f))))
   const full = sh(["video", "--out", "v.mp4", "--fps", "10", "--check", "2"], dir)
   assert.match(full, /浏览器解码检查：时长 [\d.]+ 秒，1920×1080/)
   assert.ok(statSync(join(dir, "v.mp4")).size > 100_000)

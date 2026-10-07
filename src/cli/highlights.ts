@@ -2,6 +2,7 @@
 // 只用回放里的通用信息（实体造价、生命、死亡、分数），所有规则包都能用。
 import { applyFrame, ReplayModel } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
+import { groupBattles, MIN_BATTLE } from "./battles.ts"
 
 /** 一局的看点（和联赛排名无关的部分，打完一局就能算） */
 export interface GameFacts {
@@ -136,17 +137,8 @@ export function gameFacts(replay: Replay): GameFacts {
     finalScores = { winner: finalScore[w], foe }
   }
 
-  // 战斗：时间上挨着（60 tick 内）、地点挨着（15 格内）的死亡算一场，一场最长 300 tick
-  const groups: { t0: number; t1: number; xs: { x: number; y: number }[] }[] = []
-  for (const d of deaths) {
-    const g = groups[groups.length - 1]
-    const near = g && Math.abs(d.x - g.xs.reduce((a, p) => a + p.x, 0) / g.xs.length) + Math.abs(d.y - g.xs.reduce((a, p) => a + p.y, 0) / g.xs.length) <= 15
-    if (g && d.t - g.t1 <= 60 && d.t - g.t0 <= 300 && near) {
-      g.xs.push(d)
-      g.t1 = d.t
-    } else groups.push({ t0: d.t, t1: d.t, xs: [d] })
-  }
-  const big = groups.filter((g) => g.xs.length >= 3)
+  // 战斗：切分规则见 battles.ts（和战报、联赛视频一样）
+  const big = groupBattles(deaths).filter((g) => g.length >= MIN_BATTLE)
 
   // 险胜看赢家里主建筑活到最后的（分队时队友已经出局的不算"差点被拆"）
   const winnerSeats = replay.players.map((_, p) => p).filter((p) => winner !== null && side(p) === winner)
@@ -159,7 +151,7 @@ export function gameFacts(replay: Replay): GameFacts {
     scoreLow,
     leadChanges,
     battles: big.length,
-    biggestBattle: Math.max(0, ...big.map((g) => g.xs.length)),
+    biggestBattle: Math.max(0, ...big.map((g) => g.length)),
     killedRatio: built > 0 ? killed / built : 0,
     winnerBaseMin: mins.length ? Math.min(...mins) : null,
     finalScores,

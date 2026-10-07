@@ -5,7 +5,7 @@
 /** 一个场景的固定内容 */
 export type SceneData =
   | { kind: "brandOpen"; frames: number; ruleset: string }
-  | { kind: "title"; frames: number; ruleset: string; title: string; userText: string | null; theme: string | null; meta: string }
+  | { kind: "title"; frames: number; ruleset: string; eyebrow: string; title: string; userText: string | null; theme: string | null; meta: string }
   | {
       kind: "player"
       frames: number
@@ -56,6 +56,8 @@ export interface ReplayFrame {
   progress: number
   /** 最后定格时显示结果 */
   final: boolean
+  /** 这段没什么动静，正在快进 */
+  fast: boolean
 }
 
 export function installVideoPage(): void {
@@ -65,6 +67,8 @@ export function installVideoPage(): void {
   let SCALE = 1.5
   const FONT = '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif'
   const MONO = 'Consolas, "Cascadia Mono", "Microsoft YaHei", monospace'
+  /** 平台的远程仓库（片头下方、片尾署名里） */
+  const REPO = "gitee.com/mingomin/rts-arena"
   const C = { bg1: "#0b1220", bg2: "#14203a", text: "#e8edf7", muted: "#8fa0bf", accent: "#f5b942", line: "#26344f", panel: "rgba(16,26,46,0.92)" }
   let canvas = new OffscreenCanvas(W * SCALE, H * SCALE)
   let g = canvas.getContext("2d")!
@@ -132,6 +136,20 @@ export function installVideoPage(): void {
     return out
   }
 
+  /** 均衡折行：行数和 wrap 一样，但每行尽量一样长（免得最后一行只剩两三个字） */
+  function wrapBalanced(text: string, maxWidth: number): string[] {
+    const first = wrap(text, maxWidth)
+    if (first.length < 2) return first
+    let lo = maxWidth / first.length
+    let hi = maxWidth
+    for (let k = 0; k < 12; k++) {
+      const mid = (lo + hi) / 2
+      if (wrap(text, mid).length > first.length) lo = mid
+      else hi = mid
+    }
+    return wrap(text, hi)
+  }
+
   function text(s: string, x: number, y: number, px: number, color: string, opts: { bold?: boolean; align?: CanvasTextAlign; mono?: boolean; alpha?: number } = {}): void {
     g.globalAlpha = opts.alpha ?? 1
     g.font = font(px, opts.bold, opts.mono)
@@ -184,21 +202,47 @@ export function installVideoPage(): void {
     text("大模型写 bot 的即时战略竞技平台", W / 2, 410, 34, C.text, { align: "center", alpha: ease((i - 12) / 25) })
     text(`联赛视频 · ${s.ruleset} · 由 RTS Arena 平台生成`, W / 2, 470, 24, C.muted, { align: "center", alpha: ease((i - 24) / 25) })
     g.restore()
+    // 下方：远程仓库地址
+    text(REPO, W / 2, H - 64, 24, C.accent, { align: "center", alpha: ease((i - 30) / 25) })
   }
 
   function title(s: Any, i: number): void {
     background()
-    text(`${s.ruleset} · 联赛`, 80, 110, 26, C.accent, { bold: true, alpha: ease(i / 20) })
+    text(s.eyebrow, 80, 110, 26, C.accent, { bold: true, alpha: ease(i / 20) })
     text(s.title, 80, 190, 64, C.text, { bold: true, alpha: ease((i - 5) / 20) })
-    let y = 270
+    let y = 260
     if (s.userText) {
       const a = ease((i - 20) / 25)
-      g.font = font(38, true)
-      const lines = wrap(s.userText, W - 260)
-      roundRect(64, y - 10, W - 128, lines.length * 54 + 56, 14, "rgba(245,185,66,0.08)", "rgba(245,185,66,0.35)")
-      text("“", 84, y + 62, 90, C.accent, { bold: true, alpha: a })
-      lines.forEach((l, k) => text(l, 150, y + 48 + k * 54, 38, C.text, { bold: true, alpha: a }))
-      y += lines.length * 54 + 90
+      // 字号 38；只比一行多一点时缩小字号放进一行，否则均衡折行
+      const maxW = W - 300
+      let px = 38
+      g.font = font(px, true)
+      const full = g.measureText(s.userText).width
+      if (full > maxW && full <= maxW * 1.2) px = Math.floor((38 * maxW) / full)
+      g.font = font(px, true)
+      const lines = wrapBalanced(s.userText, maxW)
+      const lh = Math.round(px * 1.42)
+      const pad = 30
+      // 按字形的实际高度排：上下留白一样
+      const m = g.measureText(lines[0])
+      const asc = m.fontBoundingBoxAscent * 0.86
+      const boxH = pad * 2 + asc + (lines.length - 1) * lh + px * 0.14
+      const top = y
+      g.globalAlpha = a
+      roundRect(64, top, W - 128, boxH, 14, "rgba(245,185,66,0.08)", "rgba(245,185,66,0.35)")
+      g.globalAlpha = 1
+      const base0 = top + pad + asc
+      lines.forEach((l, k) => text(l, 150, base0 + k * lh, px, C.text, { bold: true, alpha: a }))
+      // 前后引号：开引号顶住第一行的字顶，收引号跟在最后一行后面
+      g.font = font(72, true)
+      const qo = g.measureText("“")
+      text("“", 140, base0 - asc + qo.actualBoundingBoxAscent - 4, 72, C.accent, { bold: true, align: "right", alpha: a }) // 全角引号的字形在右半边，右对齐才不贴字
+      g.font = font(px, true)
+      const lastW = g.measureText(lines[lines.length - 1]).width
+      g.font = font(72, true)
+      const qc = g.measureText("”")
+      text("”", 150 + lastW + 10, base0 + (lines.length - 1) * lh - asc + qc.actualBoundingBoxAscent - 4, 72, C.accent, { bold: true, alpha: a })
+      y = top + boxH + 50
     }
     if (s.theme) {
       g.font = font(28)
@@ -225,7 +269,7 @@ export function installVideoPage(): void {
     y += 106
     g.font = font(27)
     s.intro.forEach((line: string, k: number) => {
-      const a = ease((i - 24 - k * 16) / 14)
+      const a = ease((i - 20 - k * 9) / 12)
       const ls = wrap(line, 660)
       g.fillStyle = s.color
       g.globalAlpha = a
@@ -277,10 +321,10 @@ export function installVideoPage(): void {
       // 得分率条
       const bw = 220 * r.rate * ease((i - 20 - k * 10) / 30)
       g.globalAlpha = a
-      roundRect(900, y + 30, 220, 20, 10, "rgba(255,255,255,0.08)")
-      if (bw > 1) roundRect(900, y + 30, bw, 20, 10, r.color)
+      roundRect(850, y + 30, 220, 20, 10, "rgba(255,255,255,0.08)")
+      if (bw > 1) roundRect(850, y + 30, bw, 20, 10, r.color)
       g.globalAlpha = 1
-      text(`${Math.round(r.rate * 100)}%`, 1140, y + 48, 22, C.text, { bold: true, alpha: a })
+      text(`${Math.round(r.rate * 100)}%`, W - 104, y + 48, 22, C.text, { bold: true, align: "right", alpha: a })
     })
     watermark()
   }
@@ -318,15 +362,19 @@ export function installVideoPage(): void {
     })
     if (s.commentary) {
       g.font = font(28, true)
-      const ls = wrap(s.commentary, W - 200)
-      ls.forEach((l, k) => text(l, 84, Math.max(y + 30, H - 60 - (ls.length - 1 - k) * 40), 28, C.accent, { bold: true, alpha: ease((i - 30) / 15) }))
+      wrap(s.commentary, W - 200).forEach((l, k) => text(l, 84, y + 34 + k * 40, 28, C.accent, { bold: true, alpha: ease((i - 30) / 15) }))
     }
     watermark()
   }
 
-  const TILE = 18
+  /** 一格多大：按地图大小算，尽量铺满左边（输出时是整数像素，地形不会有缝） */
+  let TILE = 18
   const MX = 24
   const MY = 92
+  function fitTile(s: Any): void {
+    const t = Math.min(26, (H - MY - 44) / s.height, (W - MX - 20 - 330 - 20) / s.width)
+    TILE = Math.floor(t * SCALE) / SCALE
+  }
   function replay(s: Any, f: Any, i: number): void {
     g.fillStyle = C.bg1
     g.fillRect(0, 0, W, H)
@@ -334,8 +382,13 @@ export function installVideoPage(): void {
     text(`精彩对局 ${s.no}`, 24, 38, 20, C.accent, { bold: true })
     text(s.title, 140, 38, 22, C.text, { bold: true })
     if (s.commentary) {
-      g.font = font(18)
-      text(wrap(s.commentary, W - 60)[0], 24, 70, 18, C.muted)
+      // 解说放一行：放不下就缩小字号，最小 14 号还放不下就折成两行
+      let px = 18
+      g.font = font(px)
+      while (px > 14 && g.measureText(s.commentary).width > W - 60) g.font = font(--px)
+      const ls = wrap(s.commentary, W - 60)
+      if (ls.length === 1) text(ls[0], 24, 70, px, C.muted)
+      else ls.slice(0, 2).forEach((l, k) => text(l, 24, 62 + k * 18, px, C.muted))
     }
     // 地图
     if (!terrainLayer) {
@@ -408,10 +461,10 @@ export function installVideoPage(): void {
       g.stroke()
       g.globalAlpha = 1
       // 和回放页面一样标上汉字：建筑大字，单位小字
-      if (ty.kind === "building" && ty.label) text(ty.label, cx, cy + 9, 24, "rgba(255,255,255,0.9)", { bold: true, align: "center" })
+      if (ty.kind === "building" && ty.label) text(ty.label, cx, cy + TILE / 2, (TILE * 4) / 3, "rgba(255,255,255,0.9)", { bold: true, align: "center" })
       else if (ty.kind === "unit" && ty.label) {
         // 白字加深色描边：在哪种颜色上都看得清
-        g.font = font(ty.worker ? 9 : 9.5, true)
+        g.font = font(TILE * (ty.worker ? 0.56 : 0.6), true)
         g.textAlign = "center"
         g.textBaseline = "middle"
         const ly = cy + (ty.shape === "triangle" ? 3 : 0.5)
@@ -450,7 +503,7 @@ export function installVideoPage(): void {
       g.strokeStyle = `rgba(255,120,90,${Math.max(0, 0.9 - age * 0.12)})`
       g.lineWidth = 2
       g.beginPath()
-      g.arc(MX + (d[k] + 0.5) * TILE, MY + (d[k + 1] + 0.5) * TILE, 6 + age * 2.5, 0, Math.PI * 2)
+      g.arc(MX + (d[k] + 0.5) * TILE, MY + (d[k + 1] + 0.5) * TILE, ((6 + age * 2.5) * TILE) / 18, 0, Math.PI * 2)
       g.stroke()
     }
     // 右边面板
@@ -490,11 +543,13 @@ export function installVideoPage(): void {
     roundRect(MX, by, s.width * TILE, 8, 4, "rgba(255,255,255,0.1)")
     roundRect(MX, by, Math.max(8, s.width * TILE * f.progress), 8, 4, C.accent)
     text(`第 ${f.t} tick`, MX + s.width * TILE, by - 6, 15, C.muted, { align: "right" })
+    // 没什么动静的时候快进，打起来放慢
+    if (f.fast && !f.final) text("▸▸ 快进", MX, by - 6, 15, C.accent, { bold: true })
     if (f.final) {
       g.globalAlpha = 0.85
-      roundRect(MX + 120, MY + 220, s.width * TILE - 240, 120, 16, "#0b1220", C.accent)
+      roundRect(MX + 120, MY + (s.height * TILE) / 2 - 60, s.width * TILE - 240, 120, 16, "#0b1220", C.accent)
       g.globalAlpha = 1
-      text(s.result, MX + (s.width * TILE) / 2, MY + 295, 36, C.accent, { bold: true, align: "center" })
+      text(s.result, MX + (s.width * TILE) / 2, MY + (s.height * TILE) / 2 + 15, 36, C.accent, { bold: true, align: "center" })
     }
     watermark()
     void i
@@ -514,7 +569,7 @@ export function installVideoPage(): void {
     }
     text("RTS Arena", W / 2, y + 70, 80, C.text, { bold: true, align: "center", alpha: p })
     text("本视频由 RTS Arena 联赛视频接口自动生成", W / 2, y + 130, 28, C.text, { align: "center", alpha: ease((i - 10) / 20) })
-    text("gitee.com/mingomin/rts-arena", W / 2, y + 172, 24, C.accent, { align: "center", alpha: ease((i - 15) / 20) })
+    text(REPO, W / 2, y + 172, 24, C.accent, { align: "center", alpha: ease((i - 15) / 20) })
     text("选手", W / 2, y + 226, 18, C.muted, { bold: true, align: "center", alpha: ease((i - 20) / 20) })
     s.credits.forEach((c: string, k: number) => text(c, W / 2, y + 258 + k * 30, 20, k === s.credits.length - 1 ? C.muted : C.text, { align: "center", alpha: ease((i - 25 - k * 5) / 20) }))
   }
@@ -562,6 +617,7 @@ export function installVideoPage(): void {
   w.__scene = (s: Any) => {
     scene = s
     terrainLayer = null
+    if (s.kind === "replay") fitTile(s)
     return true
   }
   /** 画并编码一批帧：items[k] 是 [场景里第几帧, 回放的局面或 null] */

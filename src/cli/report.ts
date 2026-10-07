@@ -2,6 +2,7 @@
 // 列出关键事件、战斗、损失，估算采集量，最后给几条只基于事实的"可能的问题"。
 import { applyFrame, ReplayModel, type State } from "../core/replay-model.ts"
 import type { EntSnap, Replay } from "../core/types.ts"
+import { groupBattles, MIN_BATTLE } from "./battles.ts"
 
 export interface ReportOptions {
   /** 从这个玩家的角度写（"你"、"对手"），只给他的提示；不给就写全部玩家 */
@@ -349,19 +350,15 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   if (firstContact < 0) out.push("整局双方没有交过火")
   out.push("")
 
-  // 战斗：时间上挨着（60 tick 内）、地点挨着（15 格内）的死亡算一场，3 个以上才列；一场最长 300 tick，再长就算下一场
-  const battles: Death[][] = []
-  for (const d of deaths) {
-    const b = battles[battles.length - 1]
-    const near = (g: Death[]) => {
-      const cx = g.reduce((a, x) => a + x.x, 0) / g.length
-      const cy = g.reduce((a, x) => a + x.y, 0) / g.length
-      return Math.abs(d.x - cx) + Math.abs(d.y - cy) <= 15
-    }
-    if (b && d.t - b[b.length - 1].t <= 60 && d.t - b[0].t <= 300 && near(b)) b.push(d)
-    else battles.push([d])
+  // 战斗：切分规则见 battles.ts（和精彩对局、联赛视频一样），3 个以上才列
+  const big = groupBattles(deaths).filter((b) => b.length >= MIN_BATTLE)
+  /** 这场开打前一刻各方的兵数（不算工人） */
+  const armyBefore = (b: Death[]) => {
+    const st = model.stateAt(Math.max(0, b[0].t - 1))
+    const army = new Array<number>(n).fill(0)
+    for (const e of st.ents.values()) if (e.owner >= 0 && e.owner < n && isArmy(e.type)) army[e.owner]++
+    return army
   }
-  const big = battles.filter((b) => b.length >= 3)
   out.push(`## 战斗（死 3 个以上的）`)
   if (big.length === 0) out.push("没有")
   const shownBattles = big.length > 15 && !opts.full ? [...big.slice(0, 5), null, ...big.slice(-10)] : big
@@ -379,7 +376,9 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
         for (const d of b) if (d.owner === p) m.set(d.type, (m.get(d.type) ?? 0) + 1)
         return `${p < 0 ? "中立" : who(p)}损失 ${countList(m)}`
       })
-    out.push(`t${b[0].t}～${b[b.length - 1].t} 在 (${cx}, ${cy}) 附近：${loss.join("；")}`)
+    const sidesIn = [...new Set(b.map((d) => d.owner))].filter((p) => p >= 0).sort()
+    const army = hasArmy && sidesIn.length > 0 ? armyBefore(b) : null
+    out.push(`t${b[0].t}～${b[b.length - 1].t} 在 (${cx}, ${cy}) 附近：${loss.join("；")}${army ? `（开打时兵数：${sidesIn.map((p) => `${who0(p)} ${army[p]}`).join("，")}）` : ""}`)
   }
   out.push("")
 
@@ -491,9 +490,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       // 第一场大战开打时的兵力
       const first = big.find((b) => b.some((d) => d.owner === p))
       if (first) {
-        const st = model.stateAt(Math.max(0, first[0].t - 1))
-        const army = new Array<number>(n).fill(0)
-        for (const e of st.ents.values()) if (e.owner >= 0 && e.owner < n && isArmy(e.type)) army[e.owner]++
+        const army = armyBefore(first)
         const foes = [...new Set(first.map((d) => d.owner))].filter((q) => enemies(p, q))
         const most = Math.max(0, ...foes.map((q) => army[q]))
         if (foes.length && army[p] < most) {

@@ -81,7 +81,7 @@ rts-arena league annihilation 选手A.ts 选手B.ts 选手C.ts --per-pair 6 --ou
 rts-arena video-init league my-video --text "用户的一句话"   # 导出视频目录：给大模型的 PROMPT.md、选手代码、几局战报、待填的 script.json
 # 让大模型读 my-video/PROMPT.md，写好 my-video/script.json，然后在目录里：
 cd my-video
-rts-arena video --preview 2,10,40     # 先出几张预览图检查
+rts-arena video --preview auto        # 先每段出一张预览图检查（会列出每段的起止秒数）
 rts-arena video --check 5,60          # 出视频，并从成品里截图检查
 ```
 

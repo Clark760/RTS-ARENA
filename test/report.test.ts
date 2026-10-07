@@ -33,6 +33,8 @@ test("战报：输家视角有局势抽样、建造事件、战斗、经济对�
   assert.match(text, /你的 barracks 建好了/)
   assert.match(text, /第一次交火/)
   assert.match(text, /## 战斗[^\n]*\nt\d+～\d+ 在 \(\d+, \d+\) 附近：/)
+  // 每场战斗写上开打时各方的兵数（战报和联赛视频的侧栏用同一套切分）
+  assert.match(text, /附近：[^\n]*（开打时兵数：[^\n]*\d）/)
   assert.match(text, /经济差得多/)
   assert.match(text, /你失去 base/)
   assert.match(text, /工人被卷进战斗：t\d+ 在 \(\d+, \d+\) 附近死了 \d+ 个工人（这场一共损失 \d+ 个；工人死的时候的命令：[a-zA-Z]+ \d+/)
