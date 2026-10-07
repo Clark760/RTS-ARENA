@@ -62,7 +62,7 @@ const len = (...xs: (string | null | undefined)[]) => xs.reduce((a, x) => a + [.
 const BLANKISH = /^\s*(?:\/\/+|\/\*+|\*+\/?)?\s*[-=*#~_/]*\s*$/
 
 /** 规则包的单位数值（老回放里没记攻击数据时，规则介绍的图例从这里补） */
-type TypeSpecs = Record<string, { attack?: { damage: number; range: number; cooldown: number } | null }>
+type TypeSpecs = Record<string, { attack?: { damage: number; range: number; cooldown: number } | null; gather?: unknown; builds?: string[] }>
 
 export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile: string, fps: number, specs?: TypeSpecs): Scene[] {
   const sum = series.summary!
@@ -115,7 +115,8 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
       label: `选手 ${p.displayName || p.name}`,
       data: {
         kind: "player",
-        frames: sec(fps, readSecs(len(p.tagline, ...p.intro), -2.5, 6, 9) / BRISK),
+        // 按字数算：读字速度按每秒 11 字的 1.3 倍（约 14 字），4.6～6.9 秒（原来公式在 80 字以内一律卡在下限，D-148）
+        frames: sec(fps, Math.min(9 / BRISK, Math.max(6 / BRISK, len(p.tagline, ...p.intro) / (11 * BRISK)))),
         speed: BRISK,
         color: color(i),
         displayName: p.displayName || p.name,
@@ -183,7 +184,11 @@ function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string]): strin
   if (t.maxHp) parts.push(`${t.maxHp} 血`)
   const attack = t.attack ?? spec?.attack
   if (attack) parts.push(attack.range > 1 ? `射程 ${attack.range}` : "近战")
-  if (t.worker) parts.push("采矿、建造")
+  // 能力按规则包里实际的写（歼灭的工人只采矿、不能建造）；老回放没记就看规则包，都没有就按"工人"笼统写采矿
+  const gather = t.gather ?? (spec ? !!spec.gather : t.worker)
+  const builds = t.builds ?? spec?.builds ?? []
+  const can = [gather ? "采矿" : "", builds.length ? "建造" : ""].filter(Boolean)
+  if (can.length) parts.push(can.join("、"))
   return parts.join(" · ")
 }
 

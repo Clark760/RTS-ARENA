@@ -406,7 +406,7 @@ export interface Replay {
   players: { name: string; bot: string; team: number }[]
   map: { width: number; height: number; terrain: string[]; colors: Record<string, string> }
   /** sight 是视野半径、cost 是造价、worker 表示能采集或建造（老回放没有）；按视野看回放、战报用 */
-  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; worker?: boolean; /** D-145 起记下 */ attack?: { damage: number; range: number; cooldown: number }; look: Look }>
+  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; worker?: boolean; /** D-145 起记下 */ attack?: { damage: number; range: number; cooldown: number }; /** D-148 起记下：能不能采集、能建什么 */ gather?: boolean; builds?: string[]; look: Look }>
   /** 有没有战争迷雾（老回放没有） */
   fog?: boolean
   initial: Snapshot

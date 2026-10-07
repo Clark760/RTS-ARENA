@@ -402,7 +402,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     const bank = Object.keys(fin)
       .map((k) => `${k} ${Math.round(after.reduce((a, smp) => a + (smp.players[p].res[k] ?? 0), 0) / Math.max(1, after.length))}`)
       .join(" ")
-    out.push(`${who0(p)}：采集约 ${income}（估算：结束时剩的 − 开局的 + 造东西花掉的），花掉 ${spentText}，抽样时平均手上留着 ${bank}；损失 ${countList(lost)}；击杀 ${countList(killed)}`)
+    out.push(`${who0(p)}：采集约 ${income}（估算：结束时剩的 − 开局的 + 造东西花掉的），花掉 ${spentText}，抽样时平均手上留着 ${bank}；整局损失 ${countList(lost)}；整局击杀 ${countList(killed)}`)
   }
   out.push("")
   if (removedBy.size) {
@@ -479,7 +479,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
             doing.set(k, (doing.get(k) ?? 0) + 1)
           }
           const how = [...doing].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join("、")
-          return `t${b[0].t} 在 (${cx}, ${cy}) 附近死了 ${workers} 个工人（这场一共损失 ${lost.length} 个；工人死的时候的命令：${how}）`
+          return `t${b[0].t} 在 (${cx}, ${cy}) 附近死了 ${workers} 个工人（这一仗一共损失 ${lost.length} 个单位，含这些工人；整局的损失见「经济和损失」；工人死的时候的命令：${how}）`
         })
         hints.push(`工人被卷进战斗：${where.join("；")}${bad.length > 3 ? `，另有 ${bad.length - 3} 场` : ""}。敌人打过来时可以让工人躲开，或者在采集的地方留兵`)
       }

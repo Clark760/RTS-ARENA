@@ -4,6 +4,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, resolve } from "node:path"
 import { findRuleset } from "../cli/catalog.ts"
+import { gameFacts } from "../cli/highlights.ts"
 import { gameSeatStats, type SeatGameStats } from "../cli/league-stats.ts"
 import { buildReport } from "../cli/report.ts"
 import type { Replay } from "../core/types.ts"
@@ -43,6 +44,8 @@ interface GameExtra {
   notes: number
   /** 挑这局当精彩对局时，标题卡上自动显示的看点（和视频里一样） */
   card: string[]
+  /** 最大一仗死了几个（和战报「战斗」一节同一套切分） */
+  biggest: number
 }
 
 export interface WorkspaceOptions {
@@ -89,6 +92,7 @@ export function createVideoWorkspace(seriesFile: string, dir: string, opts: Work
       scores: players.map((p) => Math.round(p.score)),
       notes: replay.frames.reduce((a, f) => a + (f.notes?.length ?? 0), 0),
       card: (hl ? hl.reasons : gameReasons(replay, g.names)).map(tidy),
+      biggest: gameFacts(replay).biggestBattle,
     })
     if (!toReport.has(g.index)) continue
     write(`reports/game-${g.index}.md`, `# 第 ${g.index} 局：${g.names.join(" 对 ")}\n\n（P0、P1……是座位，顺序和标题里的名字一样）\n\n${buildReport(replay)}`)
@@ -149,7 +153,7 @@ function videoPrompt(
   out.push("   - 回放：整局压缩成 10～20 秒，**打起来的时候慢放、没动静的时候快进**。顶上一行是你的 `title` 和 `commentary`；地图上画着规则包的标记（控制点、台址这类区域，按归属上色）；右边侧栏是双方实时的兵数、工人数、建筑数、分数（分数的意思看规则包：歼灭是击杀价值、夺点是控制分），规则包的状态栏（比分、目标），和\"战况\"：第一次交火、规则包写的事件（比如\"哈基米夺下控制点\"，战报的关键事件里带\"（规则包）\"的那些）、失去建筑、大战、出局，放不下时只留最新的几条。大战和战报\"战斗\"一节是同一套切分，侧栏只列死 6 个以上的（这局最大的一仗都不到 6 个时，列死 3 个以上的、叫「交战」，和战报一样），开打就显示\"交战中\"、损失随时间往上加，打完显示起止时间。")
   out.push("7. **片尾**：最上面是你的 `outro`（可以不写），然后是平台署名，最后是选手名单（按 `players` 的顺序），每人一行 \"`displayName` · `byline`\"。**`byline` 会出现在片尾的正式名单里**，写编程工具、出品方这类正经信息，玩笑放在 `tagline` 和介绍里。")
   out.push("")
-  out.push(`每段多长是按字数算的（大约每秒读 11 个字）：选手页 5～7 秒，标题卡 3.5～6 秒，节奏偏快。所以每个选手的 \`tagline\` 加 \`intro\` 一共 ${PLAYER_PAGE_CHARS} 字以内才读得完（2～3 句、每句 20～25 字左右正好），超了命令会提醒。每次运行 \`rts-arena video\` 都会列出每段从第几秒到第几秒。`)
+  out.push(`每段多长是按字数算的（大约每秒读 11 个字）：选手页 4.6～7 秒，标题卡 3.5～6 秒，节奏偏快（按每秒约 14 字算）。所以每个选手的 \`tagline\` 加 \`intro\` 一共 ${PLAYER_PAGE_CHARS} 字以内才读得完（2～3 句、每句 20～25 字左右正好），超了命令会提醒。每次运行 \`rts-arena video\` 都会列出每段从第几秒到第几秒。`)
   out.push("")
   out.push("## 怎么写")
   out.push("")
@@ -185,7 +189,7 @@ function videoPrompt(
   )
   out.push("```")
   out.push("")
-  out.push("所有选手都要写，`players` 的顺序就是出场顺序；`title`、`rules`、`displayName`、`byline`、`highlights` 里的 `title` 和 `commentary`、`outro` 都可以不写。`highlights` 不写就用联赛挑的前 3 局、不带解说。`script.json` 里已经有一份待填的模板，把\"待填\"都换掉（不要的字段直接删）。")
+  out.push("`highlights` 里的 `index` 是联赛的**局号**（「全部对局」表的第一列），不是第几个。所有选手都要写，`players` 的顺序就是出场顺序；`title`、`rules`、`displayName`、`byline`、`highlights` 里的 `title` 和 `commentary`、`outro` 都可以不写。`highlights` 不写就用联赛挑的前 3 局、不带解说。`script.json` 里已经有一份待填的模板，把\"待填\"都换掉（不要的字段直接删）。")
   out.push("")
   out.push("## 出视频（在这个目录里运行）")
   out.push("")
@@ -318,7 +322,8 @@ function quickFacts(series: ReturnType<typeof readSeries>, brief: VideoBrief, ex
     })
     .filter((x) => x.gap > 0)
     .sort((a, b) => b.gap - a.gap || a.r.index - b.r.index)
-  if (upsets.length)
+  if (!upsets.length) out.push("- 爆冷：没有（每局都是名次靠前的赢）")
+  else
     out.push(
       `- 爆冷（名次靠后的赢了名次靠前的，共 ${upsets.length} 局）：${upsets
         .slice(0, 10)
@@ -339,7 +344,22 @@ function quickFacts(series: ReturnType<typeof readSeries>, brief: VideoBrief, ex
           cycles.push(`${names[i]} 克 ${names[j]}（${h(i, j)}）、${names[j]} 克 ${names[k]}（${h(j, k)}）、${names[k]} 克 ${names[i]}（${h(k, i)}）`)
         }
       }
-  if (cycles.length) out.push(`- 克制环（两两对阵赢多输少连成一圈）：${cycles.slice(0, 3).join("；")}`)
+  out.push(cycles.length ? `- 克制环（两两对阵赢多输少连成一圈）：${cycles.slice(0, 3).join("；")}` : "- 克制环：没有（两两对阵赢多输少的方向没有连成一圈）")
+  // 逆转：标题卡看点里有"逆转"的局（落后过还赢了）
+  const comebacks = R.filter((r) => extra.get(r.index)?.card.some((c) => c.startsWith("逆转")))
+  out.push(
+    comebacks.length
+      ? `- 逆转（落后过还赢了，共 ${comebacks.length} 局）：${comebacks
+          .slice(0, 6)
+          .map((r) => `第 ${r.index} 局 ${winnersOf(r).join("、")} 赢（${extra.get(r.index)!.card.find((c) => c.startsWith("逆转"))!.replace(/^逆转：/, "")}）`)
+          .join("；")}${comebacks.length > 6 ? "……" : ""}`
+      : "- 逆转：没有（赢的一方都没落后过太多）",
+  )
+  // 死人最多的一仗
+  const bloody = R.map((r) => ({ r, n: extra.get(r.index)?.biggest ?? 0 }))
+    .filter((x) => x.n > 0)
+    .sort((a, b) => b.n - a.n || a.r.index - b.r.index)
+  if (bloody.length) out.push(`- 死人最多的一仗：${bloody.slice(0, 3).map((x) => `第 ${x.r.index} 局（${vs(x.r)}，最大一仗死了 ${x.n} 个）`).join("；")}`)
   // 比分最接近的局（规则包有分数时）
   const close = decided
     .map((r) => {
@@ -351,11 +371,13 @@ function quickFacts(series: ReturnType<typeof readSeries>, brief: VideoBrief, ex
     })
     .filter((x): x is { r: (typeof R)[number]; sc: number[]; gap: number } => x !== null && x.gap >= 0)
     .sort((a, b) => a.gap - b.gap)
-  if (close.length) out.push(`- 比分最接近的胜局：${close.slice(0, 3).map((x) => `第 ${x.r.index} 局 ${vs(x.r)} ${x.sc.join(" : ")}（${winnersOf(x.r).join("、")} 赢）`).join("；")}`)
+  if (!close.length) out.push("- 比分最接近的胜局：这个规则包没有分数（或者分数都是 0）")
+  else out.push(`- 比分最接近的胜局：${close.slice(0, 3).map((x) => `第 ${x.r.index} 局 ${vs(x.r)} ${x.sc.join(" : ")}（${winnersOf(x.r).join("、")} 赢）`).join("；")}`)
   // 规则包事件最多的局
   const busy = R.map((r) => ({ r, n: extra.get(r.index)?.notes ?? 0 }))
     .filter((x) => x.n > 0)
     .sort((a, b) => b.n - a.n)
-  if (busy.length) out.push(`- 规则包事件最多的局（夺点是控制点反复易手这类；详情看战报带"（规则包）"的事件，没附战报的用 rts-arena report 看）：${busy.slice(0, 3).map((x) => `第 ${x.r.index} 局（${vs(x.r)}，${x.n} 条）`).join("；")}`)
+  if (!busy.length) out.push("- 规则包事件最多的局：没有（这个规则包不写事件）")
+  else out.push(`- 规则包事件最多的局（夺点是控制点反复易手这类；详情看战报带"（规则包）"的事件，没附战报的用 rts-arena report 看）：${busy.slice(0, 3).map((x) => `第 ${x.r.index} 局（${vs(x.r)}，${x.n} 条）`).join("；")}`)
   return out
 }

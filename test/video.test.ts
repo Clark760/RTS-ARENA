@@ -115,6 +115,13 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   assert.equal(rules.lines.length, 1)
   assert.ok(rules.ents.length > 0 && rules.markers.some((m) => m.kind === "zone"))
   assert.ok(rules.legend.some((l) => l.name === "弓手" && /射程 4/.test(l.detail)) && rules.legend.some((l) => l.name === "战士" && /近战/.test(l.detail)))
+  // 能力按规则包里实际的写：夺点的工人只采矿、不能建造
+  const worker = rules.legend.find((l) => l.name === "工人")!
+  assert.ok(/采矿/.test(worker.detail) && !/建造/.test(worker.detail), worker.detail)
+  // 选手页按字数定时长（介绍长的那页更长）
+  const longIntro = buildScenes(series, { ...script, players: [{ ...script.players[0], intro: ["一句比较长的介绍，".repeat(8)] }, script.players[1]] }, seriesFile, 10)
+  const players = longIntro.filter((s) => s.data.kind === "player")
+  assert.ok(players[0].data.frames > players[1].data.frames, players.map((s) => s.data.frames).join(","))
   const withRules = buildScenes(series, { ...script, rules: ["占住正中的控制点，点里只有你的单位时每 tick 得 1 分", "先拿满 600 分的赢"] }, seriesFile, 10)
   assert.equal((withRules[2].data as { lines: string[] }).lines.length, 2)
   const hl = series.summary!.highlights!.slice(0, 3).length
@@ -179,6 +186,9 @@ test("video-init：视频目录里有说明、选手代码、战报、待填脚�
   assert.match(prompt, /照这个目录里的 `RULES\.md` 写/)
   assert.match(prompt, /\| 标题卡看点 \|/)
   assert.match(prompt, /全联赛结束得最快的胜局（\d+ tick）/)
+  // 速查里每类都有一行，没有的明写"没有"
+  for (const k of ["爆冷", "克制环", "逆转", "比分最接近的胜局", "规则包事件最多的局"]) assert.match(prompt, new RegExp(`\\n- ${k}`))
+  assert.match(prompt, /`index` 是联赛的\*\*局号\*\*/)
   assert.match(prompt, /结束得最快的胜局：第 \d+ 局/)
   assert.match(prompt, /- baseline（第 \d 名）：赢 \d+ 局/)
   assert.match(prompt, /### 排名/)
