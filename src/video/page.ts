@@ -50,7 +50,7 @@ export interface ReplayFrame {
   shots: number[]
   /** 刚死的：[x, y, 第几帧前死的] 一组 3 个 */
   deaths: number[]
-  /** 每个座位：兵、工人、建筑、击杀价值 */
+  /** 每个座位：兵、工人、建筑、分数（歼灭是击杀价值、夺点是控制分……看规则包） */
   counts: { army: number; workers: number; buildings: number; score: number; alive: boolean }[]
   events: string[]
   progress: number
@@ -58,6 +58,10 @@ export interface ReplayFrame {
   final: boolean
   /** 这段没什么动静，正在快进 */
   fast: boolean
+  /** 规则包画在地图上的标记（控制点、台址……），和回放页面一样 */
+  markers: ({ kind: "zone"; x: number; y: number; w: number; h: number; owner: number | null; label?: string; color?: string } | { kind: "label"; x: number; y: number; text: string; owner?: number | null })[]
+  /** 规则包的状态栏文字（比分、目标……） */
+  status: string
 }
 
 export function installVideoPage(): void {
@@ -459,6 +463,23 @@ export function installVideoPage(): void {
     }
     g.drawImage(terrainLayer, MX, MY, s.width * TILE, s.height * TILE)
     const colorOf = (seat: number) => (seat >= 0 ? (s.seats[seat]?.color ?? "#ccc") : "#9aa0a6")
+    // 规则包的标记：区域按归属上色（没人的灰色），文字标在格子上
+    for (const m of (f.markers ?? []) as Any[]) {
+      const col = m.color ?? (m.owner === null || m.owner === undefined || m.owner < 0 ? "#c8ccd4" : colorOf(m.owner))
+      if (m.kind === "zone") {
+        g.globalAlpha = 0.22
+        g.fillStyle = col
+        g.fillRect(MX + m.x * TILE, MY + m.y * TILE, m.w * TILE, m.h * TILE)
+        g.globalAlpha = 0.9
+        g.strokeStyle = col
+        g.lineWidth = 2
+        g.setLineDash([6, 4])
+        g.strokeRect(MX + m.x * TILE + 1, MY + m.y * TILE + 1, m.w * TILE - 2, m.h * TILE - 2)
+        g.setLineDash([])
+        g.globalAlpha = 1
+        if (m.label) text(m.label, MX + m.x * TILE + 3, MY + m.y * TILE - 4, 13, col, { bold: true })
+      } else text(m.text, MX + (m.x + 0.5) * TILE, MY + (m.y + 0.5) * TILE, 13, col, { bold: true, align: "center" })
+    }
     const e = f.ents as number[]
     for (let k = 0; k < e.length; k += 8) {
       const [x, y, ew, eh, seat, ti, hp, bp] = e.slice(k, k + 8)
@@ -562,7 +583,7 @@ export function installVideoPage(): void {
       while (g.measureText(nm).width > pw - 50) nm = nm.slice(0, -1)
       text(nm + (nm.length < st.name.length ? "…" : ""), x0 + 32, y, 20, st.color, { bold: true })
       text(c.alive ? `兵 ${c.army}  工人 ${c.workers}  建筑 ${c.buildings}` : "已出局", x0 + 32, y + 26, 17, C.text)
-      text(`击杀价值 ${c.score}`, x0 + 32, y + 48, 17, C.muted)
+      text(`分数 ${c.score}`, x0 + 32, y + 48, 17, C.muted)
       y += 88
     })
     g.strokeStyle = C.line
@@ -570,11 +591,26 @@ export function installVideoPage(): void {
     g.moveTo(x0 + 14, y - 14)
     g.lineTo(x0 + pw - 14, y - 14)
     g.stroke()
+    // 规则包的状态栏（比分、目标……）
+    if (f.status) {
+      g.font = font(16)
+      for (const l of wrapBalanced(f.status, pw - 32).slice(0, 2)) {
+        text(l, x0 + 16, y + 10, 16, C.accent)
+        y += 23
+      }
+      y += 12
+    }
     text("战况", x0 + 16, y + 12, 17, C.muted, { bold: true })
     y += 40
     g.font = font(16)
-    for (const ev of (f.events as string[]).slice(-7)) {
-      for (const l of wrapBalanced(ev, pw - 32).slice(0, 2)) {
+    // 面板里放得下几条放几条，留最新的（每条最多两行）
+    const bottom = MY + s.height * TILE - 14
+    const blocks = (f.events as string[]).map((ev) => wrapBalanced(ev, pw - 32).slice(0, 2))
+    let first = blocks.length
+    let used = 0
+    while (first > 0 && y + used + (blocks[first - 1].length - 1) * 23 <= bottom) used += blocks[--first].length * 23 + 4
+    for (const ls of blocks.slice(first)) {
+      for (const l of ls) {
         text(l, x0 + 16, y, 16, C.text)
         y += 23
       }

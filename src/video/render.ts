@@ -268,12 +268,29 @@ function replayScene(replay: Replay, no: number, title: string, commentary: stri
       return { army, workers, buildings, score: Math.round(state.players[p]?.score ?? 0), alive: state.players[p]?.alive ?? true }
     })
     const recent = deaths.filter((d) => i - d.frame < 8).flatMap((d) => [d.x, d.y, i - d.frame])
-    return { t, ents, shots, deaths: recent, counts, events: eventsAt(t), progress: T ? t / T : 1, final: i >= playFrames, fast: i < playFrames && pace.fast(i) }
+    return {
+      t,
+      ents,
+      shots,
+      deaths: recent,
+      counts,
+      events: eventsAt(t),
+      progress: T ? t / T : 1,
+      final: i >= playFrames,
+      fast: i < playFrames && pace.fast(i),
+      markers: state.markers,
+      status: relabelSeats(state.status, seats),
+    }
   }
   return {
     data: { kind: "replay", frames: playFrames + hold, no, title, commentary, width: replay.map.width, height: replay.map.height, terrain: replay.map.terrain, colors: replay.map.colors, types, seats, result },
     frame,
   }
+}
+
+/** 规则包写的文字里的 P0、P1……换成选手名字（汉字之间的空格去掉） */
+function relabelSeats(s: string, seats: { name: string }[]): string {
+  return tidy(s.replace(/(?<![A-Za-z])P(\d+)/g, (m, d) => seats[Number(d)]?.name ?? m))
 }
 
 /** 侧栏里算"大战"的门槛：一场死 6 个以上 */
@@ -304,6 +321,8 @@ function replayEvents(replay: Replay, seats: { name: string }[]): (t: number) =>
       }
     }
     const removed = new Set(f.removed ?? [])
+    // 规则包写的事件（夺下控制点、商队被劫……）
+    for (const nt of f.notes ?? []) fixed.push({ t: f.t, text: `t${f.t} ${relabelSeats(nt.text, seats)}` })
     for (const id of f.die ?? []) {
       const e = s.ents.get(id)
       if (!e || removed.has(id)) continue

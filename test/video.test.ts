@@ -99,6 +99,10 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
     let last = rs.frame!(0)
     for (let i = 1; i < rs.data.frames; i++) last = rs.frame!(i)
     assert.ok(last.final && last.progress === 1 && last.ents.length > 0)
+    // 夺点：控制点标记、规则包的状态栏、规则包写的事件（P0/P1 换成了选手名）
+    assert.ok(last.markers.some((m) => m.kind === "zone"))
+    assert.ok(last.status.length > 0)
+    assert.ok(last.events.some((e) => /夺下控制点/.test(e) && !/\bP\d/.test(e)), last.events.join(" | "))
     assert.deepEqual(rs.frame!(Math.floor(rs.data.frames / 2)).ents, mid.ents)
   }
 })
