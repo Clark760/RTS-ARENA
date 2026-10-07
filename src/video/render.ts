@@ -100,7 +100,7 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
       label: `选手 ${p.displayName || p.name}`,
       data: {
         kind: "player",
-        frames: sec(fps, readSecs(len(p.tagline, ...p.intro), 2.5, 7, 14)),
+        frames: sec(fps, readSecs(len(p.tagline, ...p.intro), -2.5, 6, 9)),
         color: color(i),
         displayName: p.displayName || p.name,
         name: p.name,
