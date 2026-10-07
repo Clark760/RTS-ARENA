@@ -11,6 +11,7 @@ import { botTsconfig, buildDts, buildPrompt, lineups, mapSection, setupWorld, ty
 import { serveViewer } from "./serve.ts"
 import {
   findRuleset,
+  importRuleset,
   knownBotFile,
   knownBots,
   referenceBots,
@@ -28,7 +29,7 @@ import { buildReport } from "./report.ts"
 import { leagueStandings, leagueTables, standingsText, teamSplits, type LeagueGame, type LeagueResult } from "./league.ts"
 import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
 import { excitement, finalScores, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
-import { scriptWarnings, videoBrief, type VideoScript } from "../video/brief.ts"
+import { readSeries, scriptWarnings, videoBrief, type VideoScript } from "../video/brief.ts"
 import { lintScript, renderLeagueVideo, timelineText } from "../video/render.ts"
 import { createVideoWorkspace, readVideoConfig, VIDEO_CONFIG } from "../video/workspace.ts"
 import { BASELINE as TEMPLATE_BASELINE, GREEDY as TEMPLATE_GREEDY, INDEX as TEMPLATE_INDEX, RUSH as TEMPLATE_RUSH, writeRulesTemplate } from "./rules-template.ts"
@@ -1276,13 +1277,24 @@ async function main(): Promise<void> {
         if (list.some((x) => !Number.isFinite(x) || x < 0)) fail(`${what} 要写成用逗号隔开的秒数，比如 2,15,40；或者写 auto，每段各一张`)
         return list
       }
-      // 不影响出视频、但最好改的地方（粗体字段里的"一"像破折号……）
-      for (const w of scriptWarnings(script)) console.log(`提醒：${w}`)
+      // 不影响出视频、但最好改的地方（粗体字段里的"一"像破折号、规则介绍提到别的规则包……）
+      const cur = readSeries(file).ruleset
+      const others: string[] = []
+      for (const id of listRulesets()) {
+        if (id === cur.id) continue
+        try {
+          const name = (await importRuleset(id)).name
+          if (name !== cur.name) others.push(name)
+        } catch {
+          // 读不了的规则包跳过，只影响提醒
+        }
+      }
+      for (const w of scriptWarnings(script, others)) console.log(`提醒：${w}`)
       const fps = typeof opt.fps === "string" ? Number(opt.fps) : 30
       if (!Number.isInteger(fps) || fps < 10 || fps > 60) fail("--fps 要是 10～60 的整数")
       // --lint：只核对脚本、列出字数和时间表，不开浏览器
       if (opt.lint) {
-        const r = lintScript(file, script, fps)
+        const r = lintScript(file, script, fps, others)
         console.log(`字数（现在 / 上限，标点和空格也算）：\n${r.counts.map((c) => `  ${c}`).join("\n")}`)
         if (r.errors.length) fail(`脚本有问题：\n- ${r.errors.join("\n- ")}`)
         console.log(`每段的时间（整段 ${r.timeline.at(-1)?.to.toFixed(1)} 秒）：\n${timelineText(r.timeline)}`)

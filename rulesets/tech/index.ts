@@ -95,7 +95,7 @@ const techText = (s: Set<TechId> | undefined) => (s && s.size ? TECH_IDS.filter(
 const ruleset: Ruleset = {
   id: "tech",
   name: "科技",
-  summary: "拓荒加科技：工人还能建铁匠铺、护甲坊、箭术场、矿业所，建筑在加成就在，摧毁对方主基地获胜",
+  summary: "工人自己建兵营、箭塔、仓库和 4 种科技建筑（建筑在加成就在），摧毁对方主基地获胜",
   players: { min: 2, max: 2 },
   maxTicks: 9000,
   tickRate: 10,

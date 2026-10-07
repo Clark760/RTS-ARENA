@@ -97,6 +97,10 @@ test("脚本提醒：粗体字段里的「一」像破折号，常规字重的�
   const short = scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["很短".repeat(20)] }] })
   assert.match(short[0], /players\[0\]（a）的 tagline 加 intro 只有 42 字，选手页显得空/)
   assert.deepEqual(scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["正好".repeat(60)] }] }), [])
+  // 规则介绍提到别的规则包：观众不一定玩过，提醒直接讲规则（D-155）
+  const other = scriptWarnings({ rules: ["在拓荒的基础上加了 4 种科技建筑。", "先拆掉对方主基地的赢。"] }, ["拓荒", "夺点"])
+  assert.equal(other.length, 1)
+  assert.match(other[0], /rules\[0\] 提到了别的规则包「拓荒」/)
 })
 
 test("场景编排：片头片尾署名、标题、每个选手、排名、精彩对局（标题卡 + 回放）", () => {

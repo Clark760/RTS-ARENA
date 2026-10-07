@@ -229,9 +229,10 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
 
 /**
  * 不影响出视频、但最好改的地方：粗体字段（title、tagline、精彩对局的 title 和 commentary、outro）里的"一"，粗体下就是一道横线，像破折号。
+ * 规则介绍里提到别的规则包（otherRulesets 是别的规则包的名字）：观众不一定玩过那个规则包（D-155）。
  * 脚本格式不对时返回空（格式问题交给 checkScript）
  */
-export function scriptWarnings(s: unknown): string[] {
+export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string[] {
   if (!s || typeof s !== "object") return []
   const o = s as VideoScript
   const bold: [string, unknown][] = [["title", o.title], ["outro", o.outro]]
@@ -248,6 +249,13 @@ export function scriptWarnings(s: unknown): string[] {
   if (Array.isArray(o.rules)) {
     const n = o.rules.reduce((a: number, x) => a + (typeof x === "string" ? [...x].length : 0), 0)
     if (n > RULES_PAGE_CHARS) out.push(`rules 共 ${n} 字，规则页最长 12 秒，大约只读得完 ${RULES_PAGE_CHARS} 字：删一句或者写短些`)
+    o.rules.forEach((x, i) => {
+      const hit = typeof x === "string" ? otherRulesets.filter((name) => name && x.includes(name)) : []
+      if (hit.length)
+        out.push(
+          `rules[${i}] 提到了别的规则包「${hit.join("、")}」：观众不一定玩过它，别写"和${hit[0]}一样""在${hit[0]}的基础上"，把要用到的规则直接简要讲出来（只是普通用词的话可以不管）`,
+        )
+    })
   }
   // 选手页：tagline 加 intro 太长读不完，太少页面显得空
   if (Array.isArray(o.players))

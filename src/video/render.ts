@@ -487,10 +487,10 @@ function autoPreview(scenes: Scene[], fps: number): number[] {
  * 只核对脚本、不出图（video --lint）：格式错误、提醒、每个字段的字数和上限、时间表。
  * 写脚本时反复用它，字数对了再出预览图
  */
-export function lintScript(seriesFile: string, script: VideoScript, fps = 30): { errors: string[]; warnings: string[]; counts: string[]; timeline: TimelineItem[] } {
+export function lintScript(seriesFile: string, script: VideoScript, fps = 30, otherRulesets: string[] = []): { errors: string[]; warnings: string[]; counts: string[]; timeline: TimelineItem[] } {
   const series = readSeries(seriesFile)
   const errors = checkScript(script, series)
-  const warnings = scriptWarnings(script)
+  const warnings = scriptWarnings(script, otherRulesets)
   const L = SCRIPT_LIMITS
   const n = (s?: string) => [...(s ?? "")].length
   const counts: string[] = []
