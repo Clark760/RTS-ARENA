@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, w
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { after, test } from "node:test"
-import { checkScript, codeFacts, readSeries, videoBrief, type VideoScript } from "../src/video/brief.ts"
+import { checkScript, codeFacts, readSeries, scriptWarnings, videoBrief, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
 import { buildScenes, pacing, tidy, timelineOf } from "../src/video/render.ts"
 import type { Replay } from "../src/core/types.ts"
@@ -77,6 +77,13 @@ const script: VideoScript = {
   outro: "完。",
 }
 
+test("脚本提醒：粗体字段里的「一」像破折号，常规字重的介绍不管", () => {
+  const w = scriptWarnings({ title: "唯一一胜", players: [{ name: "a", tagline: "只输 1 局", intro: ["一稿流"] }], highlights: [{ index: 1, commentary: "一波带走" }], outro: "完" })
+  assert.equal(w.length, 2)
+  assert.ok(w[0].startsWith("title 是粗体") && w[1].startsWith("highlights[0].commentary 是粗体"))
+  assert.deepEqual(scriptWarnings(null), [])
+})
+
 test("场景编排：片头片尾署名、标题、每个选手、排名、精彩对局（标题卡 + 回放）", () => {
   const series = readSeries(seriesFile)
   assert.deepEqual(checkScript(script, series), [])
@@ -134,10 +141,15 @@ test("回放变速：tick 随帧单调往前、首尾对齐；打起来的地方
 })
 
 test("video-init：视频目录里有说明、选手代码、战报、待填脚本；已经有脚本时不覆盖", () => {
-  sh(["video-init", "lg", "vd", "--text", "用户的一句话"])
+  sh(["video-init", "lg", "vd", "--text", "用户的一句话", "--about", "rush 是某某模型写的"])
   const dir = join(TMP, "vd")
   const prompt = readFileSync(join(dir, "PROMPT.md"), "utf8")
   assert.match(prompt, /用户的一句话/)
+  // 用户补充的背景、平台算好的联赛速查（最快的局、每人赢了谁输给谁）
+  assert.match(prompt, /用户补充的背景\*\*：rush 是某某模型写的/)
+  assert.match(prompt, /### 联赛速查/)
+  assert.match(prompt, /结束得最快的胜局：第 \d+ 局/)
+  assert.match(prompt, /- baseline（第 \d 名）：赢 \d+ 局/)
   assert.match(prompt, /### 排名/)
   assert.match(prompt, /#### baseline/)
   assert.match(prompt, /rts-arena video --preview/)
@@ -167,6 +179,10 @@ test("video-init：视频目录里有说明、选手代码、战报、待填脚�
 
 test("渲染：在视频目录里不写参数出预览图；本机有浏览器时出一段 1920×1080 的 MP4 并用浏览器解码检查", { skip: findBrowser() ? false : "本机没有 Chrome / Edge" }, () => {
   const dir = join(TMP, "vd")
+  writeFileSync(join(dir, "script.json"), JSON.stringify(script))
+  // 粗体字段里的"一"：提醒但照样出图
+  writeFileSync(join(dir, "script.json"), JSON.stringify({ ...script, title: "唯一一胜" }))
+  assert.match(sh(["video", "--preview", "1"], dir), /提醒：title 是粗体/)
   writeFileSync(join(dir, "script.json"), JSON.stringify(script))
   const out = sh(["video", "--preview", "1,6"], dir)
   assert.match(out, /预览图/)

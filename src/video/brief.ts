@@ -208,6 +208,25 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
   return errs
 }
 
+/**
+ * 不影响出视频、但最好改的地方：粗体字段（title、tagline、精彩对局的 title 和 commentary、outro）里的"一"，粗体下就是一道横线，像破折号。
+ * 脚本格式不对时返回空（格式问题交给 checkScript）
+ */
+export function scriptWarnings(s: unknown): string[] {
+  if (!s || typeof s !== "object") return []
+  const o = s as VideoScript
+  const bold: [string, unknown][] = [["title", o.title], ["outro", o.outro]]
+  if (Array.isArray(o.players)) o.players.forEach((p, i) => bold.push([`players[${i}].tagline`, p?.tagline]))
+  if (Array.isArray(o.highlights))
+    o.highlights.forEach((h, i) => {
+      bold.push([`highlights[${i}].title`, h?.title])
+      bold.push([`highlights[${i}].commentary`, h?.commentary])
+    })
+  return bold
+    .filter((x): x is [string, string] => typeof x[1] === "string" && x[1].includes("一"))
+    .map(([where, v]) => `${where} 是粗体，里面的"一"看起来像破折号："${v}"——数量写成阿拉伯数字，或者换个说法`)
+}
+
 export function readSeries(file: string): SeriesFile {
   const s = JSON.parse(readFileSync(file, "utf8")) as SeriesFile
   if (s.format !== "rts-arena-series" || s.kind !== "league") throw new Error(`${file} 不是联赛的汇总文件（*.series.json，kind 是 league）`)

@@ -28,7 +28,7 @@ import { buildReport } from "./report.ts"
 import { leagueStandings, leagueTables, standingsText, teamSplits, type LeagueGame, type LeagueResult } from "./league.ts"
 import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
 import { excitement, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
-import { videoBrief, type VideoScript } from "../video/brief.ts"
+import { scriptWarnings, videoBrief, type VideoScript } from "../video/brief.ts"
 import { renderLeagueVideo, timelineText } from "../video/render.ts"
 import { createVideoWorkspace, readVideoConfig, VIDEO_CONFIG } from "../video/workspace.ts"
 import { BASELINE as TEMPLATE_BASELINE, GREEDY as TEMPLATE_GREEDY, INDEX as TEMPLATE_INDEX, RUSH as TEMPLATE_RUSH, writeRulesTemplate } from "./rules-template.ts"
@@ -44,9 +44,9 @@ const HELP = `用法：rts-arena <命令> [参数]
   run [对手...] [选项]                  自己的 bot 打对手（不写就打 baseline），回放和日志写到 ./replays
   league [对手...] [选项]               联赛：自己的 bot 和对手循环对打，出排行榜（不写对手就和所有现成的 bot 打）
   view [回放目录] [--port N] [--open]   网页播放器（默认看 ./replays，端口 5180；--open 起来后打开浏览器）
-  video-init [联赛汇总] [目录] [--text 用户的话]
+  video-init [联赛汇总] [目录] [--text 用户的话] [--about 背景]
                                         建一个联赛视频目录（默认 league-video）：给大模型的说明 PROMPT.md、选手代码、几局战报、
-                                        联赛数据、待填的 script.json；大模型写好脚本后在目录里运行 rts-arena video
+                                        联赛数据、待填的 script.json；--about 写用户补充的背景（外号对应哪个模型、以前的成绩……）。大模型写好脚本后在目录里运行 rts-arena video
   video-brief [联赛汇总] [--out 文件]   联赛视频的素材包（JSON，video-init 也会写一份）
   video [联赛汇总] [--script 脚本.json] [--out 视频.mp4] [--preview 秒,秒|auto] [--check 秒,秒]
                                         按脚本渲染 1920×1080 的联赛视频（片头片尾平台署名、标题和用户原话、选手介绍、排行榜、精彩对局），
@@ -143,7 +143,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   report: { player: false, every: false, full: true },
   map: { seed: false },
   "video-brief": { out: false },
-  "video-init": { text: false },
+  "video-init": { text: false, about: false },
   video: { script: false, out: false, preview: false, check: false, browser: false, fps: false },
 }
 
@@ -1240,7 +1240,10 @@ async function main(): Promise<void> {
       const file = findLeagueSeries(onlyDir ? undefined : pos[0], "video-init")
       const dir = (onlyDir ? pos[0] : pos[1]) ?? "league-video"
       if (existsSync(join(dir, "script.json"))) fail(`${dir} 里已经有 script.json 了：换个目录名，或者删掉它再建（别把写好的脚本覆盖了）`)
-      const r = createVideoWorkspace(file, dir, typeof opt.text === "string" ? opt.text : undefined)
+      const r = createVideoWorkspace(file, dir, {
+        userText: typeof opt.text === "string" ? opt.text : undefined,
+        about: typeof opt.about === "string" ? opt.about : undefined,
+      })
       console.log(`已建好联赛视频目录 ${dir}（联赛 ${file}）：${r.files.length} 个文件`)
       console.log(`  PROMPT.md    给大模型的说明：视频结构、怎么写、联赛数据（先读它）`)
       console.log(`  bots/        选手代码；reports/ 几局的战报；script.json 待填的脚本`)
@@ -1266,6 +1269,8 @@ async function main(): Promise<void> {
         if (list.some((x) => !Number.isFinite(x) || x < 0)) fail(`${what} 要写成用逗号隔开的秒数，比如 2,15,40${what === "--preview" ? "；或者写 auto，每段各出一张" : ""}`)
         return list
       }
+      // 不影响出视频、但最好改的地方（粗体字段里的"一"像破折号……）
+      for (const w of scriptWarnings(script)) console.log(`提醒：${w}`)
       const fps = typeof opt.fps === "string" ? Number(opt.fps) : 30
       if (!Number.isInteger(fps) || fps < 10 || fps > 60) fail("--fps 要是 10～60 的整数")
       const out = typeof opt.out === "string" ? opt.out : cfg ? cfg.out : file.replace(/\.series\.json$/, ".mp4")

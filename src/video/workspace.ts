@@ -7,7 +7,7 @@ import { gameSeatStats, type SeatGameStats } from "../cli/league-stats.ts"
 import { buildReport } from "../cli/report.ts"
 import type { Replay } from "../core/types.ts"
 import { readSeries, SCRIPT_LIMITS, videoBrief, type VideoBrief, type VideoScript } from "./brief.ts"
-import { PALETTE_NAMES } from "./render.ts"
+import { PALETTE_NAMES, tidy } from "./render.ts"
 
 export const VIDEO_CONFIG = "arena-video.json"
 
@@ -36,7 +36,21 @@ function reportGames(brief: VideoBrief, series: ReturnType<typeof readSeries>): 
   return [...picks].sort((a, b) => a - b).slice(0, 12)
 }
 
-export function createVideoWorkspace(seriesFile: string, dir: string, userText?: string): { dir: string; files: string[] } {
+/** 每局另外记下的：最终比分（规则包的分数）、规则包写了几条事件（夺下控制点、商队被劫……） */
+interface GameExtra {
+  scores: number[]
+  notes: number
+}
+
+export interface WorkspaceOptions {
+  /** 用户的原话（预先填进 script.json） */
+  userText?: string
+  /** 用户补充的背景：外号对应哪个模型、以前的成绩……（联赛数据里没有的） */
+  about?: string
+}
+
+export function createVideoWorkspace(seriesFile: string, dir: string, opts: WorkspaceOptions = {}): { dir: string; files: string[] } {
+  const { userText, about } = opts
   const series = readSeries(seriesFile)
   const brief = videoBrief(seriesFile)
   mkdirSync(join(dir, "bots"), { recursive: true })
@@ -59,11 +73,15 @@ export function createVideoWorkspace(seriesFile: string, dir: string, userText?:
   const toReport = new Set(reportGames(brief, series))
   const reported: number[] = []
   const stats = new Map<number, SeatGameStats[]>()
+  const extra = new Map<number, GameExtra>()
   for (const g of series.results) {
     const replayFile = join(dirname(resolve(seriesFile)), g.replay)
     if (!existsSync(replayFile)) continue
     const replay = JSON.parse(readFileSync(replayFile, "utf8")) as Replay
     stats.set(g.index, gameSeatStats(replay))
+    let players = replay.initial.players
+    for (const f of replay.frames) if (f.players) players = f.players
+    extra.set(g.index, { scores: players.map((p) => Math.round(p.score)), notes: replay.frames.reduce((a, f) => a + (f.notes?.length ?? 0), 0) })
     if (!toReport.has(g.index)) continue
     write(`reports/game-${g.index}.md`, `# 第 ${g.index} 局：${g.names.join(" 对 ")}\n\n（P0、P1……是座位，顺序和标题里的名字一样）\n\n${buildReport(replay)}`)
     reported.push(g.index)
@@ -74,7 +92,7 @@ export function createVideoWorkspace(seriesFile: string, dir: string, userText?:
   const config: VideoConfig = { series: relative(resolve(dir), resolve(seriesFile)).split("\\").join("/"), out: `${series.ruleset.name}联赛.mp4` }
   write(VIDEO_CONFIG, JSON.stringify(config, null, 2) + "\n")
   const replayPath = (replay: string) => relative(resolve(dir), join(dirname(resolve(seriesFile)), replay)).split("\\").join("/")
-  write("PROMPT.md", videoPrompt(brief, series, botFile, reported, stats, replayPath, userText))
+  write("PROMPT.md", videoPrompt(brief, series, botFile, reported, stats, extra, replayPath, userText, about))
   return { dir, files }
 }
 
@@ -86,8 +104,10 @@ function videoPrompt(
   botFile: Map<string, string>,
   reported: number[],
   stats: Map<number, SeatGameStats[]>,
+  extra: Map<number, GameExtra>,
   replayPath: (replay: string) => string,
   userText?: string,
+  about?: string,
 ): string {
   const L = SCRIPT_LIMITS
   const rs = brief.ruleset.name
@@ -114,7 +134,8 @@ function videoPrompt(
   out.push("## 怎么写")
   out.push("")
   out.push(`- **用户的原话**：${userText ? `是"${userText}"，已经填进 \`script.json\` 的 \`userText\`，要展示的话不要改字。` : "用户会告诉你，原样填进 `userText`。"}原话里夹着给你的要求（比如"请把 deepseek 称作大肥鱼"）时，照要求做，但这句要求从 \`userText\` 里删掉，开场只展示要说给观众听的那几句。弄懂它在说什么（调侃谁、有什么梗、站在哪边），在 \`theme\` 里用一句话点出来；整个视频的语气跟着它走。外号也可以当 \`displayName\`，本名和编程工具写进 \`byline\`（比如"DeepSeek V4.1 flash · DeepSeek Harness"）。`)
-  out.push("- **选手的文件名**：常见写法是 `模型名-编程工具.ts`，比如 `GPT6.1sol-codex.ts` 是在 codex 里用 GPT 6.1 sol 写的。据此写 `displayName`（模型名，加空格好读）和 `byline`（编程工具之类）。拆不开就照原样用，不要瞎猜。")
+  if (about) out.push(`- **用户补充的背景**：${about}\n  这是用户告诉你的、联赛数据以外的事（比如外号对应哪个模型、用的什么编程工具、上一届的成绩），可以照用；和下面的数据对不上时以数据为准。`)
+  out.push("- **选手的文件名**：常见写法是 `模型名-编程工具.ts`，比如 `GPT6.1sol-codex.ts` 是在 codex 里用 GPT 6.1 sol 写的。据此写 `displayName`（模型名，加空格好读）和 `byline`（编程工具之类）。文件名只是外号、看不出是哪个模型时，看上面「用户补充的背景」；也没有就照原样用，不要瞎猜。")
   out.push("- **代码风格**：打开 `bots/` 里每个选手的代码读一遍（至少开头的注释和主要的决策逻辑），结合下面的代码指标，写出这个选手是什么样的作者：精打细算还是大开大合、工程化还是文案化、靠调参还是靠架构、它自称的绝招和联赛里的实际表现对不对得上。")
   out.push("- **介绍要有依据**：用户原话、文件名、代码、下面的成绩和 `reports/` 的战报里看得到的才写，数字照抄，不编造没发生的事。成绩差的写它的特点和输在哪，可以跟着原话调侃，但别贬低。")
   out.push("- **不知道的事别写成事实**：平台不知道每个 bot 是怎么写出来的、改了几轮。代码里的版本号（v3、v6 之类）和自称的绝招都是作者自己写的，只能说\"自称\"\"注释里写着\"。")
@@ -193,6 +214,10 @@ function videoPrompt(
     }
     out.push("")
   })
+  out.push("### 联赛速查（平台从全部对局算好的，挑对局、写解说时直接用，不用自己去下面的表里排序）")
+  out.push("")
+  out.push(...quickFacts(series, brief, extra).map(tidy))
+  out.push("")
   out.push("### 精彩对局（联赛按逆转、优势换手、大战、险胜、爆冷自动挑的）")
   out.push("")
   out.push("冒号后面的几条就是标题卡上自动显示的看点，解说不用重复。")
@@ -202,16 +227,113 @@ function videoPrompt(
   out.push("")
   out.push("### 全部对局")
   out.push("")
-  out.push("每局数据按对阵的顺序，每人一组：采集 / 损失单位（其中工人）/ 击杀单位 / 拆建筑。")
+  out.push("每局数据按对阵的顺序，每人一组：采集 / 损失单位（其中工人）/ 击杀单位 / 拆建筑；规则包有分数时后面是最终比分，有规则包事件时是事件条数（详情在战报的关键事件里，带\"（规则包）\"的那些）。")
   out.push("")
   out.push("| 局 | 对阵（座位顺序） | 结果 | tick | 结束原因 | 每局数据 | 战报 / 回放 |")
   out.push("|---|---|---|---|---|---|---|")
   for (const r of series.results) {
     const winners = [...new Set(r.winners.map((w) => r.names[w]))]
     const st = stats.get(r.index)
-    const data = st ? st.map((x) => `${Math.round(x.income)} / ${x.lostUnits}（${x.lostWorkers}）/ ${x.killedUnits} / ${x.killedBuildings}`).join("；") : "-"
+    const ex = extra.get(r.index)
+    const data =
+      (st ? st.map((x) => `${Math.round(x.income)} / ${x.lostUnits}（${x.lostWorkers}）/ ${x.killedUnits} / ${x.killedBuildings}`).join("；") : "-") +
+      (ex && ex.scores.some((v) => v !== 0) ? `；比分 ${ex.scores.join(" : ")}` : "") +
+      (ex?.notes ? `；规则包事件 ${ex.notes} 条` : "")
     out.push(`| ${r.index} | ${r.names.join(" 对 ")} | ${winners.length ? `${winners.join("、")} 赢` : "平局"} | ${r.tick} | ${r.reason} | ${data} | ${reported.includes(r.index) ? `reports/game-${r.index}.md` : `\`${replayPath(r.replay)}\``} |`)
   }
   out.push("")
   return out.join("\n")
+}
+
+/**
+ * 联赛速查：从全部对局算好的事实——最快 / 最久的局、每个选手赢了谁输给谁（败局全输给同一个人这种）、爆冷、克制环、比分最接近的局、
+ * 规则包事件最多的局（夺点里就是控制点反复易手）。写视频时这些都是要自己去对局表里排序才看得出来的
+ */
+function quickFacts(series: ReturnType<typeof readSeries>, brief: VideoBrief, extra: Map<number, GameExtra>): string[] {
+  const out: string[] = []
+  const R = series.results
+  const rankOf = new Map(brief.players.map((p) => [p.name, p.standing?.rank ?? 99]))
+  const winnersOf = (r: (typeof R)[number]) => [...new Set(r.winners.map((w) => r.names[w]))]
+  const losersOf = (r: (typeof R)[number]) => [...new Set(r.names.filter((_, p) => !r.winners.includes(p)))]
+  const vs = (r: (typeof R)[number]) => r.names.join(" 对 ")
+  const list = (idx: number[]) => (idx.length <= 6 ? `（${idx.map((i) => `第 ${i} 局`).join("、")}）` : "")
+  const decided = R.filter((r) => r.winners.length > 0)
+  const fast = [...decided].sort((a, b) => a.tick - b.tick).slice(0, 3)
+  if (fast.length) out.push(`- 结束得最快的胜局：${fast.map((r) => `第 ${r.index} 局 ${winnersOf(r).join("、")} 赢（${vs(r)}，${r.tick} tick）`).join("；")}`)
+  const slow = [...R].sort((a, b) => b.tick - a.tick).slice(0, 3)
+  if (slow.length) out.push(`- 打得最久的：${slow.map((r) => `第 ${r.index} 局（${vs(r)}，${r.tick} tick，${winnersOf(r).length ? `${winnersOf(r).join("、")} 赢` : "平局"}）`).join("；")}`)
+  for (const p of brief.players) {
+    const mine = R.filter((r) => r.names.includes(p.name))
+    const wins = mine.filter((r) => winnersOf(r).includes(p.name))
+    const losses = mine.filter((r) => r.winners.length > 0 && !winnersOf(r).includes(p.name))
+    const group = (games: typeof R, who: (r: (typeof R)[number]) => string[]) => {
+      const m = new Map<string, number[]>()
+      for (const r of games) for (const n of who(r)) if (n !== p.name) m.set(n, [...(m.get(n) ?? []), r.index])
+      return [...m].sort((a, b) => b[1].length - a[1].length)
+    }
+    const beat = group(wins, losersOf)
+    const lostTo = group(losses, winnersOf)
+    const fastest = [...wins].sort((a, b) => a.tick - b.tick)[0]
+    const parts: string[] = []
+    parts.push(
+      wins.length === 0
+        ? "1 局没赢"
+        : `赢 ${wins.length} 局：${beat.map(([n, idx]) => `赢 ${n} ${idx.length} 局${list(idx)}`).join("，")}${beat.length === 1 && wins.length >= 2 && rankOf.size > 2 ? `——胜局全是赢 ${beat[0][0]} 的` : ""}；最快的是第 ${fastest.index} 局（${fastest.tick} tick）`,
+    )
+    parts.push(
+      losses.length === 0
+        ? "1 局没输"
+        : `输 ${losses.length} 局：${lostTo.map(([n, idx]) => `输给 ${n} ${idx.length} 局${list(idx)}`).join("，")}${lostTo.length === 1 && losses.length >= 2 && rankOf.size > 2 ? `——败局全输给 ${lostTo[0][0]}` : ""}`,
+    )
+    out.push(`- ${p.name}（第 ${rankOf.get(p.name)} 名）：${parts.join("；")}`)
+  }
+  // 爆冷：名次靠后的赢了名次靠前的
+  const upsets = decided
+    .map((r) => {
+      const w = Math.max(...winnersOf(r).map((n) => rankOf.get(n) ?? 99))
+      const l = Math.min(...losersOf(r).map((n) => rankOf.get(n) ?? 99))
+      return { r, gap: w - l }
+    })
+    .filter((x) => x.gap > 0)
+    .sort((a, b) => b.gap - a.gap || a.r.index - b.r.index)
+  if (upsets.length)
+    out.push(
+      `- 爆冷（名次靠后的赢了名次靠前的，共 ${upsets.length} 局）：${upsets
+        .slice(0, 10)
+        .map((x) => `第 ${x.r.index} 局 ${winnersOf(x.r).join("、")}（第 ${winnersOf(x.r).map((n) => rankOf.get(n)).join("、")} 名）赢 ${losersOf(x.r).join("、")}`)
+        .join("；")}${upsets.length > 10 ? "……" : ""}`,
+    )
+  // 克制环：两两对阵赢多输少连成一圈
+  const names = series.participants.map((p) => p.name)
+  const m = series.summary?.matrix ?? []
+  const beats = (i: number, j: number) => (m[i]?.[j] ? m[i][j].w > m[i][j].l : false)
+  const cycles: string[] = []
+  for (let i = 0; i < names.length; i++)
+    for (let j = 0; j < names.length; j++)
+      for (let k = 0; k < names.length; k++) {
+        if (i >= j || i >= k || j === k) continue
+        if (beats(i, j) && beats(j, k) && beats(k, i)) {
+          const h = (a: number, b: number) => `${m[a][b].w}-${m[a][b].d}-${m[a][b].l}`
+          cycles.push(`${names[i]} 克 ${names[j]}（${h(i, j)}）、${names[j]} 克 ${names[k]}（${h(j, k)}）、${names[k]} 克 ${names[i]}（${h(k, i)}）`)
+        }
+      }
+  if (cycles.length) out.push(`- 克制环（两两对阵赢多输少连成一圈）：${cycles.slice(0, 3).join("；")}`)
+  // 比分最接近的局（规则包有分数时）
+  const close = decided
+    .map((r) => {
+      const sc = extra.get(r.index)?.scores
+      if (!sc || sc.every((v) => v === 0)) return null
+      const ws = Math.max(...r.winners.map((p) => sc[p]))
+      const ls = Math.max(...sc.filter((_, p) => !r.winners.includes(p)))
+      return { r, sc, gap: ws - ls }
+    })
+    .filter((x): x is { r: (typeof R)[number]; sc: number[]; gap: number } => x !== null && x.gap >= 0)
+    .sort((a, b) => a.gap - b.gap)
+  if (close.length) out.push(`- 比分最接近的胜局：${close.slice(0, 3).map((x) => `第 ${x.r.index} 局 ${vs(x.r)} ${x.sc.join(" : ")}（${winnersOf(x.r).join("、")} 赢）`).join("；")}`)
+  // 规则包事件最多的局
+  const busy = R.map((r) => ({ r, n: extra.get(r.index)?.notes ?? 0 }))
+    .filter((x) => x.n > 0)
+    .sort((a, b) => b.n - a.n)
+  if (busy.length) out.push(`- 规则包事件最多的局（夺点是控制点反复易手这类；详情看战报带"（规则包）"的事件，没附战报的用 rts-arena report 看）：${busy.slice(0, 3).map((x) => `第 ${x.r.index} 局（${vs(x.r)}，${x.n} 条）`).join("；")}`)
+  return out
 }
