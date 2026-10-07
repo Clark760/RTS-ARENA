@@ -113,6 +113,21 @@ test("命令行：联赛里同一个 bot 可以报名两次（带编号）；统
     assert.match(games[0], /^第 1\/2 局 .*（第 \d+ tick，/)
     assert.doesNotMatch(q, /的日志：/)
     assert.match(q, /共 2 局：/)
+    // 两个不同的 bot：给得分率和 95% 区间；--ticks 打到那一刻就结束
+    assert.match(q, /得分率（胜 1 平 0\.5）：baseline \d+%，idle \d+%，95% 区间 ±\d+%/)
+    const short = sh(["run", "koth", "baseline", "idle", "--seed", "1", "--ticks", "50", "--quiet", "--no-check", "--out", "t"])
+    assert.match(short, /打到第 50 tick 就结束/)
+    assert.match(short, /（第 50 tick，/)
+    // league --focus：只打第一个 bot 对其余每个，对序号和种子和不加时一样（换一个候选、同一个 --seed，对同一个对手的种子相同）
+    const all = sh(["league", "koth", "baseline", "rush", "idle", "--per-pair", "2", "--seed", "5", "--out", "f1", "--no-check"])
+    const focus = sh(["league", "koth", "baseline", "rush", "idle", "--per-pair", "2", "--seed", "5", "--out", "f2", "--no-check", "--focus"])
+    const other = sh(["league", "koth", "hold", "rush", "idle", "--per-pair", "2", "--seed", "5", "--out", "f3", "--no-check", "--focus"])
+    assert.match(focus, /只打 baseline 对其余每个（--focus），2 对，每对 2 局/)
+    const seedsOf = (out: string, a: string, b: string) =>
+      out.split("\n").filter((l) => l.includes(`=${a} `) && l.includes(`=${b} `) || (l.includes(`=${b} `) && l.includes(`=${a}`))).map((l) => l.match(/种子 (\d+)/)?.[1])
+    assert.equal(focus.split("\n").filter((l) => /^第 \d+\/4 局/.test(l)).length, 4)
+    assert.deepEqual(seedsOf(focus, "baseline", "idle"), seedsOf(all, "baseline", "idle"))
+    assert.deepEqual(seedsOf(other, "hold", "idle"), seedsOf(focus, "baseline", "idle"))
     // bot 目录里写满了对手：提示在前面写上规则包
     sh(["init", "koth", "me"])
     const r = spawnSync(process.execPath, [CLI, "run", "hold", "rush", "--no-check"], { cwd: join(dir, "me"), encoding: "utf8" })

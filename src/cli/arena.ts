@@ -26,7 +26,7 @@ import {
 } from "./catalog.ts"
 import { PKG_ROOT } from "../paths.ts"
 import { buildReport } from "./report.ts"
-import { leagueStandings, leagueTables, standingsText, teamSplits, type LeagueGame, type LeagueResult } from "./league.ts"
+import { leagueStandings, leagueTables, rateCi, standingsText, teamSplits, type LeagueGame, type LeagueResult } from "./league.ts"
 import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
 import { excitement, finalScores, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
 import { readSeries, scriptWarnings, videoBrief, type VideoScript } from "../video/brief.ts"
@@ -81,6 +81,7 @@ run 的选项：
         --out 路径    回放目录，默认 ./replays；单局时也可以给 .json 文件名
         --no-check    跳过类型检查
         --quiet       每局只打一行（结果、谁出了错），最后的胜率照常打印
+        --ticks N     每局打到第 N tick 就结束（按规则包到时间上限的规则判胜负），做开局、经济实验用
         --json        每行输出一个 JSON 事件（start / game / summary / warning / error），给程序读
 league 的选项：
         --size K      每局几个人（默认 2；规则包不能两个人打时是它的最少人数）
@@ -89,6 +90,8 @@ league 的选项：
         --tables M    多人局的组合太多时抽几桌（默认：组合不超过 20 桌就全打，否则让每个 bot 大约上场 6 桌）
         --teams 2v2   分队联赛（规则包要支持分队）；--partners mixed 轮换搭档（默认，所有分组方式都打，
                       每个 bot 拿所在队的名次分），--partners same 每队由同一个 bot 组成（bot 不够一局的人数时默认）
+        --focus       只打第一个 bot（在 bot 目录里就是你的 bot）对其余每个，参考 bot 之间不打；两人局用。
+                      比较两个版本：各跑一次 league <规则包> <版本> <对手...> --focus --seed 同一个数，对每个对手的种子一样
         --seed、--out、--no-check、--json 同 run
                       名次分：第一名 1 分、最后一名 0 分、中间平分（两人局就是胜 1 平 0.5）；
                       等级分（1500 起）把名次拆成两两比较，按全部对局一起算，和打的先后顺序无关
@@ -138,8 +141,8 @@ function say(msg: string): void {
 /** 各命令接受的选项；值为 true 的是开关，不带值 */
 const OPTIONS: Record<string, Record<string, boolean>> = {
   docs: { out: false },
-  run: { seed: false, games: false, out: false, teams: false, "no-check": true, json: true, quiet: true },
-  league: { seed: false, size: false, teams: false, partners: false, "per-table": false, "per-pair": false, tables: false, out: false, "no-check": true, json: true },
+  run: { seed: false, games: false, out: false, teams: false, "no-check": true, json: true, quiet: true, ticks: false },
+  league: { seed: false, size: false, teams: false, partners: false, "per-table": false, "per-pair": false, tables: false, out: false, "no-check": true, json: true, focus: true },
   check: { ticks: false },
   view: { port: false, open: true },
   report: { player: false, every: false, full: true },
@@ -316,6 +319,15 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
   for (const w of checkLimits(rules)) warn(w)
   const games = opt.games ? Number(opt.games) : 1
   if (!Number.isInteger(games) || games < 1) fail("--games 要是正整数")
+  // --ticks N：打到第 N tick 就结束（按规则包的时间上限判胜负），做开局、经济实验用
+  if (opt.ticks !== undefined) {
+    const n = Number(opt.ticks)
+    if (!Number.isInteger(n) || n < 1) fail("--ticks 要是正整数")
+    if (n < rules.maxTicks) {
+      rules = { ...rules, maxTicks: n }
+      say(`（每局打到第 ${n} tick 就结束，按「${rules.name}」到时间上限的规则判胜负）`)
+    }
+  }
   const quiet = opt.quiet === true
   const baseSeed = typeof opt.seed === "string" ? Number(opt.seed) : Math.floor(Math.random() * 1e9)
   if (!Number.isInteger(baseSeed)) fail("--seed 要是整数")
@@ -444,6 +456,15 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
             return `队${t + 1}（${members.map(label).join("、")}）赢 ${st.wins}${k > 2 ? `（平均名次 ${avg(st.places).toFixed(2)}）` : ""}`
           })
     console.log(`\n共 ${games} 局：${parts.join("，")}，平 ${draws}`)
+    // 两个不同的 bot 对打：给得分率和 95% 区间（区间盖住 50% 就还分不出高下）
+    if (k === 2 && n === 2 && !mirror) {
+      const rate = (i: number) => (seatStats[i].wins + draws / 2) / games
+      const ci = Math.round(rateCi(seatStats[0].wins + draws / 2, games) * 100)
+      console.log(
+        `得分率（胜 1 平 0.5）：${label(0)} ${Math.round(rate(0) * 100)}%，${label(1)} ${Math.round(rate(1) * 100)}%，95% 区间 ±${ci}%` +
+          (Math.abs(rate(0) - 0.5) * 100 <= ci ? "（区间盖住 50%，还分不出高下：多打几局，或者换一组种子再打）" : ""),
+      )
+    }
     console.log(`按座位：${seatWins.map((w, p) => `P${p} 赢 ${w}`).join("，")}${mirror ? "（自己打自己时这一行就是看地图和规则包偏不偏向某一边）" : ""}`)
   }
 }
@@ -567,7 +588,12 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
   const outDir = typeof opt.out === "string" ? opt.out : "replays"
   if (outDir.endsWith(".json")) fail("联赛的 --out 要写目录")
   const schedule = leagueTables(N, unit, baseSeed, tablesOpt)
-  const tables = schedule.tables
+  // --focus：只打第一个 bot 对其余每个（参考 bot 之间不打）。对序号照原来的算，种子不变：
+  // 换一个候选、用同一个 --seed 再跑，对每个对手用的种子都一样，可以直接比两个候选
+  const focus = opt.focus === true
+  if (focus && (players !== 2 || sizes)) fail("--focus 只用于两人对打的联赛")
+  const tableList = schedule.tables.map((table, ti) => ({ table, ti })).filter((x) => !focus || x.table.includes(0))
+  const tables = tableList.map((x) => x.table)
 
   // 每桌的一轮：位置怎么排。slots[t] 是第 t 方（各自为战是第 t 个座位，分队是第 t 队）的参赛者；variant 不同的用不同的种子
   const equalSizes = !sizes || sizes.every((s) => s === sizes![0])
@@ -623,7 +649,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
   const how =
     mode === "ffa"
       ? players === 2
-        ? `两两对打，${tables.length} 对，每对 ${perTable} 局（${rounds ? "换边" : notFull}）`
+        ? `${focus ? `只打 ${labels[0]} 对其余每个（--focus），` : "两两对打，"}${tables.length} 对，每对 ${perTable} 局（${rounds ? "换边" : notFull}）`
         : `每局 ${players} 人，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? "轮换座位" : notFull}）`
       : mode === "mixed"
         ? `分队 ${teamSpec}、轮换搭档，${schedule.complete ? "所有组合" : "抽了"} ${tables.length} 桌，每桌 ${perTable} 局（${rounds ? `每种分法都打${equalSizes ? "、各队轮换位置" : ""}` : notFull}）`
@@ -635,7 +661,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
   const played: { index: number; seed: number; replay: string; tick: number; seats: number[]; sideOf: number[]; facts: GameFacts }[] = []
   let index = 0
   for (let g = 0; g < perTable; g++)
-    for (const [ti, table] of tables.entries()) {
+    for (const { table, ti } of tableList) {
       index++
       const layouts = layoutsOf(table)
       const layout = layouts[g % layouts.length]
@@ -961,7 +987,7 @@ async function cmdCheck(rules: Ruleset, src: RulesetRef, args: string[], opt: Re
       if (seat === 0) {
         const logs = replay.frames.flatMap((f) => (f.logs ?? []).filter((l) => l.p === seat).flatMap((l) => l.text.map((t) => `t${f.t} ${t}`)))
         if (logs.length) {
-          console.log(`  bot 的日志（前 ${Math.min(5, logs.length)} 行，共 ${logs.length} 行）：`)
+          console.log(`  bot 的日志（前 ${Math.min(5, logs.length)} 行，共 ${logs.length} 行；行首的 tN 是记下这行日志的那一帧，日志属于上一次决策，所以常比你自己打的 view.tick 大一点）：`)
           for (const l of logs.slice(0, 5)) console.log(`    ${l.slice(0, 200)}`)
         }
       }

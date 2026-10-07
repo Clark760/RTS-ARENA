@@ -481,7 +481,16 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
           const how = [...doing].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join("、")
           return `t${b[0].t} 在 (${cx}, ${cy}) 附近死了 ${workers} 个工人（这一仗一共损失 ${lost.length} 个单位，含这些工人；整局的损失见「经济和损失」；工人死的时候的命令：${how}）`
         })
-        hints.push(`工人被卷进战斗：${where.join("；")}${bad.length > 3 ? `，另有 ${bad.length - 3} 场` : ""}。敌人打过来时可以让工人躲开，或者在采集的地方留兵`)
+        // 工人走得不比兵快时躲不掉（被追上就跑不掉），建议换成留兵、建塔、早换矿
+        const ticksOf = (worker: boolean) =>
+          Math.min(...Object.entries(types).filter(([k, t]) => t.kind === "unit" && t.attack && (t.moveTicks ?? 0) > 0 && isWorker(k) === worker).map(([, t]) => t.moveTicks!))
+        const wt = ticksOf(true)
+        const ft = ticksOf(false)
+        const advice =
+          Number.isFinite(wt) && Number.isFinite(ft) && wt >= ft
+            ? `工人走得不比兵快（走一格 ${wt} tick，兵 ${ft} tick），被追上就跑不掉：在采集的地方留兵或建塔、提前出兵，看到打不过的敌兵靠近就早点换到安全的矿`
+            : "敌人打过来时可以让工人躲开，或者在采集的地方留兵"
+        hints.push(`工人被卷进战斗：${where.join("；")}${bad.length > 3 ? `，另有 ${bad.length - 3} 场` : ""}。${advice}`)
       }
     }
     if (hasArmy) {

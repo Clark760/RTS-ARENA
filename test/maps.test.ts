@@ -88,7 +88,7 @@ test("说明书和 map 命令：随机地图的规则包写明每局不同、哪
   const rules = await importRuleset("annihilation")
   const prompt = buildPrompt(rules, join(PKG_ROOT, "rulesets", "annihilation"), "")
   assert.match(prompt, /这个规则包的地图每局按种子随机生成/)
-  assert.match(prompt, /每局都一样的：各家开局的建筑和单位、8 个资源点（家门口那些）/)
+  assert.match(prompt, /每局都一样的：各家开局的建筑和单位、8 个资源点（每局位置不变的那些，不一定都在家门口）/)
   assert.match(prompt, /每局不同的：其余 6 个资源点的位置、墙、水这些地形/)
   const r = spawnSync(process.execPath, [CLI, "map", "koth", "--seed", "3"], { encoding: "utf8" })
   assert.equal(r.status, 0, r.stderr)

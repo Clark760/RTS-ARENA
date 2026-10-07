@@ -127,6 +127,40 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
   };
   G.canBuild = function (view, type, x, y) { return buildProblem(view, type, x, y) === null; };
 
+  // 按地形走路的距离（上下左右走，绕开不可走的地形和看得见的建筑、资源点，单位不算挡路）：从 from 出发一圈圈往外找，
+  // 返回数组，下标 y * 宽 + x，走不到是 -1。起点是建筑这类多格实体时，它占的格子是 0、贴着它的格子是 1（和 dist 一样）
+  G.pathDistances = function (view, from) {
+    var g = G.game, W = g.width, H = g.height, N = W * H, i, x, y, k;
+    var block = new Uint8Array(N), d = new Array(N);
+    for (i = 0; i < N; i++) d[i] = -1;
+    for (y = 0; y < H; y++) for (x = 0; x < W; x++) if (!g.walkable[g.terrain[y][x]]) block[y * W + x] = 1;
+    var es = view.entities;
+    for (i = 0; i < es.length; i++) {
+      var e = es[i], t = g.types[e.type];
+      if (!t || t.kind === "unit") continue;
+      for (y = Math.max(0, e.y); y < Math.min(H, e.y + e.h); y++) for (x = Math.max(0, e.x); x < Math.min(W, e.x + e.w); x++) block[y * W + x] = 1;
+    }
+    var q = [], list = Array.isArray(from) ? from : [from];
+    for (i = 0; i < list.length; i++) {
+      var s = list[i];
+      if (!s || typeof s.x !== "number" || typeof s.y !== "number") continue;
+      var sw = s.w || 1, sh = s.h || 1;
+      for (y = Math.max(0, s.y); y < Math.min(H, s.y + sh); y++)
+        for (x = Math.max(0, s.x); x < Math.min(W, s.x + sw); x++) {
+          k = y * W + x;
+          if (d[k] !== 0) { d[k] = 0; q.push(k); }
+        }
+    }
+    for (var h = 0; h < q.length; h++) {
+      var c = q[h], cx = c % W, nd = d[c] + 1;
+      if (cx > 0 && d[c - 1] === -1 && !block[c - 1]) { d[c - 1] = nd; q.push(c - 1); }
+      if (cx < W - 1 && d[c + 1] === -1 && !block[c + 1]) { d[c + 1] = nd; q.push(c + 1); }
+      if (c >= W && d[c - W] === -1 && !block[c - W]) { d[c - W] = nd; q.push(c - W); }
+      if (c < N - W && d[c + W] === -1 && !block[c + W]) { d[c + W] = nd; q.push(c + W); }
+    }
+    return d;
+  };
+
   function flush(err) {
     var out = { c: cmds, l: logs, d: dropped, o: overflow };
     if (err !== undefined) { out.e = err; out.c = []; }

@@ -33,3 +33,11 @@ declare function buildProblem(view: View, type: TypeName, x: number, y: number):
  * 找到的位置 buildProblem 一定是 null；找不到返回 null（可能是附近不在视野里，或者都被占了）
  */
 declare function findBuildSpot(view: View, type: TypeName, near: Pos, maxRange?: number, margin?: number): Pos | null
+
+/**
+ * 按地形走路的距离（隔着墙时比 dist 准）：从 from（一个点、一个实体，或者它们的数组）出发，上下左右走，
+ * 绕开不可走的地形和看得见的建筑、资源点（单位不算挡路）。返回数组，下标是 y * game.width + x，值是走到这一格要几步，走不到是 -1。
+ * 起点是建筑这类多格实体时，它占的格子是 0、贴着它的格子是 1（和 dist 一样）。
+ * 整张图算一遍，燃料不多但也不是白给：存起来反复用（建筑变了再算），别每个单位每次都算
+ */
+declare function pathDistances(view: View, from: Pos | Entity | (Pos | Entity)[]): number[]

@@ -27,8 +27,8 @@ export function onTick(view: View, cmd: Commands): void {
   const eb = view.objectives.enemyBases[0]
   const target = { x: eb.x + 1, y: eb.y + 1 }
 
-  if (!barracks) {
-    // 主基地右下角外面找一块空地
+  // 兵营没了（开局，或者被拆了）：钱够就在主基地右下角外面找一块空地建；钱不够先去采矿
+  if (!barracks && view.resources.gold >= (game.types.barracks.cost.gold ?? 0)) {
     for (let r = 0; r < 6; r++) {
       const x = base.x + base.w + 1 + r
       const y = base.y + base.h - 1 + r
@@ -39,7 +39,7 @@ export function onTick(view: View, cmd: Commands): void {
     }
     return
   }
-  if (barracks.construction) {
+  if (barracks?.construction) {
     for (const w of workers) if (w.order?.kind !== "build") cmd.build(w, "barracks", barracks.x, barracks.y)
     return
   }
@@ -51,7 +51,7 @@ export function onTick(view: View, cmd: Commands): void {
     if (m) cmd.gather(w, m)
   }
 
-  if ((barracks.queue?.length ?? 0) === 0 && view.resources.gold >= 75) cmd.produce(barracks, "soldier")
+  if (barracks && (barracks.queue?.length ?? 0) === 0 && view.resources.gold >= 75) cmd.produce(barracks, "soldier")
 
   sent = new Set([...sent].filter((id) => soldiers.some((s) => s.id === id)))
   const waiting = soldiers.filter((s) => !sent.has(s.id))

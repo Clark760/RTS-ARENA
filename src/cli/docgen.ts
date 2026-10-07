@@ -161,7 +161,7 @@ export function mapVariety(rules: Ruleset, n: number, id = rules.id, seed = 1): 
   const diff: string[] = []
   if (!own.varies) same.push("各家开局的建筑和单位")
   else diff.push("各家开局的建筑和单位的位置")
-  if (res.fixed) same.push(`${res.fixed} 个资源点${res.varies ? "（家门口那些）" : ""}`)
+  if (res.fixed) same.push(`${res.fixed} 个资源点${res.varies ? "（每局位置不变的那些，不一定都在家门口）" : ""}`)
   if (res.varies) diff.push(res.fixed ? `其余 ${res.total - res.fixed} 个资源点的位置` : "资源点的位置")
   if (terrainVaries) diff.push("墙、水这些地形")
   if (neutral.varies) diff.push("中立单位的位置")
@@ -322,6 +322,8 @@ const RUN_FIRST = [
   "```",
   "",
   "- 命令的输出就是改 bot 的依据：报错和被拒命令、战报里的「可能的问题」、联赛里输给了谁。改完再从第 1 步跑起。",
+  "- 局数少时胜率的误差很大（`run` 和 `league` 都会给 95% 区间，区间盖住 50% 就还分不出高下）。想确认新的一版是不是真的更强：`rts-arena league --focus --per-pair 10`（只打你的 bot 对每个参考 bot，参考 bot 之间不打）；两个版本比较时，各跑一次、写同一个 `--seed`，对每个对手用的地图和种子一样。",
+  "- 只想看开局、经济（比如到第 1500 tick 采了多少）：`rts-arena run --ticks 1500` 打到那一刻就结束。",
   '- 交付时写清楚：跑了哪些命令、最后一版的联赛得分率、对每个参考 bot 的胜负。**没跑过对战，就不要说"测试通过"或"应该能赢"。**',
   "- 提示找不到 `rts-arena` 命令时，先问用户平台装在哪、怎么运行，不要跳过这一步。",
   '- 实在没法执行命令（环境不允许）时，直接告诉用户："我这里不能运行命令，请你在 bot 目录里运行 `rts-arena league`，把输出贴给我。"拿到结果再改。',

@@ -293,6 +293,41 @@ test("canBuild：地图内、地形可走、没有实体、有迷雾时每格都
   assert.match(reasons[1][7] ?? "", /有 #2（peon）挡着/)
 })
 
+test("pathDistances：按地形走路的步数，绕开墙和建筑；从建筑出发时贴着的格子是 1", async () => {
+  const game = JSON.stringify({
+    me: 0,
+    width: 6,
+    height: 3,
+    fog: false,
+    terrain: ["..#...", "..#...", "......"],
+    walkable: { ".": true, "#": false },
+    types: { hut: { kind: "building", w: 2, h: 2, sight: 1 }, peon: { kind: "unit", w: 1, h: 1, sight: 3 } },
+  })
+  const view = JSON.stringify({
+    tick: 0,
+    me: 0,
+    players: [{ team: 0 }, { team: 1 }],
+    entities: [
+      { id: 1, type: "peon", owner: 0, x: 0, y: 0, w: 1, h: 1 },
+      { id: 7, type: "hut", owner: 0, x: 4, y: 0, w: 2, h: 2 },
+    ],
+    events: [],
+  })
+  const b = await bot(`
+    export function onTick(view: View, cmd: Commands) {
+      const W = game.width
+      const a = pathDistances(view, { x: 0, y: 0 })
+      const h = pathDistances(view, view.entities.find((e) => e.type === "hut")!)
+      const both = pathDistances(view, [{ x: 0, y: 0 }, { x: 5, y: 2 }])
+      console.log(JSON.stringify([a[3], a[4], a[2 * W + 5], h[3], h[2 * W + 4], h[0], both[3]]))
+    }`)
+  b.start(game)
+  const r = b.tick(view)
+  // (0,0) 到 (3,0) 曼哈顿 3，隔着墙要绕 7 步；建筑的格子走不到；从建筑出发贴着的格子是 1；多个起点取最近的
+  assert.deepEqual(JSON.parse(r.logs[0]), [7, -1, 7, 1, 1, 7, 4])
+  b.dispose()
+})
+
 test("buildProblem 的顺序和引擎一样（地形、资源点先于视野）；findBuildSpot 找附近放得下的位置", async () => {
   const game = JSON.stringify({
     me: 0,
