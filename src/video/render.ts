@@ -30,6 +30,9 @@ export interface RenderOptions {
   fps?: number
   /** 只出这几秒的预览图（PNG），不出视频 */
   preview?: number[]
+  /** 输出尺寸，默认 1920×1080（16:9） */
+  width?: number
+  height?: number
   /** 出完视频后，从成品里截这几秒的画面（PNG）检查 */
   check?: number[]
   onProgress?: (done: number, total: number) => void
@@ -267,6 +270,9 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<{ file: strin
     const muxerFile = createRequire(import.meta.url).resolve("mp4-muxer")
     await browser.evaluate(readFileSync(muxerFile, "utf8") + ";true")
     await browser.evaluate(`(${installVideoPage.toString()})();true`)
+    const width = o.width ?? 1920
+    const height = o.height ?? 1080
+    await browser.evaluate(`__size(${width}, ${height})`)
     const ok = await browser.evaluate<boolean>(`typeof VideoEncoder === "function"`)
     if (!ok) throw new Error("这个浏览器不支持 WebCodecs（VideoEncoder），换一个新一点的 Chrome / Edge")
     // 场景的起始帧
@@ -290,7 +296,8 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<{ file: strin
       }
       return { file: null, seconds: total / fps, frames: total, bytes: 0, images, probe: null }
     }
-    await browser.evaluate(`__init(${JSON.stringify({ fps, bitrate: 5_000_000 })})`)
+    // 码率按像素数算：1080p 约 8 Mbps
+    await browser.evaluate(`__init(${JSON.stringify({ fps, bitrate: Math.round((width * height * fps) / 7.8) })})`)
     let done = 0
     for (const sc of scenes) {
       await browser.evaluate(`__scene(${JSON.stringify(sc.data)})`)

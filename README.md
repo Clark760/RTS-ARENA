@@ -74,17 +74,18 @@ rts-arena view                     # 网页播放器：看 ./replays 里的回�
 
 ## 联赛视频
 
-一场联赛打完，可以做成一段视频：片头片尾是平台署名（RTS Arena），中间是标题和用户的一句话、每个选手的介绍（结合文件名和代码风格）、联赛排名、几局精彩对局的回放。介绍和解说由大模型来写，平台负责素材和渲染，用本机的 Chrome 或 Edge 渲染成 MP4（不用装 ffmpeg）。
+一场联赛打完，可以做成一段 1920×1080 的视频：片头片尾是平台署名（RTS Arena），中间是标题和用户的一句话、每个选手的介绍（结合文件名和代码风格）、联赛排名、几局精彩对局的回放。介绍和解说由大模型来写，平台负责素材、排版和渲染，用本机的 Chrome 或 Edge 渲染成 MP4（不用装 ffmpeg）。没有配音。
 
 ```bash
 rts-arena league annihilation 选手A.ts 选手B.ts 选手C.ts --per-pair 6 --out league
-rts-arena video-brief league --out brief.json        # 素材包：选手的文件名、代码风格指标、成绩、精彩对局、脚本模板
-# 让大模型照 brief.json 写 script.json（选手介绍、对用户原话的解读、精彩对局的解说）
-rts-arena video league --script script.json --out 联赛.mp4 --preview 2,10,40   # 先出几张预览图检查
-rts-arena video league --script script.json --out 联赛.mp4 --check 5,60        # 出视频，并从成品里截图检查
+rts-arena video-init league my-video --text "用户的一句话"   # 导出视频目录：给大模型的 PROMPT.md、选手代码、几局战报、待填的 script.json
+# 让大模型读 my-video/PROMPT.md，写好 my-video/script.json，然后在目录里：
+cd my-video
+rts-arena video --preview 2,10,40     # 先出几张预览图检查
+rts-arena video --check 5,60          # 出视频，并从成品里截图检查
 ```
 
-给大模型（Claude Code 等）用的技能在 [skills/league-video/SKILL.md](skills/league-video/SKILL.md)：复制到 `~/.claude/skills/` 或项目的 `.claude/skills/` 下，跟它说"给这场联赛出个视频"就会按步骤做：拿素材包、读每个选手的代码、分析用户的话和文件名、写脚本、出预览检查、渲染。脚本里的每段文字都有字数上限，格式不对时命令会列出所有问题。
+像 `init` 建 bot 目录一样，`video-init` 把做视频要用的东西都放进一个目录，大模型只读这个目录里的几个文件就够了，不用去翻平台仓库。给 Claude Code 等用的技能在 [skills/league-video/SKILL.md](skills/league-video/SKILL.md)（复制到 `~/.claude/skills/` 或项目的 `.claude/skills/` 下），跟它说"给这场联赛出个视频"就会照这个流程做。脚本里的每段文字都有字数上限，格式不对时命令会列出所有问题。
 
 ## 写一个规则包
 

@@ -59,13 +59,15 @@ export interface ReplayFrame {
 }
 
 export function installVideoPage(): void {
+  // 画面按 1280×720 排版，输出时整体放大（1920×1080 是 1.5 倍）；文字和图形都是矢量画的，放大不糊
   const W = 1280
   const H = 720
+  let SCALE = 1.5
   const FONT = '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif'
   const MONO = 'Consolas, "Cascadia Mono", "Microsoft YaHei", monospace'
   const C = { bg1: "#0b1220", bg2: "#14203a", text: "#e8edf7", muted: "#8fa0bf", accent: "#f5b942", line: "#26344f", panel: "rgba(16,26,46,0.92)" }
-  const canvas = new OffscreenCanvas(W, H)
-  const g = canvas.getContext("2d")!
+  let canvas = new OffscreenCanvas(W * SCALE, H * SCALE)
+  let g = canvas.getContext("2d")!
   type Any = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
   const w = globalThis as unknown as Any
   let scene: Any | null = null
@@ -337,8 +339,10 @@ export function installVideoPage(): void {
     }
     // 地图
     if (!terrainLayer) {
-      terrainLayer = new OffscreenCanvas(s.width * TILE, s.height * TILE)
+      // 按输出的实际像素画一次地形，之后每帧贴上去
+      terrainLayer = new OffscreenCanvas(Math.ceil(s.width * TILE * SCALE), Math.ceil(s.height * TILE * SCALE))
       const t = terrainLayer.getContext("2d")!
+      t.scale(SCALE, SCALE)
       for (let y = 0; y < s.height; y++)
         for (let x = 0; x < s.width; x++) {
           t.fillStyle = s.colors[s.terrain[y][x]] ?? "#333"
@@ -358,7 +362,7 @@ export function installVideoPage(): void {
         t.stroke()
       }
     }
-    g.drawImage(terrainLayer, MX, MY)
+    g.drawImage(terrainLayer, MX, MY, s.width * TILE, s.height * TILE)
     const colorOf = (seat: number) => (seat >= 0 ? (s.seats[seat]?.color ?? "#ccc") : "#9aa0a6")
     const e = f.ents as number[]
     for (let k = 0; k < e.length; k += 8) {
@@ -375,19 +379,20 @@ export function installVideoPage(): void {
       g.lineWidth = 1.2
       const cx = px + pw / 2
       const cy = py + ph / 2
-      const r = Math.min(pw, ph) / 2 - (ty.kind === "unit" ? (ty.worker ? 4 : 2.5) : 1.5)
+      // 单位几乎占满一格，好放下汉字；工人小一点
+      const r = Math.min(pw, ph) / 2 - (ty.kind === "unit" ? (ty.worker ? 1.8 : 0.8) : 1.5)
       g.beginPath()
       if (ty.shape === "square") g.roundRect(px + 1.5, py + 1.5, pw - 3, ph - 3, 3)
       else if (ty.shape === "triangle") {
-        g.moveTo(cx, py + 2)
-        g.lineTo(px + pw - 2, py + ph - 2)
-        g.lineTo(px + 2, py + ph - 2)
+        g.moveTo(cx, py + 0.5)
+        g.lineTo(px + pw - 0.5, py + ph - 0.5)
+        g.lineTo(px + 0.5, py + ph - 0.5)
         g.closePath()
       } else if (ty.shape === "diamond") {
-        g.moveTo(cx, py + 1.5)
-        g.lineTo(px + pw - 1.5, cy)
-        g.lineTo(cx, py + ph - 1.5)
-        g.lineTo(px + 1.5, cy)
+        g.moveTo(cx, py + 0.3)
+        g.lineTo(px + pw - 0.3, cy)
+        g.lineTo(cx, py + ph - 0.3)
+        g.lineTo(px + 0.3, cy)
         g.closePath()
       } else if (ty.shape === "hex") {
         for (let a = 0; a < 6; a++) {
@@ -402,7 +407,22 @@ export function installVideoPage(): void {
       g.fill()
       g.stroke()
       g.globalAlpha = 1
+      // 和回放页面一样标上汉字：建筑大字，单位小字
       if (ty.kind === "building" && ty.label) text(ty.label, cx, cy + 9, 24, "rgba(255,255,255,0.9)", { bold: true, align: "center" })
+      else if (ty.kind === "unit" && ty.label) {
+        // 白字加深色描边：在哪种颜色上都看得清
+        g.font = font(ty.worker ? 9 : 9.5, true)
+        g.textAlign = "center"
+        g.textBaseline = "middle"
+        const ly = cy + (ty.shape === "triangle" ? 3 : 0.5)
+        g.lineWidth = 1.8
+        g.strokeStyle = "rgba(0,0,0,0.5)"
+        g.lineJoin = "round"
+        g.strokeText(ty.label, cx, ly)
+        g.fillStyle = "#ffffff"
+        g.fillText(ty.label, cx, ly)
+        g.textBaseline = "alphabetic"
+      }
       // 血条：没满血的单位和建筑
       if (ty.kind !== "resource" && hp < 100) {
         g.fillStyle = "rgba(0,0,0,0.6)"
@@ -501,6 +521,7 @@ export function installVideoPage(): void {
 
   function draw(f: Any | null, i: number): void {
     const s = scene!
+    g.setTransform(SCALE, 0, 0, SCALE, 0, 0)
     g.save()
     if (s.kind === "brandOpen") brandOpen(s, i)
     else if (s.kind === "title") title(s, i)
@@ -511,20 +532,30 @@ export function installVideoPage(): void {
     else if (s.kind === "brandClose") brandClose(s, i)
     g.restore()
     fade(i, s.frames)
+    g.setTransform(1, 0, 0, 1, 0, 0)
   }
 
   // ---------- 和 Node 那边的接口 ----------
+  /** 输出尺寸（16:9，宽度 / 1280 就是放大倍数） */
+  w.__size = (width: number, height: number) => {
+    SCALE = width / W
+    canvas = new OffscreenCanvas(width, height)
+    g = canvas.getContext("2d")!
+    terrainLayer = null
+    return true
+  }
   w.__init = (opts: { fps: number; bitrate: number }) => {
     fps = opts.fps
     const Muxer = w.Mp4Muxer
-    muxer = new Muxer.Muxer({ target: new Muxer.ArrayBufferTarget(), video: { codec: "avc", width: W, height: H, frameRate: fps }, fastStart: "in-memory" })
+    muxer = new Muxer.Muxer({ target: new Muxer.ArrayBufferTarget(), video: { codec: "avc", width: canvas.width, height: canvas.height, frameRate: fps }, fastStart: "in-memory" })
     encoder = new VideoEncoder({
       output: (chunk, meta) => muxer!.addVideoChunk(chunk, meta),
       error: (e) => {
         w.__encodeError = String(e)
       },
     })
-    encoder.configure({ codec: "avc1.640028", width: W, height: H, bitrate: opts.bitrate, framerate: fps })
+    // High 4.2：1080p 到 60 帧都够
+    encoder.configure({ codec: "avc1.64002a", width: canvas.width, height: canvas.height, bitrate: opts.bitrate, framerate: fps })
     frameNo = 0
     return true
   }
@@ -580,8 +611,8 @@ export function installVideoPage(): void {
     })
     const shots: string[] = []
     const c2 = document.createElement("canvas")
-    c2.width = W
-    c2.height = H
+    c2.width = canvas.width
+    c2.height = canvas.height
     const g2 = c2.getContext("2d")!
     for (const sec of secs) {
       await new Promise<void>((ok) => {

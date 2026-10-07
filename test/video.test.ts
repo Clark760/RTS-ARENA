@@ -1,7 +1,7 @@
 // 联赛视频：素材包（代码风格指标、成绩）、脚本检查、场景编排；本机有 Chrome / Edge 时再真的渲染一段
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { after, test } from "node:test"
@@ -14,8 +14,8 @@ const CLI = join(ROOT, "src", "cli", "arena.ts")
 const TMP = mkdtempSync(join(tmpdir(), "rts-arena-video-"))
 after(() => rmSync(TMP, { recursive: true, force: true }))
 
-const sh = (args: string[]) => {
-  const r = spawnSync(process.execPath, [CLI, ...args], { cwd: TMP, encoding: "utf8" })
+const sh = (args: string[], cwd = TMP) => {
+  const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8" })
   assert.equal(r.status, 0, r.stdout + r.stderr)
   return r.stdout
 }
@@ -95,14 +95,31 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   }
 })
 
-test("渲染：出预览图；本机有浏览器时出一段 MP4 并用浏览器解码检查", { skip: findBrowser() ? false : "本机没有 Chrome / Edge" }, () => {
-  const file = join(TMP, "script.json")
-  writeFileSync(file, JSON.stringify(script))
-  const out = sh(["video", seriesFile, "--script", file, "--out", "v.mp4", "--preview", "1,6"])
+test("video-init：视频目录里有说明、选手代码、战报、待填脚本；已经有脚本时不覆盖", () => {
+  sh(["video-init", "lg", "vd", "--text", "用户的一句话"])
+  const dir = join(TMP, "vd")
+  const prompt = readFileSync(join(dir, "PROMPT.md"), "utf8")
+  assert.match(prompt, /用户的一句话/)
+  assert.match(prompt, /### 排名/)
+  assert.match(prompt, /#### baseline/)
+  assert.match(prompt, /rts-arena video --preview/)
+  assert.ok(existsSync(join(dir, "bots", "baseline.ts")) && existsSync(join(dir, "bots", "rush.ts")))
+  assert.ok(readdirSync(join(dir, "reports")).some((f) => /^game-\d+\.md$/.test(f)))
+  const tmpl = JSON.parse(readFileSync(join(dir, "script.json"), "utf8")) as VideoScript
+  assert.equal(tmpl.userText, "用户的一句话")
+  const again = spawnSync(process.execPath, [CLI, "video-init", "lg", "vd"], { cwd: TMP, encoding: "utf8" })
+  assert.equal(again.status, 1)
+  assert.match(again.stderr, /已经有 script\.json/)
+})
+
+test("渲染：在视频目录里不写参数出预览图；本机有浏览器时出一段 1920×1080 的 MP4 并用浏览器解码检查", { skip: findBrowser() ? false : "本机没有 Chrome / Edge" }, () => {
+  const dir = join(TMP, "vd")
+  writeFileSync(join(dir, "script.json"), JSON.stringify(script))
+  const out = sh(["video", "--preview", "1,6"], dir)
   assert.match(out, /预览图/)
-  assert.ok(existsSync(join(TMP, "v-1s.png")) && statSync(join(TMP, "v-6s.png")).size > 10_000)
-  const full = sh(["video", seriesFile, "--script", file, "--out", "v.mp4", "--fps", "10", "--check", "2"])
-  assert.match(full, /浏览器解码检查：时长 [\d.]+ 秒，1280×720/)
-  assert.ok(statSync(join(TMP, "v.mp4")).size > 100_000)
-  assert.ok(existsSync(join(TMP, "v-check-2s.png")))
+  assert.ok(statSync(join(dir, "夺点联赛-6s.png")).size > 10_000)
+  const full = sh(["video", "--out", "v.mp4", "--fps", "10", "--check", "2"], dir)
+  assert.match(full, /浏览器解码检查：时长 [\d.]+ 秒，1920×1080/)
+  assert.ok(statSync(join(dir, "v.mp4")).size > 100_000)
+  assert.ok(existsSync(join(dir, "v-check-2s.png")))
 })
