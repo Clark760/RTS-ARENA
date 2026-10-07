@@ -9,7 +9,7 @@ import { existsSync, readFileSync, statSync } from "node:fs"
 import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import type { QuickJSContext, QuickJSHandle, QuickJSRuntime } from "quickjs-emscripten"
 import { mixSeed } from "../core/rng.ts"
-import { resolveType } from "../core/world.ts"
+import { PATCHED, resolveType } from "../core/world.ts"
 import type { Marker, MatchResult, RuleContext, RuleEntity, Ruleset, SetupContext } from "../core/types.ts"
 import { PKG_ROOT } from "../paths.ts"
 import { clip, compileBot, errorText, newSandboxRuntime } from "./quickjs.ts"
@@ -75,6 +75,8 @@ function entJson(e: RuleEntity): Record<string, unknown> {
   if (e.carrying) o.carrying = e.carrying
   if (e.queue.length > 0) o.queue = e.queue
   if (e.construction) o.construction = e.construction
+  // 局中改过数值的实体（D-153）：带上现在的数值，沙箱里不按类型补
+  if (PATCHED.has(e.def)) o.def = e.def
   return o
 }
 
@@ -469,6 +471,14 @@ class RulesBox {
       },
       setOwner: (id, owner) => {
         w().setOwner(int(id, "id"), int(owner, "owner"))
+        return undefined
+      },
+      setTypeStats: (p, type, h) => {
+        w().setTypeStats(int(p, "玩家编号"), str(type, "类型", 64), json(h, "数值", 1000) as never)
+        return undefined
+      },
+      setStats: (id, h) => {
+        w().setStats(int(id, "id"), json(h, "数值", 1000) as never)
         return undefined
       },
     }

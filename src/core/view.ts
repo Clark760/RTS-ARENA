@@ -1,6 +1,6 @@
 // 按玩家视野裁剪出 bot 看到的局面
 import type { Entity, Order, View } from "../api/bot-api.ts"
-import type { World } from "./world.ts"
+import { statDiff, type World } from "./world.ts"
 
 function copyOrder(o: Order): Order {
   return { ...o }
@@ -12,6 +12,12 @@ export function buildView(w: World, p: number): View {
     if (!w.visibleTo(p, e)) continue
     const v: Entity = { id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, w: e.w, h: e.h, hp: e.hp, maxHp: e.def.maxHp }
     if (e.def.kind === "resource") v.amount = e.amount
+    // 规则包改过的数值（科技、增益……）：只给和 game.types 不一样的项，生命上限已经在 maxHp 里
+    const st = statDiff(e.def, w.types[e.type])
+    if (st) {
+      const { maxHp: _, ...rest } = st
+      if (Object.keys(rest).length) v.stats = rest
+    }
     if (e.construction) v.construction = { ...e.construction }
     if (e.owner === p) {
       v.order = copyOrder(e.order)

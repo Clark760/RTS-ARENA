@@ -16,6 +16,21 @@ export interface Look {
   color?: string
 }
 
+/**
+ * 局中能改的数值（setTypeStats / setStats，D-153）：都是"改成多少"（不是加减），只写要改的项。
+ * 原来不能攻击、不能采集、不能移动、没有生命（无敌）的类型不能改出这些能力
+ */
+export interface StatPatch {
+  /** 生命上限（变大时当前生命跟着加上差值，变小时超出的去掉） */
+  maxHp?: number
+  /** 走一格几 tick（≥ 1） */
+  moveTicks?: number
+  /** 视野半径 */
+  sight?: number
+  attack?: { damage?: number; range?: number; cooldown?: number }
+  gather?: { amount?: number; ticks?: number; capacity?: number }
+}
+
 /** 规则包里定义实体类型：除 kind 和 look 外都有默认值 */
 export interface TypeSpec {
   kind: TypeDef["kind"]
@@ -180,6 +195,15 @@ export interface RuleContext {
    * 之后照常算进新主人的单位数（满了的话新主人就造不了兵）。没建好的建筑换了主人，原来去建它的工人会停下
    */
   setOwner(id: number, owner: number): void
+  /**
+   * 局中改数值（科技、增益、光环、地形效果……，D-153）：改某个玩家（-1 是中立）的某类实体，他已有的和以后造出来的都按新数值，
+   * 换了主人的实体按新主人的算。和这个玩家这类实体之前改过的合并；值是改成多少，写原值就是改回去，patch 写 null 全部改回原值。
+   * 能改生命上限、走一格几 tick、视野、攻击（伤害、射程、冷却）、采集（每次采多少、几 tick、最多带多少），见 StatPatch。
+   * bot 从实体的 stats 字段看到改过的数值；回放、播放器、视频按改过的画（视野、血条）
+   */
+  setTypeStats(player: number, type: string, patch: StatPatch | null): void
+  /** 改单个实体（在 setTypeStats 的结果上再改，比如光环、站在某种地形上）；同样合并，null 是去掉这个实体单独的改动 */
+  setStats(id: number, patch: StatPatch | null): void
   setMarkers(markers: Marker[]): void
   /** 回放顶部显示的一行状态文字 */
   setStatus(text: string): void
@@ -340,6 +364,17 @@ export interface EntSnap {
   ord: string
   /** 没建好的建筑：建造进度百分比（0～99） */
   bp?: number
+  /** 被规则包改过的数值（和回放 types 里不一样的项，D-153）；没改过就没有 */
+  st?: StatDiff
+}
+
+/** 实体和它类型原值不一样的数值（bot 视图的 stats、回放的 st） */
+export interface StatDiff {
+  maxHp?: number
+  moveTicks?: number
+  sight?: number
+  attack?: { damage: number; range: number; cooldown: number }
+  gather?: { amount: number; ticks: number; capacity: number }
 }
 
 export interface PlayerSnap {
@@ -373,6 +408,8 @@ export interface Frame {
   notes?: { p: number; text: string }[]
   /** [id, 新主人, ...]：规则包改了归属（setOwner）的实体，-1 是中立 */
   owner?: number[]
+  /** [id, 改过的数值, ...]：数值有变化的实体（null 是改回了原值），D-153 */
+  st?: [number, StatDiff | null][]
   /** [id, 建造进度百分比, ...]；100 表示建好了 */
   bp?: number[]
   players?: PlayerSnap[]

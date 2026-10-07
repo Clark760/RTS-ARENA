@@ -97,6 +97,7 @@ export default ruleset
 - 写：`addScore(player, n)`、`setScore(player, n)`、`addResource(player, "gold", n)`（一次加一种，和 setResources 不一样）、`spawnNear(type, owner, x, y, { amount })`（找空位刷实体，找不到返回 null）、`remove(id)`（移除：回放和战报里记成"规则包移除"，不算死亡和损失；规则包和 bot 收到的 `died` 事件带 `removed: true`）、`eliminate(player)`（出局：不再调用他的 bot，实体留着，要清掉自己 remove）、`setStatus(text)`（回放顶部的一行字，最多 200 字）。
 - 叠加层 `setMarkers([...])`（回放里画，bot 看不到）：区域 `{ kind: "zone", x, y, w, h, owner, label?, color? }`（owner 是玩家编号或 null，按它上色；写了 `color: "#rrggbb"` 就用这个颜色），文字 `{ kind: "label", x, y, text, owner? }`；文字最多 40 字，最多 500 个。每次调用整个替换，不变就不用每 tick 都设。
 - 改实体：`setHp(id, hp)`（改到 0 或以下就死，击杀者算 -1）、`setOwner(id, player)`（占领、招降、变成中立 -1；命令变成 idle，生产队列清空不退钱；换主人的那一刻不检查单位上限，之后照常算进新主人的单位数，满了新主人就造不了兵）。回放会记下换主人：播放器按新主人上色，战报的关键事件里有"换主人"。
+- **局中改数值**（科技、增益、光环、地形效果……）：`setTypeStats(player, type, patch)` 改某个玩家（-1 是中立）的某类实体，他已有的和以后造出来的都按新数值，换了主人的实体按新主人的算；`setStats(id, patch)` 在这之上再改单个实体。patch 只写要改的项，值是**改成多少**（不是加减），和之前改过的合并，写原值就是改回去，写 `null` 全部改回原值。能改：`maxHp`（变大时当前生命跟着加上差值，变小时去掉超出的）、`moveTicks`、`sight`、`attack: { damage, range, cooldown }`、`gather: { amount, ticks, capacity }`；原来不能攻击、采集、移动、没有生命的类型不能改出这些能力，取值超范围会抛错。改完 `ctx.entities()` 里实体的 `def` 就是新数值。bot 从实体的 `stats` 字段看到改过的项（`game.types` 还是原值），回放、播放器、视频按新数值画视野和血条。数值什么时候变、变成多少要在 RULES.md 里写清楚（例子：自带的「科技」规则包，建好铁匠铺后战士、弓手伤害 10 → 13，被拆了改回去）。
 - **中立实体**（owner -1，比如野怪）：能攻击的闲着时会自动打射程内的玩家实体。玩家的单位不会自动打它们：不管是 idle、attackMove，还是正挨着中立实体的打，都不会还手，只有 bot 下 `attack` 命令才打（RULES.md 里要提醒 bot 作者）。中立实体之间不会互相打。平时不动，用 `orderNeutral(id, order)` 指挥（只能指挥中立实体，对玩家的实体用会抛错）：`{ kind: "move", x, y }`、`{ kind: "attack", target }`、`{ kind: "attackMove", x, y }`、`{ kind: "stop" }`，命令会一直执行到完成或失效（和 bot 的同名命令一样）。被打死时 `died` 事件的 `killer` 是最后一击的玩家，可以据此给赏金。在 RULES.md 里把中立实体会做什么写清楚。
 - **视野**：`isVisible(player, x, y)` 查某一格现在在不在 player 那一队的视野里（没开迷雾时总是 true）。
 - **自己的事件**：`note(text, player?)` 往回放和战报的关键事件里写一条（比如 "P0 扛起了 P1 的旗"），player 是这条主要关于谁（不写是所有人）；每 tick 最多 20 条、每条 100 字，整局 2000 条。关键事件里会标"（规则包）"。
@@ -115,7 +116,7 @@ export default ruleset
 - 每一局开始时规则包会重新加载（顶层代码重新执行），顶层变量里的状态不会带到下一局，不用自己在 setup 里清。
 - 燃料（1 燃料约 5000 次简单循环）：加载 2000，setup 4000，onTick 和 result 每次各 400，objectives 每次 100，timeUp 1000。每次回调墙钟 2 秒（加载、setup 10 秒），整局累计 120 秒；内存 256 MB。超了就算规则包出错，这一局作废，命令行会说是哪个回调、第几 tick。
 - 上限：地图边长 256，玩家 8 人，实体 5000 个，类型 64 种，bot 燃料每次最多 2000；建议上限（地图 128、4 人、600 个实体……）超了只提醒，见 `rts-arena check` 的输出。
-- `entities()`、`get()`、`players` 拿到的是快照：改字段没用，存起来下一 tick 也不会更新，每 tick 重新取。同一个回调里先改了局面（`spawn`、`spawnNear`、`remove`、`setOwner`、`setHp`、`orderNeutral`）再调 `entities()` / `get()`，拿到的是改过之后的。
+- `entities()`、`get()`、`players` 拿到的是快照：改字段没用，存起来下一 tick 也不会更新，每 tick 重新取。同一个回调里先改了局面（`spawn`、`spawnNear`、`remove`、`setOwner`、`setHp`、`setTypeStats`、`setStats`、`orderNeutral`）再调 `entities()` / `get()`，拿到的是改过之后的。
 - 速度：取全部实体要把它们都传进沙箱（几百个实体约 0.3 毫秒），同一 tick 里的几次回调共用这一份。只关心某些实体时用筛选（`entities({ owner, type, kind })`）或 `entitiesIn`：没取过全部实体时，筛选在沙箱外面做，只传筛出来的，快得多。每 tick 找主基地这种事一定要用筛选。
 - `objectives` 的返回值要能转成 JSON，最多 6.4 万字；`result` / `timeUp` 返回 `{ winner, reason }`（可选 `winners`、`ranking`、`stats`），格式不对会报错。
 - **自己的统计** `stats`：结果里可以带上规则包自己的指标，每项是按玩家编号排的数组，比如 `{ winner, reason, stats: { 劫到商队: [3, 5], 被抢走: [1, 0] } }`（最多 12 项，名字最长 20 字）。联赛按 bot 累计、显示每局平均，战报也会列出来，用来检查你设计的机制到底有没有发生、谁用得多。在顶层变量里一边打一边记，结束时放进结果就行（每局都会重新加载，不用自己清零）。规则包改归属（setOwner）的次数联赛会自动统计（"换主人"），不用自己记。

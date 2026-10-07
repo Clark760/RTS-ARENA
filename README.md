@@ -31,6 +31,7 @@ npm install -g .     # 注册全局命令 rts-arena（指向这份克隆，git p
 
 ```bash
 rts-arena list        # 规则包：annihilation 歼灭、koth 夺点、harvest 采集竞速、melee 混战（2～4 人，可分队）、frontier 拓荒（工人自己建兵营、箭塔、仓库）、
+                      # tech 科技（拓荒加 4 种科技建筑，建筑在加成就在）、
                       # beacons 烽火台（清野怪、抢台址建烽火台计分）、wild-herd 牧野争牛（驯服游荡的野牛赶回牧栏，2～4 人可分队）、
                       # caravan-raid 劫镖（劫过境的商队押回家交货，2～4 人可分队）、flag-run 夺旗（扛敌旗送回自家旗台，2～4 人可分队）
 rts-arena list koth   # 某个规则包的参考 bot 和打法、源码在哪

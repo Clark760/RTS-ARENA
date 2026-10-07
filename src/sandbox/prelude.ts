@@ -91,7 +91,7 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
           var seen = false, cell = { x: xx, y: yy };
           for (i = 0; i < es.length && !seen; i++) {
             e = es[i];
-            if (e.owner >= 0 && view.players[e.owner].team === team && dist(e, cell) <= g.types[e.type].sight) seen = true;
+            if (e.owner >= 0 && view.players[e.owner].team === team && dist(e, cell) <= (e.stats && e.stats.sight !== undefined ? e.stats.sight : g.types[e.type].sight)) seen = true;
           }
           if (!seen) return "(" + xx + ", " + yy + ") 不在你方视野里，只能在看得见的地方建造";
         }

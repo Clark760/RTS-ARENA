@@ -18,6 +18,8 @@ import type {
   RuleEvent,
   Ruleset,
   SetupContext,
+  StatDiff,
+  StatPatch,
   TypeSpec,
 } from "./types.ts"
 
@@ -49,6 +51,85 @@ export function rectDist(a: Rect, b: Rect): number {
   const dx = Math.max(0, b.x - (a.x + a.w - 1), a.x - (b.x + b.w - 1))
   const dy = Math.max(0, b.y - (a.y + a.h - 1), a.y - (b.y + b.h - 1))
   return dx + dy
+}
+
+/** 被局中改过数值的类型定义（setTypeStats / setStats 生成的）；没改过的实体用的就是 world.types 里的那一份 */
+export const PATCHED = new WeakSet<TypeDef>()
+
+function applyPatch(d: TypeDef, p: StatPatch): TypeDef {
+  const out: TypeDef = {
+    ...d,
+    maxHp: p.maxHp ?? d.maxHp,
+    moveTicks: p.moveTicks ?? d.moveTicks,
+    sight: p.sight ?? d.sight,
+    attack: d.attack && p.attack ? { ...d.attack, ...p.attack } : d.attack,
+    gather: d.gather && p.gather ? { ...d.gather, ...p.gather } : d.gather,
+  }
+  PATCHED.add(out)
+  return out
+}
+
+function mergePatch(a: StatPatch, b: StatPatch): StatPatch {
+  const out: StatPatch = { ...a, ...b }
+  if (a.attack || b.attack) out.attack = { ...a.attack, ...b.attack }
+  if (a.gather || b.gather) out.gather = { ...a.gather, ...b.gather }
+  return out
+}
+
+/** 检查规则包给的数值改动（字段、取值范围、这类实体有没有这项能力），返回只含认识字段的副本 */
+export function checkPatch(base: TypeDef, p: unknown, what: string): StatPatch {
+  if (p === null || typeof p !== "object" || Array.isArray(p)) throw new Error(`${what}：要改的数值要写成对象，比如 { attack: { damage: 13 } }`)
+  const o = p as Record<string, unknown>
+  const KEYS = ["maxHp", "moveTicks", "sight", "attack", "gather"]
+  for (const k of Object.keys(o)) if (!KEYS.includes(k)) throw new Error(`${what}：不能改 ${k}（能改的是 ${KEYS.join("、")}）`)
+  const int = (v: unknown, name: string, min: number, max: number): number => {
+    if (!Number.isInteger(v) || (v as number) < min || (v as number) > max) throw new Error(`${what}：${name} 要是 ${min}～${max} 的整数（现在是 ${JSON.stringify(v)}）`)
+    return v as number
+  }
+  const out: StatPatch = {}
+  if (o.maxHp !== undefined) {
+    if (base.kind === "resource" || base.maxHp <= 0) throw new Error(`${what}：${base.name} 没有生命（资源点或无敌），不能改 maxHp`)
+    out.maxHp = int(o.maxHp, "maxHp", 1, 1_000_000)
+  }
+  if (o.moveTicks !== undefined) {
+    if (base.moveTicks <= 0) throw new Error(`${what}：${base.name} 不能移动，不能改 moveTicks`)
+    out.moveTicks = int(o.moveTicks, "moveTicks", 1, 1000)
+  }
+  if (o.sight !== undefined) out.sight = int(o.sight, "sight", 0, 50)
+  const sub = (v: unknown, name: string, fields: Record<string, [number, number]>): Record<string, number> => {
+    if (v === null || typeof v !== "object" || Array.isArray(v)) throw new Error(`${what}：${name} 要写成对象`)
+    const r: Record<string, number> = {}
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      if (!(k in fields)) throw new Error(`${what}：${name} 里不能改 ${k}（能改的是 ${Object.keys(fields).join("、")}）`)
+      r[k] = int(x, `${name}.${k}`, fields[k][0], fields[k][1])
+    }
+    return r
+  }
+  if (o.attack !== undefined) {
+    if (!base.attack) throw new Error(`${what}：${base.name} 不能攻击，不能改 attack`)
+    out.attack = sub(o.attack, "attack", { damage: [0, 100_000], range: [1, 30], cooldown: [1, 10_000] })
+  }
+  if (o.gather !== undefined) {
+    if (!base.gather) throw new Error(`${what}：${base.name} 不能采集，不能改 gather`)
+    out.gather = sub(o.gather, "gather", { amount: [1, 10_000], ticks: [1, 10_000], capacity: [1, 100_000] })
+  }
+  return out
+}
+
+/** 实体现在的数值和它类型原值不一样的项（bot 视图的 stats、回放的 st 用） */
+export function statDiff(d: TypeDef, base: TypeDef): StatDiff | undefined {
+  if (d === base) return undefined
+  const o: StatDiff = {}
+  if (d.maxHp !== base.maxHp) o.maxHp = d.maxHp
+  if (d.moveTicks !== base.moveTicks) o.moveTicks = d.moveTicks
+  if (d.sight !== base.sight) o.sight = d.sight
+  const a = d.attack
+  const b = base.attack
+  if (a && b && (a.damage !== b.damage || a.range !== b.range || a.cooldown !== b.cooldown)) o.attack = { damage: a.damage, range: a.range, cooldown: a.cooldown }
+  const g = d.gather
+  const h = base.gather
+  if (g && h && (g.amount !== h.amount || g.ticks !== h.ticks || g.capacity !== h.capacity)) o.gather = { amount: g.amount, ticks: g.ticks, capacity: g.capacity }
+  return Object.keys(o).length ? o : undefined
 }
 
 export function attackable(e: EntityState): boolean {
@@ -102,6 +183,12 @@ export class World implements SetupContext, RuleContext {
 
   /** 每个玩家的队伍编号 */
   readonly teams: number[]
+  /** setTypeStats 的改动，键是 "玩家|类型"（D-153） */
+  private typePatches = new Map<string, StatPatch>()
+  /** setStats 的改动，键是实体 id */
+  private entPatches = new Map<number, StatPatch>()
+  /** 按 "玩家|类型" 算好的数值（setTypeStats 改了就作废） */
+  private defCache = new Map<string, TypeDef>()
 
   constructor(rules: Ruleset, names: string[], seed: number, teams?: number[]) {
     this.rules = rules
@@ -202,13 +289,13 @@ export class World implements SetupContext, RuleContext {
     const e: EntityState = {
       id: this.newId(),
       type,
-      def,
+      def: this.defFor(owner, type),
       owner,
       x,
       y,
       w: def.w,
       h: def.h,
-      hp: def.maxHp,
+      hp: this.defFor(owner, type).maxHp,
       amount: def.kind === "resource" ? (amount ?? this.rules.types[type].amount ?? 0) : 0,
       order: { kind: "idle" },
       carrying: null,
@@ -271,6 +358,7 @@ export class World implements SetupContext, RuleContext {
     e.alive = false
     this.occupy(e, 0)
     this.ents.delete(e.id)
+    this.entPatches.delete(e.id)
     if (removed) this.removed.add(e.id)
     const flags = { ...(e.construction ? { unfinished: true as const } : {}), ...(removed ? { removed: true as const } : {}) }
     this.events.push({ kind: "died", id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, killer, ...flags, ...(byNeutral ? { byNeutral: true as const } : {}) })
@@ -555,6 +643,59 @@ export class World implements SetupContext, RuleContext {
     e.owner = owner
     resetOrder(e, { kind: "idle" })
     e.queue.length = 0
+    this.refreshDef(e)
+  }
+
+  // ---------- 局中改数值（D-153） ----------
+
+  /** owner 的 type 类实体现在的数值（再叠上实体 id 单独的改动） */
+  private defFor(owner: number, type: string, id?: number): TypeDef {
+    const base = this.types[type]
+    const key = `${owner}|${type}`
+    let d = base
+    const tp = this.typePatches.get(key)
+    if (tp) {
+      d = this.defCache.get(key) ?? applyPatch(base, tp)
+      this.defCache.set(key, d)
+    }
+    const ep = id === undefined ? undefined : this.entPatches.get(id)
+    return ep ? applyPatch(d, ep) : d
+  }
+
+  /** 重新算实体的数值；生命上限变大时当前生命加上差值，变小时去掉超出的 */
+  private refreshDef(e: EntityState): void {
+    const old = e.def.maxHp
+    e.def = this.defFor(e.owner, e.type, e.id)
+    const now = e.def.maxHp
+    if (now > old) e.hp = Math.min(now, e.hp + (now - old))
+    else if (now < old) e.hp = Math.max(1, Math.min(e.hp, now))
+  }
+
+  setTypeStats(player: number, type: string, patch: StatPatch | null): void {
+    if (!Number.isInteger(player) || player < -1 || player >= this.playerCount) throw new Error(`setTypeStats：玩家编号 ${player} 不存在（中立写 -1）`)
+    const base = this.types[type]
+    if (!base) throw new Error(`setTypeStats：未定义的实体类型 "${type}"`)
+    const key = `${player}|${type}`
+    if (patch === null) this.typePatches.delete(key)
+    else {
+      const p = checkPatch(base, patch, "setTypeStats")
+      const merged = mergePatch(this.typePatches.get(key) ?? {}, p)
+      // 只合并检查过的字段；合并后要是和原值完全一样就当没改（实体用回 world.types 那一份）
+      if (statDiff(applyPatch(base, merged), base)) this.typePatches.set(key, merged)
+      else this.typePatches.delete(key)
+    }
+    this.defCache.delete(key)
+    for (const e of this.ents.values()) if (e.owner === player && e.type === type) this.refreshDef(e)
+  }
+
+  setStats(id: number, patch: StatPatch | null): void {
+    const e = this.mustGet(id, "setStats")
+    if (patch === null) this.entPatches.delete(id)
+    else {
+      const p = checkPatch(this.types[e.type], patch, "setStats")
+      this.entPatches.set(id, mergePatch(this.entPatches.get(id) ?? {}, p))
+    }
+    this.refreshDef(e)
   }
 
   eliminate(player: number): void {

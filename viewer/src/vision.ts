@@ -29,7 +29,7 @@ export class Vision {
     for (const e of state.ents.values()) {
       if (e.owner < 0 || this.teamOf(e.owner) !== team) continue
       const t = this.replay.types[e.type]
-      markSight(this.vis, width, height, { x: e.x, y: e.y, w: t?.w ?? 1, h: t?.h ?? 1 }, t?.sight ?? 0)
+      markSight(this.vis, width, height, { x: e.x, y: e.y, w: t?.w ?? 1, h: t?.h ?? 1 }, e.st?.sight ?? t?.sight ?? 0)
     }
   }
 

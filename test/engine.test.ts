@@ -6,6 +6,7 @@ import { runMatch } from "../src/core/match.ts"
 import type { Ruleset, TypeSpec } from "../src/core/types.ts"
 import { STANDARD_TERRAIN } from "../rulesets/common/standard.ts"
 import { fnBot, idle } from "./helpers.ts"
+import { ReplayModel } from "../src/core/replay-model.ts"
 import type { Commands } from "../src/api/bot-api.ts"
 
 const look = { shape: "circle" as const }
@@ -136,6 +137,63 @@ test("追击时挡路的是自己闲着的单位：换位过去", () => {
     enemyHp = theirs(v, "grunt")[0]?.hp ?? 0
   })
   assert.ok(enemyHp < 100)
+})
+
+test("局中改数值（D-153）：setTypeStats 改某玩家某类实体（已有的和以后造的），setStats 改单个；bot 从 stats 看到；回放记下", () => {
+  const rows = Array(5).fill(".".repeat(10))
+  const seen: { tick: number; mine: Entity[]; theirs: Entity[] }[] = []
+  const replay = play(
+    mini(rows, [["hq", 0, 0, 0], ["grunt", 0, 4, 1], ["hq", 1, 5, 1], ["grunt", 1, 8, 4]], {
+      maxTicks: 14,
+      onTick(ctx) {
+        if (ctx.tick === 2) ctx.setTypeStats(0, "grunt", { attack: { damage: 25 }, maxHp: 150, sight: 6 })
+        if (ctx.tick === 4) ctx.setStats(ctx.entities({ owner: 1, type: "grunt" })[0].id, { moveTicks: 3 })
+        if (ctx.tick === 10) ctx.setTypeStats(0, "grunt", null)
+      },
+    }),
+    (v, cmd) => {
+      if (v.tick === 3) cmd.produce(mine(v, "hq")[0], "grunt")
+      seen.push({ tick: v.tick, mine: mine(v, "grunt"), theirs: theirs(v, "grunt") })
+    },
+  )
+  const at = (t: number) => seen.find((s) => s.tick === t)!
+  // 改之前：没有 stats
+  assert.equal(at(1).mine[0].stats, undefined)
+  // 改之后：已有的那个生命上限 100 → 150，当前生命加上差值；攻击、视野在 stats 里（只列改过的项）
+  const g = at(3).mine[0]
+  assert.equal(g.maxHp, 150)
+  assert.equal(g.hp, 150)
+  assert.deepEqual(g.stats, { sight: 6, attack: { damage: 25, range: 1, cooldown: 2 } })
+  // 以后造出来的也按新数值（满血 150）
+  const later = at(8).mine.find((e) => e.id !== g.id)!
+  assert.ok(later && later.maxHp === 150 && later.hp === 150, JSON.stringify(later))
+  // 单个实体：对手的那个走得慢；只改它，不影响别的
+  assert.deepEqual(at(5).theirs[0].stats, { moveTicks: 3 })
+  // 改回原值：stats 没了，生命去掉超出的部分
+  const back = at(11).mine.find((e) => e.id === g.id)!
+  assert.ok(back.stats === undefined && back.maxHp === 100 && back.hp <= 100, JSON.stringify(back))
+  // 攻击力真的变了：贴着对手主基地的那个，伤害从 10 变成 25
+  const hq1 = replay.initial.entities.find((e) => e.type === "hq" && e.owner === 1)!
+  const hits: number[] = []
+  let last = hq1.hp
+  for (const f of replay.frames)
+    for (let i = 0; i < (f.hp ?? []).length; i += 2)
+      if (f.hp![i] === hq1.id) {
+        hits.push(last - f.hp![i + 1])
+        last = f.hp![i + 1]
+      }
+  assert.ok(hits.includes(10) && hits.includes(25), hits.join(","))
+  // 回放：st 记下改过的项，按帧还原
+  const model = new ReplayModel(replay)
+  assert.deepEqual(model.stateAt(3).ents.get(g.id)?.st, { maxHp: 150, sight: 6, attack: { damage: 25, range: 1, cooldown: 2 } })
+  assert.equal(model.stateAt(12).ents.get(g.id)?.st, undefined)
+  // 不能改的：不认识的字段、没有这项能力、取值不对
+  const bad = (patch: unknown, type = "grunt") =>
+    play(mini(rows, [["hq", 0, 0, 0], ["hq", 1, 5, 1]], { maxTicks: 3, onTick: (ctx) => ctx.setTypeStats(0, type, patch as never) }), () => {})
+  assert.throws(() => bad({ speed: 2 }), /不能改 speed/)
+  assert.throws(() => bad({ attack: { damage: 5 } }, "hq"), /不能攻击/)
+  assert.throws(() => bad({ moveTicks: 0 }), /moveTicks 要是 1～1000 的整数/)
+  assert.throws(() => bad({ attack: { reach: 3 } }), /attack 里不能改 reach/)
 })
 
 test("采集交货循环：每次交 capacity 个", () => {

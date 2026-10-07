@@ -164,7 +164,7 @@ function updateUI(force = false): void {
     else {
       const info = r.types[e.type]
       const owner = e.owner < 0 ? "中立" : `P${e.owner} ${r.players[e.owner]?.name}`
-      const hp = info?.kind === "resource" ? `储量 ${e.hp}` : `${e.hp} / ${info?.maxHp}`
+      const hp = info?.kind === "resource" ? `储量 ${e.hp}` : `${e.hp} / ${e.st?.maxHp ?? info?.maxHp}`
       $("selected").innerHTML = html`<div class="kv"><span class="muted">id</span><span>#${e.id} ${e.type}</span>
         <span class="muted">归属</span><span>${owner}</span><span class="muted">位置</span><span>(${e.x}, ${e.y})</span>
         <span class="muted">生命</span><span>${hp}</span><span class="muted">命令</span><span>${e.ord}</span>${

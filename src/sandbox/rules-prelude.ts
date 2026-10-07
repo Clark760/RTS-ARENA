@@ -52,7 +52,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
   /** 宿主省掉了和默认值一样的字段，这里补全 */
   function fill(list) {
     for (var i = 0; i < list.length; i++) {
-      var e = list[i], d = defs[e.type];
+      var e = list[i], d = e.def || defs[e.type];
       e.def = d;
       if (e.w === undefined) { e.w = d.w; e.h = d.h; }
       if (e.amount === undefined) e.amount = 0;
@@ -162,7 +162,9 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
     eliminate: function (p) { H.eliminate(p); if (cache.players) cache.players[p].alive = false; },
     orderNeutral: function (id, order) { H.orderNeutral(id, stringify(order)); entsChanged(); },
     setHp: function (id, hp) { H.setHp(id, hp); entsChanged(); },
-    setOwner: function (id, owner) { H.setOwner(id, owner); entsChanged(); }
+    setOwner: function (id, owner) { H.setOwner(id, owner); entsChanged(); },
+    setTypeStats: function (p, type, patch) { H.setTypeStats(p, type, stringify(patch === undefined ? null : patch)); entsChanged(); },
+    setStats: function (id, patch) { H.setStats(id, stringify(patch === undefined ? null : patch)); entsChanged(); }
   });
 
   function errText(e) {

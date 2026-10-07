@@ -76,6 +76,16 @@ export interface Entity {
   maxHp: number
   /** 资源点剩余量（只有资源点有） */
   amount?: number
+  /**
+   * 被规则包局中改过的数值（科技、增益之类，看规则说明），只列和 game.types 里不一样的项；没改过就没有这个字段。
+   * 算射程、视野、走多快、伤害时先看这里，没有再看 game.types[类型]。生命上限直接看 maxHp
+   */
+  stats?: {
+    moveTicks?: number
+    sight?: number
+    attack?: { damage: number; range: number; cooldown: number }
+    gather?: { amount: number; ticks: number; capacity: number }
+  }
   /** 当前命令（只有自己的实体有） */
   order?: Order
   /** 身上带的资源（只有自己的单位、且带着资源时才有） */

@@ -1,7 +1,7 @@
 // 回放记录：每 tick 和上一 tick 比较，只记变化
 import type { Order } from "../api/bot-api.ts"
-import type { EntityState, EntSnap, Frame, PlayerSnap, Snapshot } from "./types.ts"
-import type { World } from "./world.ts"
+import type { EntityState, EntSnap, Frame, PlayerSnap, Snapshot, StatDiff } from "./types.ts"
+import { statDiff, type World } from "./world.ts"
 
 export function orderText(e: EntityState): string {
   const o: Order = e.order
@@ -21,9 +21,11 @@ export function orderText(e: EntityState): string {
   }
 }
 
-function snapOf(e: EntityState): EntSnap {
+function snapOf(e: EntityState, w: World): EntSnap {
   const s: EntSnap = { id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, hp: e.def.kind === "resource" ? e.amount : e.hp, ord: orderText(e) }
   if (e.construction) s.bp = Math.floor((100 * e.construction.done) / e.construction.total)
+  const st = statDiff(e.def, w.types[e.type])
+  if (st) s.st = st
   return s
 }
 
@@ -41,7 +43,7 @@ export class Recorder {
 
   constructor(w: World) {
     w.removed.clear()
-    for (const e of w.ents.values()) this.last.set(e.id, snapOf(e))
+    for (const e of w.ents.values()) this.last.set(e.id, snapOf(e, w))
     const players = playerSnaps(w)
     this.lastPlayers = JSON.stringify(players)
     this.lastMarkers = JSON.stringify(w.markers)
@@ -58,9 +60,10 @@ export class Recorder {
     const ord: [number, string][] = []
     const bp: number[] = []
     const owner: number[] = []
+    const st: [number, StatDiff | null][] = []
     for (const e of w.ents.values()) {
       const prev = this.last.get(e.id)
-      const cur = snapOf(e)
+      const cur = snapOf(e, w)
       if (!prev) {
         spawn.push(cur)
         this.last.set(e.id, cur)
@@ -71,6 +74,7 @@ export class Recorder {
       if (prev.ord !== cur.ord) ord.push([e.id, cur.ord])
       if (prev.bp !== cur.bp) bp.push(e.id, cur.bp ?? 100)
       if (prev.owner !== cur.owner) owner.push(e.id, cur.owner)
+      if ((prev.st || cur.st) && JSON.stringify(prev.st) !== JSON.stringify(cur.st)) st.push([e.id, cur.st ?? null])
       this.last.set(e.id, cur)
     }
     const die: number[] = []
@@ -88,6 +92,7 @@ export class Recorder {
     if (ord.length) f.ord = ord
     if (bp.length) f.bp = bp
     if (owner.length) f.owner = owner
+    if (st.length) f.st = st
     const players = playerSnaps(w)
     const pj = JSON.stringify(players)
     if (pj !== this.lastPlayers) {

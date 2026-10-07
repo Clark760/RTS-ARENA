@@ -33,7 +33,7 @@ function stable(r: Replay): string {
   return JSON.stringify({ ...r, perf: null, bots: r.bots.map((b) => ({ ...b, ms: 0 })) })
 }
 
-for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "beacons", "wild-herd", "caravan-raid", "flag-run"]) {
+for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "tech", "beacons", "wild-herd", "caravan-raid", "flag-run"]) {
   test(`自带规则包「${id}」放进沙箱，回放和直接跑完全一样`, async () => {
     const native = await importRuleset(id)
     const boxed = await loadSandboxedRuleset(join(ROOT, "rulesets", id))
@@ -44,6 +44,18 @@ for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "beaco
     assert.equal(stable(await play(boxed)), stable(await play(native)))
   })
 }
+
+test("科技放进沙箱：科技建筑建好、加成生效（局中改数值）的一局，回放和直接跑完全一样", async () => {
+  const native = await importRuleset("tech")
+  const boxed = await loadSandboxedRuleset(join(ROOT, "rulesets", "tech"))
+  const bot = join(ROOT, "rulesets", "tech", "bots", "scholar.ts")
+  const play = async (rules: Ruleset) => runMatch({ ruleset: { ...rules, maxTicks: 2500 }, seed: 3, bots: [await sandboxBot(bot, 0, rules), await sandboxBot(bot, 1, rules)] })
+  const a = await play(native)
+  // 真的改了数值：回放里有 st，战况里有"建好了"
+  assert.ok(a.frames.some((f) => f.st?.length), "回放里应该有改过数值的实体")
+  assert.ok(a.frames.some((f) => f.notes?.some((n) => /建好了/.test(n.text))), "应该有科技建好的事件")
+  assert.equal(stable(await play(boxed)), stable(a))
+})
 
 test("混战三家放进沙箱：出局、清掉出局者的实体、名次都和直接跑一样", async () => {
   const native = await importRuleset("melee")
@@ -82,7 +94,7 @@ test("ctx.entities 的筛选：沙箱里不管有没有全量快照，结果都�
 })
 
 test("自带规则包的定义都能通过沙箱规则包的格式检查", async () => {
-  for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "beacons", "wild-herd", "caravan-raid", "flag-run"]) {
+  for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "tech", "beacons", "wild-herd", "caravan-raid", "flag-run"]) {
     const r = await importRuleset(id)
     const fns = ["setup", "onTick", "objectives", "result", "timeUp"].filter((f) => typeof (r as unknown as Record<string, unknown>)[f] === "function")
     assert.deepEqual(checkRulesetData(JSON.parse(JSON.stringify(r)), fns), [], id)
@@ -259,6 +271,22 @@ test("规则包改血、改归属：bot 看到实体换了主人；生命改到 
   assert.equal(model.stateAt(1).ents.get(creep.id)?.owner, -1)
   assert.equal(model.stateAt(5).ents.get(creep.id)?.owner, 1)
   assert.match(buildReport(replay), /中立的 creep #\d+ \(5, 5\) 换主人，归了 P1/)
+})
+
+test("沙箱规则包局中改数值（D-153）：改完 ctx 里实体的 def 就是新数值，回放和直接跑一样", async () => {
+  const dir = rules({
+    types: CREEP_TYPES,
+    setup: `ctx.spawn("creep", 0, 3, 3); ctx.spawn("creep", 1, 6, 6)`,
+    onTick: `if (ctx.tick === 2) ctx.setTypeStats(0, "creep", { maxHp: 45, attack: { range: 2 } })
+      if (ctx.tick === 3) ctx.setStats(ctx.entities({ owner: 1, type: "creep" })[0].id, { sight: 1 })
+      const a = ctx.entities({ owner: 0, type: "creep" })[0], b = ctx.entities({ owner: 1, type: "creep" })[0]
+      ctx.setStatus(a.def.maxHp + "/" + a.hp + " 射程 " + a.def.attack.range + "，对面视野 " + b.def.sight)`,
+  })
+  const replay = await play(dir)
+  const status = (t: number) => [...replay.frames].filter((f) => f.t <= t && f.status !== undefined).at(-1)?.status
+  assert.equal(status(1), "30/30 射程 1，对面视野 3")
+  assert.equal(status(4), "45/45 射程 2，对面视野 1")
+  await assert.rejects(play(rules({ types: CREEP_TYPES, onTick: `ctx.setTypeStats(0, "hq", { sight: -1 })` })), /sight 要是 0～50 的整数/)
 })
 
 test("规则包的 setup 里也能读局面、用 spawnNear 找空位", async () => {

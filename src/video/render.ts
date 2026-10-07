@@ -217,11 +217,13 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
     if (t) ents.push(e.x, e.y, t.w ?? 1, t.h ?? 1, e.owner, typeNames.indexOf(e.type))
   }
   const order = { building: 0, unit: 1, resource: 2 } as Record<string, number>
-  const legend = typeNames
-    .map((k) => ({ k, t: replay.types[k] }))
-    .filter((x) => x.t.look?.label || x.t.kind === "resource")
+  // 最多 12 项（两栏 6 行）；放不下时先留单位和资源，建筑按定义的顺序从后往前删（科技规则包有 12 种）
+  const cand = typeNames.map((k) => ({ k, t: replay.types[k] })).filter((x) => x.t.look?.label || x.t.kind === "resource")
+  const keep = { unit: 0, resource: 1, building: 2 } as Record<string, number>
+  const kept = new Set([...cand].sort((a, b) => (keep[a.t.kind] ?? 3) - (keep[b.t.kind] ?? 3)).slice(0, 12).map((x) => x.k))
+  const legend = cand
+    .filter((x) => kept.has(x.k))
     .sort((a, b) => (order[a.t.kind] ?? 3) - (order[b.t.kind] ?? 3))
-    .slice(0, 10)
     .map(({ k, t }) => ({ shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, kind: t.kind, name: typeName(replay, k), detail: typeDetail(t, specs?.[k]) }))
   const chars = lines.reduce((a, l) => a + [...l].length, 0)
   return {
@@ -337,7 +339,8 @@ function replayScene(replay: Replay, no: number, title: string, commentary: stri
     for (const e of state.ents.values()) {
       const ty = replay.types[e.type]
       if (!ty) continue
-      const hp = ty.kind === "resource" || !ty.maxHp ? 100 : Math.max(0, Math.min(100, Math.round((100 * e.hp) / ty.maxHp)))
+      const max = e.st?.maxHp ?? ty.maxHp
+      const hp = ty.kind === "resource" || !max ? 100 : Math.max(0, Math.min(100, Math.round((100 * e.hp) / max)))
       ents.push(e.x, e.y, ty.w, ty.h, e.owner, typeNames.indexOf(e.type), hp, e.bp ?? 100)
     }
     const counts = seats.map((_, p) => {

@@ -95,6 +95,12 @@ export function applyFrame(s: State, f: Frame): Delta {
     d.owned.push({ id: e.id, from: e.owner })
     e.owner = ow[i + 1]
   }
+  for (const [id, st] of f.st ?? []) {
+    const e = s.ents.get(id)
+    if (!e) continue
+    if (st) e.st = st
+    else delete e.st
+  }
   const bp = f.bp ?? []
   for (let i = 0; i < bp.length; i += 2) {
     const e = s.ents.get(bp[i])

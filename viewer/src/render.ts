@@ -331,7 +331,7 @@ export class Renderer {
   private drawBar(v: EntView, e: EntSnap): void {
     const info = this.replay.types[e.type]
     const g = v.bar.clear()
-    const max = info?.kind === "resource" ? null : info?.maxHp
+    const max = info?.kind === "resource" ? null : (e.st?.maxHp ?? info?.maxHp)
     const w = v.w * TILE - 2
     // 建造进度：底边一条蓝色进度条
     if (e.bp !== undefined) {

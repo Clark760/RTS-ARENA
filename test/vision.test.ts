@@ -66,6 +66,22 @@ test("回放视角：两人局，播放器算出的可见实体和 bot 看到的
   compare(replay, seen)
 })
 
+test("回放视角：规则包局中改了视野（setTypeStats、setStats），播放器按回放里记的新视野算，和 bot 看到的一样", () => {
+  const rules: Ruleset = {
+    ...annihilation,
+    onTick(ctx) {
+      annihilation.onTick?.(ctx)
+      if (ctx.tick === 200) ctx.setTypeStats(0, "soldier", { sight: 10 })
+      if (ctx.tick === 300) ctx.setTypeStats(1, "worker", { sight: 1 })
+      if (ctx.tick === 400) for (const e of ctx.entities({ owner: 1, type: "soldier" })) ctx.setStats(e.id, { sight: 9 })
+      if (ctx.tick === 900) ctx.setTypeStats(0, "soldier", null)
+    },
+  }
+  const { replay, seen } = record(rules, 2, undefined, (v) => (v.objectives as { enemyBases: { x: number; y: number }[] }).enemyBases[0])
+  assert.ok(replay.frames.some((f) => f.st?.length))
+  compare(replay, seen)
+})
+
 test("回放视角：2v2 分队，盟友共享视野", () => {
   const { replay, seen } = record(melee, 4, [0, 0, 1, 1], () => ({ x: 32, y: 32 }))
   compare(replay, seen)
