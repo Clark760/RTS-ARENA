@@ -336,10 +336,12 @@ export async function writeRulesTemplate(dir: string, builtin: string[]): Promis
   writeFileSync(join(dir, "bots", "greedy.ts"), GREEDY)
   writeFileSync(join(dir, ".gitignore"), "replays/\n")
   await writePlatformFiles(dir)
+  // 命令里的规则包要写成路径（带 ./ 或斜杠），不然会被当成平台自带规则包的名字
+  const ref = /[\\/]/.test(dir) || dir.startsWith(".") ? dir : `./${dir}`
   console.log(`已在 ${dir} 建好示例规则包「采金赛」（id：${id}）。先读 RULESET.md，改 index.ts、objectives.ts、RULES.md，然后：`)
-  console.log(`  rts-arena check ${dir}                       检查规则包`)
-  console.log(`  rts-arena run ${dir} baseline baseline       用基准 bot 打一局`)
-  console.log(`  rts-arena league ${dir} baseline rush greedy  参考 bot 循环对打（bots/ 里的都会列进 PROMPT.md，改玩法后照着写几个不同打法的）`)
-  console.log(`  rts-arena init ${dir} <bot 目录>             给它建一个 bot 目录`)
+  console.log(`  rts-arena check ${ref}                       检查规则包`)
+  console.log(`  rts-arena run ${ref} baseline baseline       用基准 bot 打一局`)
+  console.log(`  rts-arena league ${ref} baseline rush greedy  参考 bot 循环对打（bots/ 里的都会列进 PROMPT.md，改玩法后照着写几个不同打法的）`)
+  console.log(`  rts-arena init ${ref} <bot 目录>             给它建一个 bot 目录`)
   console.log(`接口的字段和函数签名在 ${dir}/api/ 里（ruleset.ts、standard.ts）。平台升级后对这个目录再运行一次 new-rules 刷新它们`)
 }
