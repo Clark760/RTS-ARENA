@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
 import { finalScores } from "../cli/highlights.ts"
 import type { Replay } from "../core/types.ts"
+import { PKG_ROOT } from "../paths.ts"
 
 /** 联赛汇总文件（*.series.json）里视频要用到的部分 */
 export interface SeriesFile {
@@ -312,13 +313,17 @@ export function readSeries(file: string): SeriesFile {
   return s
 }
 
-/** 汇总里记的 bot 文件是相对跑联赛时的目录：先按当前目录找，再按汇总文件所在目录的上一层找 */
+/**
+ * 汇总里记的 bot 文件是相对跑联赛时的目录：先按当前目录找，再按汇总文件所在目录的上一层、平台目录（自带的参考 bot）找，
+ * 都没有就用当前目录 bots/ 里的同名文件（在 video-init 建的视频目录里渲染时，那里有选手代码的副本）
+ */
 export function resolveBotFile(file: string, seriesFile: string): string | null {
-  for (const base of [process.cwd(), dirname(dirname(resolve(seriesFile))), dirname(resolve(seriesFile))]) {
+  for (const base of [process.cwd(), dirname(dirname(resolve(seriesFile))), dirname(resolve(seriesFile)), PKG_ROOT]) {
     const p = resolve(base, file)
     if (existsSync(p)) return p
   }
-  return null
+  const copy = resolve("bots", basename(file.split("\\").join("/")))
+  return existsSync(copy) ? copy : null
 }
 
 export function videoBrief(seriesFile: string): VideoBrief {

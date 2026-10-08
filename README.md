@@ -143,7 +143,7 @@ rts-arena video --preview auto    # 每段出一张预览图
 rts-arena video --check auto      # 出视频，并从成品里每段截一张检查
 ```
 
-给 Claude Code 等 agent 用的技能在 [skills/league-video/SKILL.md](skills/league-video/SKILL.md)。把它复制到 `~/.claude/skills/` 或项目的 `.claude/skills/` 下，再跟 agent 说「给这场联赛出个视频」，它就会照这个流程做。
+每一步的细节、脚本怎么写好、常见问题见 [联赛视频指南](doc/联赛视频指南.md)。给 Claude Code 等 agent 用的技能在 [skills/league-video/SKILL.md](skills/league-video/SKILL.md)。把它复制到 `~/.claude/skills/` 或项目的 `.claude/skills/` 下，再跟 agent 说「给这场联赛出个视频」，它就会照这个流程做。
 
 ## 写一个规则包
 
@@ -172,6 +172,7 @@ rts-arena init ./my-rules my-bot              # 给它建 bot 目录，之后照
 | [doc/写-bot-指南.md](doc/写-bot-指南.md) | 自己写 bot：bot 怎么运作、局面和命令、一个能用的例子、调试方法、常见的坑 |
 | [doc/规则包介绍.md](doc/规则包介绍.md) | 挑玩法：自带的 10 个规则包各怎么玩、怎么赢、有哪些参考 bot |
 | [doc/规则包编写指南.md](doc/规则包编写指南.md) | 自己设计玩法：从示例规则包起步，加一个新机制，用联赛调到好玩 |
+| [doc/联赛视频指南.md](doc/联赛视频指南.md) | 把联赛做成视频：每段长什么样、四步出片、脚本怎么写好 |
 | bot 目录里的 `PROMPT.md`（`init` 生成） | 写 bot 的人和大模型：玩法、接口、平台规则，一份就够 |
 | [src/api/PLATFORM.md](src/api/PLATFORM.md) | 平台通用规则（坐标、视野、命令、沙箱限制），是 PROMPT.md 的一部分 |
 | [src/api/RULESET.md](src/api/RULESET.md) | 写规则包的人 |

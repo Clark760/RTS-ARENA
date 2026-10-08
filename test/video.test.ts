@@ -1,11 +1,11 @@
 // 联赛视频：素材包（代码风格指标、成绩）、脚本检查、场景编排；本机有 Chrome / Edge 时再真的渲染一段
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { basename, join } from "node:path"
+import { basename, join, resolve } from "node:path"
 import { after, test } from "node:test"
-import { checkScript, codeFacts, factTags, gameScores, readSeries, scriptWarnings, videoBrief, type VideoScript } from "../src/video/brief.ts"
+import { checkScript, codeFacts, factTags, gameScores, readSeries, resolveBotFile, scriptWarnings, videoBrief, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
 import { buildScenes, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
 import type { Replay } from "../src/core/types.ts"
@@ -198,6 +198,21 @@ test("回放变速：tick 随帧单调往前、首尾对齐；打起来的地方
   if (fast.length && slow.length) {
     const avg = (xs: number[]) => xs.reduce((a, i) => a + step(i), 0) / xs.length
     assert.ok(avg(fast) > avg(slow) * 1.5)
+  }
+})
+
+test("选手代码：联赛记的路径找不到时，再找平台目录（自带的参考 bot）和当前目录 bots/ 里的副本", () => {
+  const cwd = process.cwd()
+  const dir = mkdtempSync(join(TMP, "ws-"))
+  process.chdir(dir)
+  try {
+    assert.equal(resolveBotFile("rulesets/tech/bots/scholar.ts", seriesFile), resolve(ROOT, "rulesets", "tech", "bots", "scholar.ts"))
+    assert.equal(resolveBotFile("elsewhere\\mine.ts", seriesFile), null)
+    mkdirSync("bots")
+    writeFileSync(join("bots", "mine.ts"), "// mine\n")
+    assert.equal(resolveBotFile("elsewhere\\mine.ts", seriesFile), resolve(dir, "bots", "mine.ts"))
+  } finally {
+    process.chdir(cwd)
   }
 })
 
