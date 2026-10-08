@@ -25,6 +25,7 @@
     "test": "node --test \"test/**/*.test.ts\"",
     "bench": "node src/cli/bench.ts",
     "balance": "node src/cli/balance.ts",
+    "wiki": "node src/cli/wiki.ts",
     "viewer": "vite viewer",
     "viewer:build": "vite build viewer",
     "build": "tsc -p tsconfig.build.json && vite build viewer --outDir ../dist/viewer --emptyOutDir",
