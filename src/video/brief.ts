@@ -174,7 +174,7 @@ export const PLAYER_PAGE_MIN = 100
 /** 规则页最长 12 秒，大约读得完 130 字 */
 export const RULES_PAGE_CHARS = 130
 
-export const SCRIPT_LIMITS = { rulesLine: 45, rulesLines: 4, title: 24, userText: 120, theme: 60, displayName: 28, byline: 40, tagline: 30, introLine: 50, introLines: 4, hlTitle: 24, commentary: 80, outro: 60, highlights: 5 }
+export const SCRIPT_LIMITS = { rulesLine: 45, rulesLines: 4, title: 24, userText: 120, theme: 60, displayName: 28, byline: 40, tagline: 30, introLine: 50, introLines: 4, hlTitle: 24, commentary: 80, outro: 60, highlights: 10 }
 
 /** 检查脚本，返回所有问题（空数组是没问题） */
 export function checkScript(s: unknown, series: SeriesFile): string[] {
@@ -233,6 +233,41 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
  * 规则介绍里提到别的规则包（otherRulesets 是别的规则包的名字）：观众不一定玩过那个规则包（D-155）。
  * 脚本格式不对时返回空（格式问题交给 checkScript）
  */
+/**
+ * 精彩对局的标题、解说提到了不在这局的选手（D-171：烽火台视频有一局标题写成「哈基米没输给 GPT 的那局」，那局其实是大肥鱼对哈基米，
+ * 标题是从别的视频的脚本里留下来的）。按联赛名字和脚本里的显示名找；提到的名字同时也是这局某个选手名字的一部分时不算
+ */
+export function highlightPlayerWarnings(s: unknown, series: SeriesFile): string[] {
+  if (!s || typeof s !== "object") return []
+  const o = s as VideoScript
+  if (!Array.isArray(o.highlights)) return []
+  const shown = new Map<string, string[]>()
+  for (const p of series.participants) {
+    const sp = Array.isArray(o.players) ? o.players.find((x) => x?.name === p.name) : undefined
+    // 全名、显示名，再加常用的简称：显示名的第一个词（「GPT 6.1 sol」→ GPT）、名字开头连续的大写字母（GPTbot → GPT）
+    const short = [sp?.displayName?.trim().split(/\s+/)[0], /^[A-Z]{2,}/.exec(p.name)?.[0], /^[A-Z]{2,}/.exec(sp?.displayName ?? "")?.[0]]
+    shown.set(p.name, [...new Set([p.name, sp?.displayName, ...short])].filter((x): x is string => typeof x === "string" && x.trim().length >= 2))
+  }
+  const out: string[] = []
+  o.highlights.forEach((h, i) => {
+    const g = series.results.find((r) => r.index === h?.index)
+    if (!g) return
+    const inGame = [...new Set(g.names)].flatMap((n) => shown.get(n) ?? [n])
+    for (const [field, text] of [["title", h.title], ["commentary", h.commentary]] as const) {
+      if (typeof text !== "string") continue
+      for (const p of series.participants) {
+        if (g.names.includes(p.name)) continue
+        const hit = (shown.get(p.name) ?? []).find((x) => text.includes(x) && !inGame.some((y) => y.includes(x)))
+        if (hit)
+          out.push(
+            `highlights[${i}].${field} 提到了「${hit}」，可第 ${g.index} 局是 ${[...new Set(g.names)].map((n) => shown.get(n)?.[1] ?? n).join(" 对 ")}，没有它：每局的标题和解说要照这一局写（别从别的视频的脚本里抄）`,
+          )
+      }
+    }
+  })
+  return out
+}
+
 export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string[] {
   if (!s || typeof s !== "object") return []
   const o = s as VideoScript
@@ -373,7 +408,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
       "文件名常见的写法是 \"模型名-编程工具\"，比如 \"ModelX2.0-ToolY\" 是 ToolY 里的 ModelX 2.0（只是格式的例子）；拆不开、只是外号时就照原样用，不要猜是哪家模型；不知道作者就不写 byline",
       "语气跟着用户的原话走（调侃就调侃，正式就正式），但不贬低任何一方；成绩差的写它的特点和输在哪",
       "每个选手 1～4 句介绍（建议 3～4 句，tagline 加 intro 一共 120～170 字），每句不超过 50 字；tagline 不超过 30 字；byline 会出现在片尾的选手名单里",
-      "精彩对局最多 5 局，解说一句话（不超过 80 字），别重复标题卡上自动列出的看点（highlights 里的 reasons）；index 用联赛的局号",
+      "精彩对局最多 10 局（用户说了要几局就挑几局），每局的标题和解说照这一局写，解说一句话（不超过 80 字），别重复标题卡上自动列出的看点（highlights 里的 reasons）；index 用联赛的局号",
       "平台署名（片头、片尾的 RTS Arena）由渲染器固定加上，不用写进脚本，也去不掉",
     ],
   }

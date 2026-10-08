@@ -6,10 +6,10 @@ import { basename, dirname, join, resolve } from "node:path"
 import { applyFrame, ReplayModel, type State } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
 import { findBrowser, launchBrowser } from "./browser.ts"
-import { checkScript, codeFacts, factTags, gameScores, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
+import { checkScript, codeFacts, factTags, gameScores, highlightPlayerWarnings, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
-import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
+import { fighterTest, groupBattles, isRout, MIN_BATTLE } from "../cli/battles.ts"
 import { importRuleset, listRulesets } from "../cli/catalog.ts"
 
 /** 联赛没挑中的局：现场从回放算看点（不算爆冷） */
@@ -248,53 +248,90 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
   }
 }
 
+/** 战斗前后多放几 tick：交火往往在第一个死亡之前就开始了 */
+const BATTLE_LEAD = 40
+const BATTLE_TAIL = 20
+/** 没动静的地方一共最多放几秒（快进至少 4 倍速） */
+const QUIET_SECONDS = 10
+const QUIET_MIN_SPEED = 4
+
 /**
- * 回放每帧对应的 tick：打得热闹的时候慢放，没什么动静的时候快进（最多差 4 倍）。
- * 按每一小段的攻击和死亡数算"热闹程度"，前后平滑一下免得忽快忽慢
+ * 回放里的战斗时段（D-171）：和战报「战斗」一节同一套切分（死 3 个以上的算一场），从第一个死亡前 BATTLE_LEAD tick
+ * 到最后一个死亡后 BATTLE_TAIL tick，挨着的合并
  */
-export function pacing(replay: Replay, playFrames: number): { tickOf: (i: number) => number; fast: (i: number) => boolean } {
+export function battleWindows(replay: Replay): [number, number][] {
   const T = Math.max(1, replay.result.tick)
-  const B = Math.max(5, Math.round(T / 400))
-  const nb = Math.ceil(T / B)
-  const act = new Array<number>(nb).fill(0)
-  replay.frames.forEach((f, k) => {
-    if (k >= T) return
-    act[Math.floor(k / B)] += (f.shots?.length ?? 0) / 2 + 4 * (f.die?.length ?? 0)
-  })
-  const R = 3
-  const smooth = act.map((_, b) => {
-    let s = 0
-    let n = 0
-    for (let j = Math.max(0, b - R); j <= Math.min(nb - 1, b + R); j++) (s += act[j]), n++
-    return s / n
-  })
-  const busy = smooth.filter((x) => x > 0).sort((a, b) => a - b)
-  const ref = busy.length ? busy[Math.floor(busy.length * 0.6)] : 0
-  const weight = smooth.map((x) => (ref > 0 ? 1 + 3 * Math.min(1, x / ref) : 1))
-  const cum = [0]
-  weight.forEach((wt, b) => cum.push(cum[b] + wt * (Math.min(T, (b + 1) * B) - b * B)))
-  const total = cum[nb]
-  const varies = Math.max(...weight) >= 2 * Math.min(...weight)
-  const bucketAt = (i: number) => {
-    const u = (Math.min(i, playFrames - 1) / Math.max(1, playFrames - 1)) * total
-    let b = 0
-    while (b < nb - 1 && cum[b + 1] <= u) b++
-    return { b, u }
+  const s = new ReplayModel(replay).initialState()
+  const deaths: { t: number; x: number; y: number }[] = []
+  for (const f of replay.frames) {
+    const removed = new Set(f.removed ?? [])
+    for (const id of f.die ?? []) {
+      const e = s.ents.get(id)
+      if (!e || removed.has(id) || replay.types[e.type]?.kind === "resource") continue
+      deaths.push({ t: f.t, x: e.x, y: e.y })
+    }
+    applyFrame(s, f)
+  }
+  const out: [number, number][] = []
+  const wins = groupBattles(deaths)
+    .filter((b) => b.length >= MIN_BATTLE)
+    .map((b): [number, number] => [Math.max(0, b[0].t - BATTLE_LEAD), Math.min(T, b[b.length - 1].t + BATTLE_TAIL)])
+    .sort((a, b) => a[0] - b[0])
+  for (const w of wins) {
+    const last = out[out.length - 1]
+    if (last && w[0] <= last[1]) last[1] = Math.max(last[1], w[1])
+    else out.push([w[0], w[1]])
+  }
+  return out
+}
+
+/**
+ * 回放每帧对应的 tick（D-171，用户定：战斗时放一倍速）：战斗时段按一倍速实时播放（1 秒 = 规则包的 tickRate 个 tick），
+ * 其余时间快进，加起来最多 QUIET_SECONDS 秒、至少 QUIET_MIN_SPEED 倍速。返回一共放多少帧
+ */
+export function pacing(replay: Replay, fps: number): { playFrames: number; tickOf: (i: number) => number; fast: (i: number) => boolean } {
+  const T = Math.max(1, replay.result.tick)
+  const rate = Math.max(1, replay.tickRate || 10)
+  const battles = battleWindows(replay)
+  const battleTicks = battles.reduce((a, [x, y]) => a + (y - x), 0)
+  const quietTicks = T - battleTicks
+  const quietSpeed = Math.max(QUIET_MIN_SPEED, quietTicks / (rate * QUIET_SECONDS))
+  // 一段一段：从哪个 tick 到哪个 tick、每 tick 几帧、是不是快进
+  const segs: { t0: number; t1: number; perTick: number; fast: boolean; f0: number }[] = []
+  let t = 0
+  let f = 0
+  const add = (t1: number, fastSeg: boolean) => {
+    if (t1 <= t) return
+    const perTick = fastSeg ? fps / (rate * quietSpeed) : fps / rate
+    segs.push({ t0: t, t1, perTick, fast: fastSeg, f0: f })
+    f += (t1 - t) * perTick
+    t = t1
+  }
+  for (const [x, y] of battles) {
+    add(x, true)
+    add(y, false)
+  }
+  add(T, true)
+  const playFrames = Math.max(2, Math.round(f))
+  const segAt = (i: number) => {
+    let k = 0
+    while (k < segs.length - 1 && segs[k + 1].f0 <= i) k++
+    return segs[k]
   }
   return {
+    playFrames,
     tickOf: (i) => {
       if (i >= playFrames - 1) return T
-      const { b, u } = bucketAt(i)
-      return Math.min(T, Math.round(b * B + (u - cum[b]) / weight[b]))
+      const g = segAt(i)
+      return Math.min(T, Math.max(0, Math.floor(g.t0 + (i - g.f0) / g.perTick)))
     },
-    fast: (i) => varies && weight[bucketAt(i).b] < 1.6,
+    fast: (i) => segAt(Math.min(i, playFrames - 1)).fast,
   }
 }
 
-/** 回放场景：整局压缩成 10～20 秒（打起来慢放、没动静快进），最后定格 1.5 秒显示结果 */
+/** 回放场景：战斗按一倍速实时放、没动静的地方快进（D-171），最后定格 1.5 秒显示结果 */
 function replayScene(replay: Replay, no: number, title: string, commentary: string | null, seats: { name: string; color: string }[], result: string, fps: number): Omit<Scene, "label"> {
   const T = replay.result.tick
-  const playFrames = sec(fps, Math.min(20, Math.max(10, T / 160)))
   const hold = sec(fps, 1.5)
   const typeNames = Object.keys(replay.types)
   const types = typeNames.map((name) => {
@@ -302,7 +339,8 @@ function replayScene(replay: Replay, no: number, title: string, commentary: stri
     return { name, kind: t.kind, shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, worker: t.worker === true }
   })
   const eventsAt = replayEvents(replay, seats)
-  const pace = pacing(replay, playFrames)
+  const pace = pacing(replay, fps)
+  const playFrames = pace.playFrames
   const model = new ReplayModel(replay)
   let state: State = model.initialState()
   const tickOf = (i: number) => (i >= playFrames ? T : pace.tickOf(i))
@@ -494,7 +532,7 @@ function autoPreview(scenes: Scene[], fps: number): number[] {
 export function lintScript(seriesFile: string, script: VideoScript, fps = 30, otherRulesets: string[] = []): { errors: string[]; warnings: string[]; counts: string[]; timeline: TimelineItem[] } {
   const series = readSeries(seriesFile)
   const errors = checkScript(script, series)
-  const warnings = scriptWarnings(script, otherRulesets)
+  const warnings = [...scriptWarnings(script, otherRulesets), ...highlightPlayerWarnings(script, readSeries(seriesFile))]
   const L = SCRIPT_LIMITS
   const n = (s?: string) => [...(s ?? "")].length
   const counts: string[] = []

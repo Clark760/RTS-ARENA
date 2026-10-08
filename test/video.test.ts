@@ -5,9 +5,9 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { after, test } from "node:test"
-import { checkScript, codeFacts, factTags, gameScores, readSeries, resolveBotFile, scriptWarnings, videoBrief, type VideoScript } from "../src/video/brief.ts"
+import { checkScript, codeFacts, factTags, gameScores, highlightPlayerWarnings, readSeries, resolveBotFile, scriptWarnings, videoBrief, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
-import { buildScenes, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
+import { battleWindows, buildScenes, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
 import type { Replay } from "../src/core/types.ts"
 
 const ROOT = join(import.meta.dirname, "..")
@@ -84,6 +84,22 @@ test("联赛汇总记下每局比分；全联赛之最（最快、最久、比�
   const fastest = [...series.results].filter((r) => r.winners.length).sort((a, b) => a.tick - b.tick || a.index - b.index)[0]
   assert.match(tags.get(fastest.index)!.join("；"), /全联赛结束得最快的胜局（\d+ tick）/)
   assert.ok([...tags.values()].flat().some((t) => /比分最接近/.test(t)))
+})
+
+test("脚本提醒（D-171）：精彩对局的标题、解说提到了不在这局的选手（按全名、显示名、简称找）", () => {
+  const series = {
+    participants: [{ name: "GPTbot" }, { name: "大肥鱼" }, { name: "哈基米" }],
+    results: [{ index: 109, names: ["大肥鱼", "哈基米"] }],
+  } as unknown as Parameters<typeof highlightPlayerWarnings>[1]
+  const script = {
+    players: [{ name: "GPTbot", displayName: "GPT 6.1 sol" }, { name: "大肥鱼" }, { name: "哈基米" }],
+    highlights: [{ index: 109, title: "哈基米没输给 GPT 的那局", commentary: "大肥鱼先清掉中央守卫" }],
+  }
+  const w = highlightPlayerWarnings(script, series)
+  assert.equal(w.length, 1)
+  assert.match(w[0], /highlights\[0\]\.title 提到了「GPT」，可第 109 局是 大肥鱼 对 哈基米/)
+  // 照这局写的不提醒
+  assert.deepEqual(highlightPlayerWarnings({ ...script, highlights: [{ index: 109, title: "大肥鱼翻盘", commentary: "哈基米先手" }] }, series), [])
 })
 
 test("脚本提醒：粗体字段里的「一」像破折号，常规字重的介绍不管", () => {
@@ -181,24 +197,30 @@ test("平台拼的文字：中文名前后的空格去掉，英文名的留着",
   assert.equal(tidy("大肥鱼 获胜"), "大肥鱼获胜")
 })
 
-test("回放变速：tick 随帧单调往前、首尾对齐；打起来的地方比没动静的地方放得慢", () => {
+test("回放变速（D-171）：tick 随帧单调往前、首尾对齐；战斗时段按一倍速（每秒 tickRate 个 tick），其余快进至少 4 倍", () => {
   const series = readSeries(seriesFile)
   const g = [...series.results].sort((a, b) => b.tick - a.tick)[0]
   const replay = JSON.parse(readFileSync(join(TMP, "lg", g.replay), "utf8")) as Replay
-  const n = 200
-  const p = pacing(replay, n)
+  const fps = 30
+  const p = pacing(replay, fps)
+  const n = p.playFrames
   const ticks = Array.from({ length: n }, (_, i) => p.tickOf(i))
   assert.equal(ticks[0], 0)
   assert.equal(ticks[n - 1], replay.result.tick)
   assert.ok(ticks.every((t, i) => i === 0 || t >= ticks[i - 1]))
-  // 每帧推进的 tick：快进的帧比不快进的帧多
-  const step = (i: number) => ticks[i + 1] - ticks[i]
-  const fast = ticks.slice(0, -1).map((_, i) => i).filter((i) => p.fast(i))
-  const slow = ticks.slice(0, -1).map((_, i) => i).filter((i) => !p.fast(i))
-  if (fast.length && slow.length) {
-    const avg = (xs: number[]) => xs.reduce((a, i) => a + step(i), 0) / xs.length
-    assert.ok(avg(fast) > avg(slow) * 1.5)
+  const wins = battleWindows(replay)
+  const battleTicks = wins.reduce((a, [x, y]) => a + (y - x), 0)
+  const rate = replay.tickRate
+  // 战斗一共放 battleTicks / rate 秒，其余最多 10 秒
+  assert.ok(n >= (battleTicks / rate) * fps - 2 && n <= (battleTicks / rate) * fps + 10 * fps + 2, `${n} 帧`)
+  // 战斗中间的帧：一秒正好推进 rate 个 tick；快进的帧推进得多
+  for (const [x, y] of wins) {
+    const inside = ticks.map((t, i) => i).filter((i) => ticks[i] > x + 1 && ticks[i + fps] !== undefined && ticks[i + fps] < y - 1)
+    for (const i of inside.slice(0, 5)) assert.ok(Math.abs(ticks[i + fps] - ticks[i] - rate) <= 1, `第 ${i} 帧起一秒推进了 ${ticks[i + fps] - ticks[i]} tick`)
+    for (const i of inside) assert.equal(p.fast(i), false)
   }
+  const fast = ticks.slice(0, -1).map((_, i) => i).filter((i) => p.fast(i))
+  if (fast.length > fps) assert.ok(ticks[fast[0] + fps] - ticks[fast[0]] >= rate * 4 - 1)
 })
 
 test("选手代码：联赛记的路径找不到时，再找平台目录（自带的参考 bot）和当前目录 bots/ 里的副本", () => {
