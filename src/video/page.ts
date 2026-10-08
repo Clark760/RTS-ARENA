@@ -853,11 +853,24 @@ export function installVideoPage(): void {
   w.__frames = async (items: [number, Any | null][]) => {
     for (const [i, f] of items) {
       draw(f, i)
-      const vf = new VideoFrame(canvas, { timestamp: Math.round((frameNo * 1e6) / fps), duration: Math.round(1e6 / fps) })
+      let vf: VideoFrame
+      try {
+        vf = new VideoFrame(canvas, { timestamp: Math.round((frameNo * 1e6) / fps), duration: Math.round(1e6 / fps) })
+      } catch (e) {
+        // 显卡进程崩了画布就失效（Invalid source state）：多半是同时开着两个渲染抢显卡
+        throw new Error(`第 ${frameNo} 帧取不到画面（${e}）：多半是显卡进程崩了，或者同时开着两个渲染抢显卡；关掉别的渲染再重跑一次`)
+      }
       encoder!.encode(vf, { keyFrame: frameNo % (fps * 2) === 0 })
       vf.close()
       frameNo++
-      if (encoder!.encodeQueueSize > 30) await new Promise((r) => setTimeout(r, 0))
+      // 编码器跟不上就等它消化（D-173：原来只让出一次，帧全堆在显卡进程里，提交内存涨到 50 GB 把系统挤崩）
+      while (encoder!.encodeQueueSize > 8) {
+        await new Promise((r) => {
+          encoder!.addEventListener("dequeue", r, { once: true })
+          setTimeout(r, 50)
+        })
+        if (w.__encodeError) throw new Error(w.__encodeError)
+      }
     }
     if (w.__encodeError) throw new Error(w.__encodeError)
     return frameNo
@@ -919,6 +932,7 @@ export function installVideoPage(): void {
     const v = document.createElement("video")
     v.muted = true
     v.src = url
+    document.body.appendChild(v)
     await new Promise<void>((ok, bad) => {
       v.onloadeddata = () => ok()
       v.onerror = () => bad(new Error("浏览器解不开生成的 MP4"))
@@ -929,8 +943,22 @@ export function installVideoPage(): void {
     c2.height = canvas.height
     const g2 = c2.getContext("2d")!
     for (const sec of secs) {
+      // 光等 seeked 不够：解码器可能还没把这一帧交出来，截到的是上一张（D-173：第一张全白、第二张是片头）。
+      // 两个都等到再截；requestVideoFrameCallback 万一不来，1 秒后也截
       await new Promise<void>((ok) => {
-        v.onseeked = () => ok()
+        let n = 0
+        const done = () => {
+          if (++n === 2) ok()
+        }
+        let framed = false
+        const frame = () => {
+          if (framed) return
+          framed = true
+          done()
+        }
+        v.requestVideoFrameCallback(frame)
+        setTimeout(frame, 1000)
+        v.onseeked = () => done()
         v.currentTime = Math.min(sec, Math.max(0, v.duration - 0.05))
       })
       g2.drawImage(v, 0, 0)

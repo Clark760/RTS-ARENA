@@ -24,6 +24,9 @@ const CANDIDATES = [
   "/usr/bin/microsoft-edge",
 ]
 
+/** 一次页面调用最多等多久（一批 10 帧不到 1 秒，收尾解码检查也就几十秒） */
+const EVAL_TIMEOUT = 5 * 60_000
+
 export function findBrowser(explicit?: string): string | null {
   for (const p of [explicit, ...CANDIDATES]) if (p && existsSync(p)) return p
   return null
@@ -82,18 +85,34 @@ export async function launchBrowser(executable: string): Promise<Browser> {
       ws.addEventListener("error", () => bad(new Error("连不上浏览器的调试端口")))
     })
     let next = 0
-    const pending = new Map<number, (m: { result?: unknown; error?: { message: string } }) => void>()
+    type Reply = { result?: unknown; error?: { message: string } }
+    const pending = new Map<number, { ok: (m: Reply) => void; bad: (e: Error) => void }>()
     ws.addEventListener("message", (ev) => {
-      const m = JSON.parse(String(ev.data)) as { id?: number; result?: unknown; error?: { message: string } }
+      const m = JSON.parse(String(ev.data)) as Reply & { id?: number }
       if (m.id !== undefined) {
-        pending.get(m.id)?.(m)
+        pending.get(m.id)?.ok(m)
         pending.delete(m.id)
       }
     })
+    // 浏览器崩了、断开了：还在等的调用都报错，不要一直挂着
+    const failAll = (why: string) => {
+      for (const p of pending.values()) p.bad(new Error(why))
+      pending.clear()
+    }
+    ws.addEventListener("close", () => failAll("浏览器断开了（多半是崩了），重跑一次"))
+    proc.on("exit", () => failAll("浏览器退出了（多半是崩了），重跑一次"))
     const send = (method: string, params: Record<string, unknown>) =>
-      new Promise<{ result?: unknown; error?: { message: string } }>((ok) => {
+      new Promise<Reply>((ok, bad) => {
         const id = ++next
-        pending.set(id, ok)
+        // 显卡进程崩了以后页面可能再也不回话（D-173：渲染挂了半小时没动静），超时就报错
+        const timer = setTimeout(() => {
+          pending.delete(id)
+          bad(new Error(`浏览器 ${EVAL_TIMEOUT / 60_000} 分钟没响应（多半是显卡进程崩了，或者同时开着两个渲染抢显卡）：关掉别的渲染再重跑一次`))
+        }, EVAL_TIMEOUT)
+        pending.set(id, {
+          ok: (m) => (clearTimeout(timer), ok(m)),
+          bad: (e) => (clearTimeout(timer), bad(e)),
+        })
         ws.send(JSON.stringify({ id, method, params }))
       })
     const evalRaw = async (expression: string) => {
