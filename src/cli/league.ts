@@ -347,9 +347,11 @@ export function standingsText(names: string[], r: LeagueResult, opt: TextOptions
   else if (multi) lines.push("（胜 = 独得第一，平 = 并列第一，负 = 没拿到第一；得分率按名次分：第一名 1 分、最后一名 0 分，中间平分）")
   lines.push(
     "",
-    opt.teams ? "对阵（不同队时，行所在的队排在列所在的队前面-并列-后面的次数）" : multi ? "对阵（同一局里，行排在列前面-并列-排在后面的次数）" : "对阵（行对列的 胜-平-负）",
+    (opt.teams ? "对阵（不同队时，行所在的队排在列所在的队前面-并列-后面的次数" : multi ? "对阵（同一局里，行排在列前面-并列-排在后面的次数" : "对阵（行对列的 胜-平-负") +
+      "；行列按参赛顺序排，不按名次，每次跑都一样）",
   )
-  const order = r.table.map((s) => s.index)
+  // 行列固定按参赛顺序（D-175，选手反馈：按名次排每次都变，比较两个版本时容易看错行列）
+  const order = names.map((_, i) => i)
   const cell = 9
   const grid = (cellOf: (i: number, j: number) => string) => {
     lines.push(pad("", width) + "  " + order.map((j) => pad(names[j].slice(0, cell - 1), cell)).join(""))

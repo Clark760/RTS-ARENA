@@ -1,14 +1,14 @@
 // 本地联赛：排名计算、命令行 league、对战接口开联赛
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import { createArenaApi } from "../src/cli/arena-api.ts"
-import { leagueStandings, leagueTables, los, teamSplits, type LeagueGame } from "../src/cli/league.ts"
+import { leagueStandings, leagueTables, los, standingsText, teamSplits, type LeagueGame } from "../src/cli/league.ts"
 import { isRout } from "../src/cli/battles.ts"
 import { excitement, gameFacts, pickHighlights } from "../src/cli/highlights.ts"
 import type { Replay } from "../src/core/types.ts"
@@ -62,7 +62,7 @@ test("命令行 league：两两循环、换边，写汇总和每局回放；bot 
     const out = sh(["league", "koth", "baseline", "hold", "idle", "--per-pair", "2", "--seed", "5", "--out", "lg", "--no-check"], dir)
     assert.match(out, /共 6 局/)
     assert.match(out, /名次 +bot/)
-    assert.match(out, /对阵（行对列的 胜-平-负）/)
+    assert.match(out, /对阵（行对列的 胜-平-负；行列按参赛顺序排/)
     assert.match(out, /## 精彩对局/)
     const files = readdirSync(join(dir, "lg"))
     assert.equal(files.filter((f) => /-g\d+\.json$/.test(f)).length, 6)
@@ -88,6 +88,57 @@ test("命令行 league：两两循环、换边，写汇总和每局回放；bot 
     // 在 bot 目录里：列出自己的 bot 没拿到第一的局；逐局那行带回放文件名
     assert.match(mine, /## 你的 bot（me）没拿到第一的局：\d+ 局/)
     assert.match(mine, /^第 1\/\d+ 局 .*koth-[\w-]+-g1\.json$/m)
+    // 自己的 bot 对每个对手一行（D-175）
+    assert.match(mine, /## me 对每个对手（胜-平-负，按参赛顺序）\n  baseline \d+-\d+-\d+，boom \d+-\d+-\d+，hold /)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("对阵表行列按参赛顺序排，不按名次（D-175）", () => {
+  // c 全胜排第一，对阵表还是 a、b、c 的顺序
+  const r = leagueStandings(["a", "b", "c"], [duel(0, 2, 2), duel(1, 2, 2), duel(0, 1, 0)])
+  assert.equal(r.table[0].name, "c")
+  const text = standingsText(["a", "b", "c"], r)
+  const grid = text.split("\n").slice(text.split("\n").findIndex((l) => l.startsWith("对阵")) + 1)
+  assert.match(grid[0], /^ {4,}a {8}b {8}c/)
+  assert.deepEqual(
+    grid.slice(1, 4).map((l) => l.split(/\s+/)[0]),
+    ["a", "b", "c"],
+  )
+})
+
+test("命令行：--no-replays 不存回放和日志；compare 两个版本按组配对比，只存结果不一样的组的回放（D-175）", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rts-arena-league-"))
+  const sh = (args: string[]) => {
+    const r = spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: "utf8" })
+    assert.equal(r.status, 0, r.stdout + r.stderr)
+    return r.stdout
+  }
+  try {
+    const out = sh(["league", "koth", "baseline", "hold", "--per-pair", "2", "--seed", "5", "--out", "lg", "--no-check", "--no-replays"])
+    assert.match(out, /没存回放和日志（--no-replays）/)
+    const files = readdirSync(join(dir, "lg"))
+    assert.deepEqual(files.filter((f) => !f.endsWith(".series.json")), [])
+    const series = JSON.parse(readFileSync(join(dir, "lg", files[0]), "utf8"))
+    assert.equal(series.replays, false)
+    assert.ok(series.results.every((g: { replay: unknown; logs: unknown[] }) => g.replay === null && g.logs.length === 0))
+    // 做视频时说清楚为什么不行
+    const v = spawnSync(process.execPath, [CLI, "video-brief", join("lg", files[0])], { cwd: dir, encoding: "utf8" })
+    assert.notEqual(v.status, 0)
+    assert.match(v.stdout + v.stderr, /没存回放/)
+    // compare：baseline → hold，对 boom、idle 各 2 组
+    const cmp = sh(["compare", "koth", "baseline", "hold", "boom", "idle", "--per-pair", "2", "--seed", "5", "--out", "cmp", "--no-check"])
+    assert.match(cmp, /对比：baseline → hold，对手 2 个（boom、idle），每个对手 2 组/)
+    assert.match(cmp, /## 对比：baseline → hold/)
+    assert.match(cmp, /^合计 +\d+-\d+-\d+ +\d+-\d+-\d+ +\d+ \/ \d+$/m)
+    assert.match(cmp, /^→ /m)
+    const better = Number(/^合计 .* (\d+) \/ (\d+)$/m.exec(cmp)![1])
+    const worse = Number(/^合计 .* (\d+) \/ (\d+)$/m.exec(cmp)![2])
+    const saved = existsSync(join(dir, "cmp")) ? readdirSync(join(dir, "cmp")).filter((f) => f.endsWith(".json")) : []
+    // 每个结果不一样的组存两局（两个版本各一局）
+    assert.equal(saved.length, 2 * (better + worse))
+    assert.ok(saved.every((f) => f.includes("-cmp-s")))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

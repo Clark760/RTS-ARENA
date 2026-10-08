@@ -50,7 +50,8 @@ interface GameEvent {
   ranking: number[][]
   reason: string
   tick: number
-  replay: string
+  /** --no-replays 时是 null */
+  replay: string | null
   logs: { seat: number; name: string; file: string }[]
   bots: { seat: number; errors: number; fuelOuts: number; rejected: number; status: string; deadReason?: string }[]
 }
@@ -59,7 +60,7 @@ interface GameEvent {
 interface Highlight {
   index: number
   seed: number
-  replay: string
+  replay: string | null
   who: string
   winner: string | null
   tick: number
@@ -586,7 +587,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
     return `<div class="game">
       <div><b>第 ${g.index} 局</b> <span class="muted">种子 ${g.seed}</span> ${lineup}</div>
       <div>→ ${won}（第 ${g.tick} tick，${esc(g.reason)}） ${trouble}
-        <button class="link" data-replay="${esc(g.replay)}">看回放</button> <span class="muted">日志</span> ${logs}</div>
+        ${g.replay ? `<button class="link" data-replay="${esc(g.replay)}">看回放</button> <span class="muted">日志</span> ${logs}` : '<span class="muted">没存回放</span>'}</div>
     </div>`
   }
 
@@ -695,7 +696,7 @@ export function initArena(opts: { openReplay: (name: string) => Promise<void> })
             : `<div class="muted small">按逆转、优势换手、大战、险胜、爆冷打的精彩度挑的</div>${list
                 .map(
                   (h, i) => `<div class="game"><div><b>${i + 1}. 第 ${h.index} 局</b> ${esc(h.who)} → ${h.winner ? `${esc(h.winner)} 赢` : "平局"} <span class="muted">（第 ${h.tick} tick，精彩度 ${h.score}）</span>
-                  <button class="link" data-replay="${esc(h.replay)}">看回放</button></div>
+                  ${h.replay ? `<button class="link" data-replay="${esc(h.replay)}">看回放</button>` : '<span class="muted">没存回放</span>'}</div>
                   <div class="small">${h.reasons.map(esc).join("；")}</div></div>`,
                 )
                 .join("")}`

@@ -503,6 +503,38 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     idleCache.set(b, res)
     return res
   }
+  /**
+   * 开打时的队形（D-175，选手反馈）：这一仗打出第一下的那个 tick，战场 20 格内各方的兵占多大一块（外接矩形）、
+   * 离自己这群兵的中心平均几格、几个离中心 FORM_FAR 格以上（掉队的），距离按横竖格数加起来算
+   */
+  const FORM_FAR = 6
+  const formCache = new Map<Death[], { t: number; sides: Map<number, { n: number; w: number; h: number; avg: number; far: number }> }>()
+  const formation = (b: Death[]) => {
+    const cached = formCache.get(b)
+    if (cached) return cached
+    // 紧挨着上一仗的：从上一个死亡之后找第一下，不要算到上一仗的
+    const prev = deaths.reduce((a, d) => (d.t < b[0].t ? Math.max(a, d.t) : a), -1)
+    const t = battleHits(b).find((h) => h.t > prev)?.t ?? Math.max(0, b[0].t - 1)
+    const cx = b.reduce((a, x) => a + x.x, 0) / b.length
+    const cy = b.reduce((a, x) => a + x.y, 0) / b.length
+    const pos = new Map<number, [number, number][]>()
+    for (const e of model.stateAt(t).ents.values()) {
+      if (e.owner < 0 || e.owner >= n || !isArmy(e.type) || Math.abs(e.x - cx) + Math.abs(e.y - cy) > 20) continue
+      pos.set(e.owner, [...(pos.get(e.owner) ?? []), [e.x, e.y]])
+    }
+    const sides = new Map<number, { n: number; w: number; h: number; avg: number; far: number }>()
+    for (const [p, ps] of pos) {
+      const mx = ps.reduce((a, [x]) => a + x, 0) / ps.length
+      const my = ps.reduce((a, [, y]) => a + y, 0) / ps.length
+      const d = ps.map(([x, y]) => Math.abs(x - mx) + Math.abs(y - my))
+      const xs = ps.map(([x]) => x)
+      const ys = ps.map(([, y]) => y)
+      sides.set(p, { n: ps.length, w: Math.max(...xs) - Math.min(...xs) + 1, h: Math.max(...ys) - Math.min(...ys) + 1, avg: d.reduce((a, x) => a + x, 0) / d.length, far: d.filter((x) => x >= FORM_FAR).length })
+    }
+    const res = { t, sides }
+    formCache.set(b, res)
+    return res
+  }
   const ordText = (m: Map<string, number>) => [...m].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join("、")
   out.push(`## 战斗（死 3 个以上的；只有一方在死人、有一方没死兵、或者死得少的一方不到对方的 1/4 的，标「一边倒」，精彩对局不算大战${hasCounters ? "。「伤害」一行是这一仗各方打出的伤害按 攻击方→目标 列，括号里是打在被自己克的兵上（吃到克制倍数）的比例" : ""}）`)
   if (big.length === 0) out.push("没有")
@@ -524,6 +556,15 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     const sidesIn = [...new Set(b.map((d) => d.owner))].filter((p) => p >= 0).sort()
     const army = hasArmy && sidesIn.length > 0 ? armyBefore(b) : null
     out.push(`t${b[0].t}～${b[b.length - 1].t} 在 (${cx}, ${cy}) 附近${rout(b) ? "（一边倒）" : ""}：${loss.join("；")}${army ? `（开打时兵数：${sidesIn.map((p) => `${who0(p)} ${army[p]}`).join("，")}）` : ""}`)
+    // 开打时各方的队形：散成一长串的一方往往是被逐个吃掉
+    if (hasArmy) {
+      const fm = formation(b)
+      const forms = [...fm.sides].filter(([, f]) => f.n >= 2).sort((x, y) => x[0] - y[0])
+      if (forms.length)
+        out.push(
+          `  队形：t${fm.t} 打出第一下时战场 20 格内，${forms.map(([p, f]) => `${who0(p)} ${f.n} 个兵占 ${f.w}×${f.h} 格、离自己中心平均 ${f.avg.toFixed(1)} 格${f.far ? `（${FORM_FAR} 格以上 ${f.far} 个）` : ""}`).join("；")}`,
+        )
+    }
     // 在战场附近却一下都没打的兵（停着的兵只打射程内的，团战时没给命令就干站着）
     const idle = [...idleInBattle(b)].filter(([, r]) => r.n >= 3).sort((x, y) => x[0] - y[0])
     if (idle.length) out.push(`  没出手：开打 30 tick 时战场 10 格内，${idle.map(([p, r]) => `${who(p)}有 ${r.n} 个兵（共 ${r.near} 个）一下都没打（${ordText(r.ords)}）`).join("；")}`)
@@ -655,6 +696,27 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       hints.push(
         `t${worst.t} 那一仗开打 30 tick 时，战场 10 格内有 ${worst.r.n} 个兵（共 ${worst.r.near} 个）还一下都没打，当时的命令：${ordText(worst.r.ords)}；其中 ${worst.r.ords.get("idle")} 个停着（idle）。停着的兵只打射程内的敌人，团战时要给附近的兵下 attack 或 attackMove（见「战斗」一节的「没出手」行）`,
       )
+    // 开打时自己的兵比对手散得多、这一仗又死得多：挑差距最大的一仗
+    if (hasArmy) {
+      let loose: { t: number; mine: number; foe: number; far: number; lost: number; killed: number } | null = null
+      for (const b of big) {
+        if (rout(b)) continue
+        const fm = formation(b)
+        const f = fm.sides.get(p)
+        const foes = [...fm.sides].filter(([q]) => enemies(q, p)).map(([, x]) => x)
+        const foeN = foes.reduce((a, x) => a + x.n, 0)
+        if (!f || f.n < 5 || foeN < 5) continue
+        const foeAvg = foes.reduce((a, x) => a + x.avg * x.n, 0) / foeN
+        const lost = b.filter((d) => d.owner === p).length
+        const killed = b.filter((d) => enemies(d.owner, p)).length
+        if (lost > killed && f.avg >= 2 && f.avg >= foeAvg * 1.5 && (!loose || lost - killed > loose.lost - loose.killed))
+          loose = { t: b[0].t, mine: f.avg, foe: foeAvg, far: f.far, lost, killed }
+      }
+      if (loose)
+        hints.push(
+          `t${loose.t} 那一仗开打时你的兵比对手散（离自己中心平均 ${loose.mine.toFixed(1)} 格，对手 ${loose.foe.toFixed(1)} 格${loose.far ? `；${loose.far} 个离中心 ${FORM_FAR} 格以上` : ""}），这一仗你死了 ${loose.lost} 个、对手 ${loose.killed} 个。接敌前先聚拢、等走得慢的跟上再一起上（各仗的队形见「战斗」一节的「队形」行）`,
+        )
+    }
     // 有克制的规则包：能打被自己克的兵的时候，攻击有没有打在它们身上
     if (hasCounters) {
       let chance = 0

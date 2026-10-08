@@ -242,7 +242,8 @@ export function excitement(f: GameFacts, upset: { level: number; text: string } 
 export interface Highlight {
   index: number
   seed: number
-  replay: string
+  /** 回放文件名；--no-replays 时是 null */
+  replay: string | null
   /** 参赛的几方，比如 "my-bot 对 expand" */
   who: string
   /** 赢的一方的名字，平局 null */

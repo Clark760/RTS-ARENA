@@ -196,16 +196,14 @@ rts-arena report                   # 4. 最新一局的战报，重点看「可�
 - **看日志**：用 `console.log` 打关键决策（"第 800 tick 进攻，兵力 10"），在播放器里对着画面看，或者看 `replays/` 里你那份 `.log`。
 - **看回放**：`rts-arena view --open`，点单位看它在执行什么命令，用「视角」看你的 bot 当时看得见什么。
 - **只看开局**：`rts-arena run --ticks 1500` 打到第 1500 tick 就结束，比较不同开局的经济。
-- **确认真的变强了**：局数少时误差很大，同一份代码两次联赛能差十几个百分点。用 `rts-arena league --focus --per-pair 10` 只打你的 bot 对每个参考 bot。
-- **比较两个版本**：各跑一次，写同一个 `--seed`，对同一个对手用的地图和种子就一样：
+- **确认真的变强了**：局数少时误差很大，同一份代码两次联赛能差十几个百分点。改之前把旧版另存一份，改完用 `compare` 比：
 
 ```bash
-rts-arena league annihilation v1.ts baseline rush boom --focus --per-pair 10 --seed 5
+rts-arena compare versions/v1.ts
 ```
 
-```bash
-rts-arena league annihilation v2.ts baseline rush boom --focus --per-pair 10 --seed 5
-```
+两个版本对每个参考 bot 用同一批种子、坐同一个位置各打一局（一组），比同一组里两个版本的结果差，地图和先后手的运气抵消掉。最后一行告诉你新版更强、更弱，还是分不出高下（差距在误差内）。默认每个对手 10 组，差距小时加 `--per-pair 30`，或者只带打得不稳的对手：`rts-arena compare versions/v1.ts rush boom`。两个版本结果不一样的组会存回放，同一张图一个赢一个输，对着看最容易找到差别。不在 bot 目录里时写成 `rts-arena compare annihilation v1.ts v2.ts baseline rush boom`。
+- **跑很多局时不存回放**：`run`、`league` 加 `--no-replays`，每局的回放有一两 MB，几千局就是几个 GB。
 
 - **别只对着 baseline 调**：参考 bot 各有各的打法，有的专门克制某一类。看联赛里输给了谁。
 

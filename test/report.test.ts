@@ -53,6 +53,8 @@ test("战报（克制规则包，D-167）：伤害按谁打谁列、采矿一节
   assert.ok(replay.map.walkable && replay.types.spearman.buildTicks === 60 && replay.types.barracks.produces?.includes("cavalry"))
   const text = buildReport(replay, { player: 0 })
   assert.match(text, /  伤害：(你|对手 P\d )打出 \d+（打在被自己克的兵上 \d+%）：/)
+  // 开打时的队形（D-175）
+  assert.match(text, /  队形：t\d+ 打出第一下时战场 20 格内，(你|对手 P\d) \d+ 个兵占 \d+×\d+ 格、离自己中心平均 \d+\.\d 格/)
   assert.match(text, /## 采矿/)
   assert.match(text, /\(\d+, \d+\) 交货 \d+ 次、来回约 \d+ tick、最多派 \d+ 人 \/ 站得下 \d+/)
   assert.match(text, /出兵顺序（前 \d+ 个/)

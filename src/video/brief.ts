@@ -16,6 +16,8 @@ export interface SeriesFile {
   ruleset: { id: string; name: string; summary?: string; dir?: string }
   startedAt: string
   games: number
+  /** 跑的时候加了 --no-replays 就是 false（D-175 起记），这种联赛做不了视频 */
+  replays?: boolean
   size?: number
   teams?: string | null
   participants: { name: string; file: string }[]
@@ -345,6 +347,7 @@ export function readSeries(file: string): SeriesFile {
   const s = JSON.parse(readFileSync(file, "utf8")) as SeriesFile
   if (s.format !== "rts-arena-series" || s.kind !== "league") throw new Error(`${file} 不是联赛的汇总文件（*.series.json，kind 是 league）`)
   if (!s.summary) throw new Error(`${file} 的联赛还没打完（没有 summary）`)
+  if (s.replays === false) throw new Error(`${file} 的联赛没存回放（跑的时候加了 --no-replays），做不了视频：去掉 --no-replays 再跑一次`)
   return s
 }
 

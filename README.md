@@ -106,7 +106,9 @@ rts-arena view                     # 网页播放器看回放
 | 两个 bot 打 10 局 | `rts-arena run koth a.ts b.ts --games 10`（每个种子换边各打一次） |
 | 只看开局、经济 | `rts-arena run --ticks 1500`（打到第 1500 tick 就结束） |
 | 联赛 | `rts-arena league koth a.ts b.ts c.ts --per-pair 10` |
-| 只打我的 bot 对一组对手 | `rts-arena league --focus --per-pair 10`（两个版本各跑一次、写同一个 `--seed`，就是同一批地图上的对比） |
+| 只打我的 bot 对一组对手 | `rts-arena league --focus --per-pair 10` |
+| 新版比旧版强吗 | `rts-arena compare versions/v1.ts`（同一批种子、同一个座位各打一局，按组配对比，只存结果不一样的局的回放） |
+| 跑很多局不存回放 | `run`、`league` 加 `--no-replays` |
 | 多人联赛 | `rts-arena league melee a.ts b.ts c.ts d.ts e.ts --size 4` |
 | 分队联赛 | `rts-arena league melee a.ts b.ts c.ts d.ts --teams 2v2` |
 | 给程序读结果 | 加 `--json`，每行输出一个 JSON 事件 |
