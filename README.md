@@ -170,6 +170,7 @@ rts-arena init ./my-rules my-bot              # 给它建 bot 目录，之后照
 |---|---|
 | [doc/入门教程.md](doc/入门教程.md) | 第一次用：装好、建 bot 目录、跑第一局、看回放和战报、交给大模型、开联赛 |
 | [doc/写-bot-指南.md](doc/写-bot-指南.md) | 自己写 bot：bot 怎么运作、局面和命令、一个能用的例子、调试方法、常见的坑 |
+| [doc/规则包介绍.md](doc/规则包介绍.md) | 挑玩法：自带的 10 个规则包各怎么玩、怎么赢、有哪些参考 bot |
 | bot 目录里的 `PROMPT.md`（`init` 生成） | 写 bot 的人和大模型：玩法、接口、平台规则，一份就够 |
 | [src/api/PLATFORM.md](src/api/PLATFORM.md) | 平台通用规则（坐标、视野、命令、沙箱限制），是 PROMPT.md 的一部分 |
 | [src/api/RULESET.md](src/api/RULESET.md) | 写规则包的人 |

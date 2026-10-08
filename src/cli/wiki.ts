@@ -12,6 +12,7 @@ const GITEE = "https://gitee.com/mingomin/rts-arena"
 export const WIKI_PAGES = [
   { file: "入门教程.md", page: "入门教程", title: "入门教程", about: "装好、建 bot 目录、跑第一局、看回放和战报、交给大模型、开联赛（第一次用先看这篇）" },
   { file: "写-bot-指南.md", page: "写-bot-指南", title: "写 bot 指南", about: "bot 怎么运作、局面和命令、一个能用的例子、调试方法、常见的坑（自己写 bot 时看）" },
+  { file: "规则包介绍.md", page: "规则包介绍", title: "规则包介绍", about: "自带的 10 个规则包各怎么玩、怎么赢、有哪些参考 bot，以及怎么挑一个上手" },
 ]
 
 /**
