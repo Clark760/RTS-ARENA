@@ -436,6 +436,10 @@ const BIG_BATTLE = 6
  * 一开打就显示"交战中"，损失随时间往上加，打完显示起止时间；一边倒的（兵冲进矿区杀工人这类，见 battles.ts）打完标「一边倒」
  */
 function replayEvents(replay: Replay, seats: { name: string }[]): (t: number) => string[] {
+  const freeUnit = (type: string) => {
+    const t = replay.types[type]
+    return t?.kind === "unit" && !t.worker && !Object.values(t.cost ?? {}).some((c) => (c ?? 0) > 0)
+  }
   const fixed: { t: number; text: string }[] = []
   const deaths: { t: number; x: number; y: number; owner: number; fighter: boolean }[] = []
   const fighter = fighterTest(replay.types)
@@ -450,7 +454,8 @@ function replayEvents(replay: Replay, seats: { name: string }[]): (t: number) =>
     for (let j = 0; j < sh.length && !contact; j += 2) {
       const a = s.ents.get(sh[j])
       const b = s.ents.get(sh[j + 1])
-      if (a && b && a.owner >= 0 && b.owner >= 0 && team(a.owner) !== team(b.owner)) {
+      // 侦察兵这类白送的单位（不花钱、不是工人）戳一下不算第一次交火（和战报一样）
+      if (a && b && a.owner >= 0 && b.owner >= 0 && team(a.owner) !== team(b.owner) && !freeUnit(a.type) && !freeUnit(b.type)) {
         contact = true
         fixed.push({ t: f.t, text: `t${f.t} 第一次交火` })
       }
