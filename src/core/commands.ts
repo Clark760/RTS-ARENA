@@ -187,7 +187,7 @@ function placeProblem(w: World, p: number, def: TypeDef, x: number, y: number): 
     each((xx, yy, i) => (w.rules.fog && !w.vis[p][i] ? `(${xx}, ${yy}) 不在你方视野里，只能在看得见的地方建造` : null)) ??
     each((xx, yy, i) => {
       const o = w.ents.get(w.staticOcc[i] || w.unitOcc[i])
-      return o ? `(${xx}, ${yy}) 有 #${o.id}（${o.type}）挡着` : null
+      return o ? `(${xx}, ${yy}) 有 #${o.id}（${o.type}）挡着${o.owner === p && o.def.kind === "unit" ? "（是你自己的单位，比如去建它的工人站在了地基上：让它站到地基旁边）" : ""}` : null
     })
   )
 }

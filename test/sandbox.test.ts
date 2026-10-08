@@ -291,6 +291,9 @@ test("canBuild：地图内、地形可走、没有实体、有迷雾时每格都
   // 看不见的格子里的敌人：有迷雾时只说看不见
   assert.match(reasons[0][7] ?? "", /不在你方视野里/)
   assert.match(reasons[1][7] ?? "", /有 #2（peon）挡着/)
+  // 挡着的是自己的单位时点明（常见的是去建它的工人站在了地基上），敌人的不说
+  assert.match(reasons[0][0] ?? "", /是你自己的单位/)
+  assert.doesNotMatch(reasons[1][7] ?? "", /是你自己的单位/)
 })
 
 test("pathDistances：按地形走路的步数，绕开墙和建筑；从建筑出发时贴着的格子是 1", async () => {

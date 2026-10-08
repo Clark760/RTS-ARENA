@@ -196,6 +196,23 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     else lastOrd.set(e.id, e.ord)
   }
 
+  // 白送的单位（侦察兵这类：不花钱、不是工人）：造不出来，丢了就没了；它戳一下不算「第一次交火」
+  const isFree = (type: string) => kind(type) === "unit" && !isWorker(type) && !Object.values(types[type]?.cost ?? {}).some((c) => (c ?? 0) > 0)
+  // 出兵顺序：每个玩家造出来的兵，按先后
+  const armyOrder = Array.from({ length: n }, () => [] as string[])
+  // 兵营利用率（前 UTIL_T tick）：能出兵的建筑建好后在场的时间，和造出来的兵的生产用时之和
+  const UTIL_T = Math.min(last, 3000)
+  const makesArmy = (type: string) => kind(type) === "building" && (types[type]?.produces ?? []).some(isArmy)
+  const producerSince = new Map<number, number>()
+  const producerTime = new Array<number>(n).fill(0)
+  const armyBuildTime = new Array<number>(n).fill(0)
+  const producerGone = (id: number, owner: number, t: number) => {
+    const since = producerSince.get(id)
+    if (since === undefined) return
+    producerSince.delete(id)
+    if (owner >= 0 && owner < n) producerTime[owner] += Math.max(0, Math.min(t, UTIL_T) - since)
+  }
+  for (const e of s.ents.values()) if (e.owner >= 0 && e.owner < n && makesArmy(e.type) && e.bp === undefined) producerSince.set(e.id, 0)
   // 家里挨打：被兵打在自己建筑 10 格内的（派出去侦察的单位在对方家门口挨打、对方侦察兵路过戳一下都不算）
   const firstHomeHit = new Array<number>(n).fill(-1)
   const nearHome = (e: EntSnap) => {
@@ -204,7 +221,8 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   }
   // 有兵种克制的规则包（attack.vs）：记下每一下打了多少、是不是打在被自己克的兵上，战斗一节按兵种列（D-167，试写反馈）
   const hasCounters = Object.values(types).some((t) => t.attack?.vs && Object.keys(t.attack.vs).length > 0)
-  const hits: { t: number; x: number; y: number; owner: number; from: string; to: string; dmg: number; bonus: boolean }[] = []
+  // 每一下都记（谁打的：战斗一节数「战场附近没出手的兵」也用它），伤害按克制倍数算
+  const hits: { t: number; x: number; y: number; id: number; owner: number; from: string; to: string; dmg: number; bonus: boolean }[] = []
   // 采矿：工人的命令从"gather #矿 回程"变回"gather #矿"就是交了一次货（D-167，试写反馈：战报看不出采矿效率、工人挤在一个矿上）
   const mining = new Map<string, { owner: number; mine: number; x: number; y: number; w: number; h: number; deliveries: number; cycles: number[]; now: number; max: number; waiting: number }>()
   /** 上次看的时候工人在哪（判断是不是站着没动） */
@@ -239,18 +257,16 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       // 最后一击：玩家编号；中立实体打的记 -2
       lastHit.set(tg.id, a.owner >= 0 ? a.owner : -2)
       if (!enemies(a.owner, tg.owner)) continue
-      if (firstContact < 0) {
+      if (firstContact < 0 && !isFree(a.type) && !isFree(tg.type)) {
         firstContact = f.t
         events.push({ t: f.t, p: -1, text: `第一次交火：P${a.owner} 的 ${a.type} 打 P${tg.owner} 的 ${tg.type}，在 ${at(tg)}`, cat: "key" })
       }
       if (firstHitTaken[tg.owner] < 0) firstHitTaken[tg.owner] = f.t
       if (firstHomeHit[tg.owner] < 0 && isArmy(a.type) && nearHome(tg)) firstHomeHit[tg.owner] = f.t
-      const atk = hasCounters ? types[a.type]?.attack : undefined
-      if (atk) {
-        const m = atk.vs?.[tg.type]
-        const dmg = a.st?.attack?.damage ?? atk.damage
-        hits.push({ t: f.t, x: tg.x, y: tg.y, owner: a.owner, from: a.type, to: tg.type, dmg: m === undefined ? dmg : Math.round(dmg * m), bonus: (m ?? 1) > 1 })
-      }
+      const atk = types[a.type]?.attack
+      const m = atk?.vs?.[tg.type]
+      const dmg = a.st?.attack?.damage ?? atk?.damage ?? 0
+      hits.push({ t: f.t, x: tg.x, y: tg.y, id: a.id, owner: a.owner, from: a.type, to: tg.type, dmg: m === undefined ? dmg : Math.round(dmg * m), bonus: (m ?? 1) > 1 })
       if (firstHitDealt[a.owner] < 0) firstHitDealt[a.owner] = f.t
       if (kind(tg.type) === "building" && firstBuildingHit[tg.owner] < 0) {
         firstBuildingHit[tg.owner] = f.t
@@ -263,6 +279,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       if (!e) continue
       closeIdle(e, f.t)
       if (assigned.has(id)) assign(id, e.owner, null)
+      producerGone(id, e.owner, f.t)
       if (removedNow.has(id)) {
         const k = `${e.owner}|${e.type}`
         removedBy.set(k, (removedBy.get(k) ?? 0) + 1)
@@ -276,6 +293,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       deaths.push({ t: f.t, owner: e.owner, type: e.type, x: e.x, y: e.y, by, ord: e.ord })
       const byText = by >= 0 ? `，最后一击是 P${by}` : by === -2 ? "，被中立实体打死" : ""
       if (e.owner < 0) events.push({ t: f.t, p: -1, text: `中立的 ${e.type} 死了 ${at(e)}${byText}` })
+      else if (isFree(e.type)) events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}失去 ${e.type}（这种单位造不出来，丢了就没了）${at(e)}${byText}`, cat: "key" })
       else if (kind(e.type) === "building") events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}失去 ${e.type}${e.bp !== undefined ? "（还没建好）" : ""} ${at(e)}${byText}` })
     }
     for (const nt of f.notes ?? []) events.push({ t: f.t, p: nt.p, text: `（规则包）${nt.text}`, cat: "key" })
@@ -306,6 +324,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       if (initialIds.has(e.id) || e.owner < 0 || e.owner >= n) continue
       // 玩家放的地基一出来就有建造进度；直接是建好的建筑，是规则包放的
       if (kind(e.type) === "building" && e.bp === undefined) {
+        if (makesArmy(e.type)) producerSince.set(e.id, Math.min(f.t, UTIL_T))
         events.push({ t: f.t, p: e.owner, text: `规则包给${e.owner === me ? "你" : ` ${who0(e.owner)} `}放了 ${e.type} ${at(e)}` })
         continue
       }
@@ -320,6 +339,10 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
         assign(e.id, e.owner, e.ord)
       }
       if (isArmy(e.type) && firstArmy[e.owner] < 0) firstArmy[e.owner] = f.t
+      if (isArmy(e.type)) {
+        armyOrder[e.owner].push(e.type)
+        if (f.t <= UTIL_T) armyBuildTime[e.owner] += types[e.type]?.buildTicks ?? 0
+      }
       if (kind(e.type) === "building") events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}放下 ${e.type} 的地基 ${at(e)}` })
       else if (kind(e.type) === "unit" && !firstMade[e.owner].has(e.type)) {
         firstMade[e.owner].add(e.type)
@@ -354,6 +377,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       if (bp[i + 1] < 100) continue
       const e = s.ents.get(bp[i])
       if (e && e.owner >= 0) events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}的 ${e.type} 建好了` })
+      if (e && e.owner >= 0 && makesArmy(e.type)) producerSince.set(e.id, Math.min(f.t, UTIL_T))
     }
     // 每 10 tick 看一次：派去采矿（不是回程）、没贴着矿、位置也没变的工人，就是在矿旁边排队等空位
     if (f.t % 10 === 0)
@@ -369,6 +393,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   }
   if (samples[samples.length - 1].t !== last) takeSample(last)
   for (const e of s.ents.values()) closeIdle(e, last)
+  for (const [id] of producerSince) producerGone(id, s.ents.get(id)?.owner ?? -1, last)
 
   // ---------- 输出 ----------
   const r = replay.result
@@ -453,6 +478,32 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     const cy = b.reduce((a, x) => a + x.y, 0) / b.length
     return hits.filter((h) => h.t >= b[0].t - 60 && h.t <= b[b.length - 1].t && Math.abs(h.x - cx) + Math.abs(h.y - cy) <= 15)
   }
+  /** 一场战斗开打 30 tick 时，战场 10 格内各方的兵里开打以来一下都没打的（在附近却没出手），按当时的命令分类 */
+  const idleCache = new Map<Death[], Map<number, { near: number; n: number; ords: Map<string, number> }>>()
+  const idleInBattle = (b: Death[]) => {
+    const cached = idleCache.get(b)
+    if (cached) return cached
+    const tm = Math.min(b[0].t + 30, b[b.length - 1].t)
+    const fired = new Set(battleHits(b).filter((h) => h.t <= tm).map((h) => h.id))
+    const cx = b.reduce((a, x) => a + x.x, 0) / b.length
+    const cy = b.reduce((a, x) => a + x.y, 0) / b.length
+    const st = model.stateAt(tm)
+    const res = new Map<number, { near: number; n: number; ords: Map<string, number> }>()
+    for (const e of st.ents.values()) {
+      if (e.owner < 0 || e.owner >= n || !isArmy(e.type) || Math.abs(e.x - cx) + Math.abs(e.y - cy) > 10) continue
+      const r = res.get(e.owner) ?? { near: 0, n: 0, ords: new Map<string, number>() }
+      r.near++
+      if (!fired.has(e.id)) {
+        r.n++
+        const k = e.ord.split(" ")[0]
+        r.ords.set(k, (r.ords.get(k) ?? 0) + 1)
+      }
+      res.set(e.owner, r)
+    }
+    idleCache.set(b, res)
+    return res
+  }
+  const ordText = (m: Map<string, number>) => [...m].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join("、")
   out.push(`## 战斗（死 3 个以上的；只有一方在死人、有一方没死兵、或者死得少的一方不到对方的 1/4 的，标「一边倒」，精彩对局不算大战${hasCounters ? "。「伤害」一行是这一仗各方打出的伤害按 攻击方→目标 列，括号里是打在被自己克的兵上（吃到克制倍数）的比例" : ""}）`)
   if (big.length === 0) out.push("没有")
   const shownBattles = big.length > 15 && !opts.full ? [...big.slice(0, 5), null, ...big.slice(-10)] : big
@@ -473,6 +524,9 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     const sidesIn = [...new Set(b.map((d) => d.owner))].filter((p) => p >= 0).sort()
     const army = hasArmy && sidesIn.length > 0 ? armyBefore(b) : null
     out.push(`t${b[0].t}～${b[b.length - 1].t} 在 (${cx}, ${cy}) 附近${rout(b) ? "（一边倒）" : ""}：${loss.join("；")}${army ? `（开打时兵数：${sidesIn.map((p) => `${who0(p)} ${army[p]}`).join("，")}）` : ""}`)
+    // 在战场附近却一下都没打的兵（停着的兵只打射程内的，团战时没给命令就干站着）
+    const idle = [...idleInBattle(b)].filter(([, r]) => r.n >= 3).sort((x, y) => x[0] - y[0])
+    if (idle.length) out.push(`  没出手：开打 30 tick 时战场 10 格内，${idle.map(([p, r]) => `${who(p)}有 ${r.n} 个兵（共 ${r.near} 个）一下都没打（${ordText(r.ords)}）`).join("；")}`)
     // 有克制的规则包：这一仗各方打出的伤害按"谁打谁"列，看兵是不是在打被自己克的
     if (hasCounters) {
       const inFight = battleHits(b)
@@ -483,7 +537,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
         const pairs = new Map<string, number>()
         for (const h of mine) pairs.set(`${h.from}→${h.to}`, (pairs.get(`${h.from}→${h.to}`) ?? 0) + h.dmg)
         const top = [...pairs].sort((x, y) => y[1] - x[1]).slice(0, 4).map(([k, v]) => `${k} ${v}`)
-        return `${who0(p)} 打出 ${total}（打在被自己克的兵上 ${total ? Math.round((100 * bonus) / total) : 0}%）：${top.join("、")}${pairs.size > 4 ? "……" : ""}`
+        return `${who(p)}打出 ${total}（打在被自己克的兵上 ${total ? Math.round((100 * bonus) / total) : 0}%）：${top.join("、")}${pairs.size > 4 ? "……" : ""}`
       })
       if (parts.length) out.push(`  伤害：${parts.join("；")}`)
     }
@@ -511,6 +565,19 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       .map((k) => `${k} ${Math.round(after.reduce((a, smp) => a + (smp.players[p].res[k] ?? 0), 0) / Math.max(1, after.length))}`)
       .join(" ")
     out.push(`${who0(p)}：采集约 ${income}（估算：结束时剩的 − 开局的 + 造东西花掉的），花掉 ${spentText}，抽样时平均手上留着 ${bank}；整局损失 ${countList(lost)}；整局击杀 ${countList(killed)}`)
+    // 出兵顺序（连着出同一种的合成一个，比如 spearman×2）：看对手按什么规律出兵
+    if (armyOrder[p].length) {
+      const runs: string[] = []
+      const list = armyOrder[p].slice(0, 24)
+      for (let i = 0; i < list.length; ) {
+        let j = i
+        while (j < list.length && list[j] === list[i]) j++
+        runs.push(j - i > 1 ? `${list[i]}×${j - i}` : list[i])
+        i = j
+      }
+      if (producerTime[p] > 0) out.push(`  兵营利用率：前 ${UTIL_T} tick 里能出兵的建筑大约 ${Math.round((100 * armyBuildTime[p]) / producerTime[p])}% 的时间在出兵`)
+      out.push(`  出兵顺序（前 ${list.length} 个${armyOrder[p].length > list.length ? `，一共 ${armyOrder[p].length} 个` : ""}）：${runs.join("、")}`)
+    }
   }
   out.push("")
   if (mining.size) {
@@ -560,6 +627,11 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     const kinds = errorKinds(replay, p)
     const rej = kinds.filter((k) => k.msg.startsWith("命令被拒"))
     if (rej.length) hints.push(`被拒命令 ${rej.reduce((a, k) => a + k.n, 0)} 条，最多的一种 ×${rej[0].n}（首次第 ${rej[0].t} tick）：${rej[0].msg.slice(0, 160)}`)
+    // 兵营空着：前 UTIL_T tick 里，能出兵的建筑在场的时间里有多少在出兵
+    if (producerTime[p] >= 1000 && armyBuildTime[p] / producerTime[p] < 0.35)
+      hints.push(
+        `前 ${UTIL_T} tick 里能出兵的建筑大约只有 ${Math.round((100 * armyBuildTime[p]) / producerTime[p])}% 的时间在出兵（造出来的兵生产用时加起来 ${armyBuildTime[p]} tick，兵营建好后在场的时间加起来 ${producerTime[p]} tick）：兵营空着的时候钱去哪了（先补了工人、攒着没花，还是钱不够）`,
+      )
     // 工人挤在一个矿上排队（站满了不会自己换矿）
     const queued = [...mining.values()].filter((r) => r.owner === p && r.waiting >= 300).sort((a, b) => b.waiting - a.waiting)
     if (queued.length)
@@ -571,6 +643,17 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
             return `(${r.x}, ${r.y}) 一共 ${r.waiting} tick（最多同时派了 ${r.max} 人${cap === null ? "" : `，矿旁边站得下 ${cap} 个`}）`
           })
           .join("、")}。站满了不会自己换矿，把多出来的人分到别的矿（见「采矿」一节）`,
+      )
+    // 团战时兵在附近停着（idle）干站着：挑停着最多的一仗
+    let worst: { t: number; r: { near: number; n: number; ords: Map<string, number> } } | null = null
+    for (const b of big) {
+      const r = idleInBattle(b).get(p)
+      const idleN = r?.ords.get("idle") ?? 0
+      if (r && idleN >= 4 && (!worst || idleN > (worst.r.ords.get("idle") ?? 0))) worst = { t: b[0].t, r }
+    }
+    if (worst)
+      hints.push(
+        `t${worst.t} 那一仗开打 30 tick 时，战场 10 格内有 ${worst.r.n} 个兵（共 ${worst.r.near} 个）还一下都没打，当时的命令：${ordText(worst.r.ords)}；其中 ${worst.r.ords.get("idle")} 个停着（idle）。停着的兵只打射程内的敌人，团战时要给附近的兵下 attack 或 attackMove（见「战斗」一节的「没出手」行）`,
       )
     // 有克制的规则包：能打被自己克的兵的时候，攻击有没有打在它们身上
     if (hasCounters) {
@@ -687,5 +770,66 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     if (hints.length) any = true
   }
   if (!any) out.push("没看出明显的问题")
+  return out.join("\n") + "\n"
+}
+
+/**
+ * 某一 tick 的局面（D-167，试写反馈：只能跑命令的大模型看不了网页回放，要靠自己写脚本重建局面）：
+ * 字符地图（每种实体一个字母，P0 大写、其他玩家小写）、各方资源和分数、每个实体的位置、生命和命令。
+ * 是全知视角（双方都看得到），对局中 bot 看不到这些
+ */
+export function snapshotText(replay: Replay, t: number): string {
+  const model = new ReplayModel(replay)
+  const tick = Math.max(0, Math.min(model.lastTick, Math.round(t)))
+  const s = model.stateAt(tick)
+  const { width: W, height: H, terrain } = replay.map
+  const types = replay.types
+  // 每种类型一个字母：先用类型名的首字母，撞了就往后找没用过的
+  const letter = new Map<string, string>()
+  const used = new Set<string>()
+  for (const k of Object.keys(types)) {
+    const cands = [...k.toUpperCase().replace(/[^A-Z]/g, ""), ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+    const c = cands.find((x) => !used.has(x)) ?? "?"
+    used.add(c)
+    letter.set(k, c)
+  }
+  const grid = terrain.map((row) => [...row])
+  for (const e of s.ents.values()) {
+    const ty = types[e.type]
+    const c = ty?.kind === "resource" ? "$" : e.owner === 0 ? letter.get(e.type)! : e.owner > 0 ? letter.get(e.type)!.toLowerCase() : "?"
+    for (let y = e.y; y < e.y + (ty?.h ?? 1); y++) for (let x = e.x; x < e.x + (ty?.w ?? 1); x++) if (grid[y]?.[x] !== undefined) grid[y][x] = c
+  }
+  const out: string[] = []
+  out.push(`# 第 ${tick} tick 的局面（${replay.ruleset.name}，种子 ${replay.seed}；全知视角，双方的东西都列出来了）`)
+  out.push("")
+  out.push(s.players.map((p, i) => `P${i}（${replay.players[i]?.name}）${p.alive ? "" : "已出局，"}${Object.entries(p.resources).map(([k, v]) => `${k} ${Math.round(v)}`).join(" ")}，分 ${Math.round(p.score)}`).join("；"))
+  if (s.status) out.push(`状态：${s.status}`)
+  out.push("")
+  const walk = replay.map.walkable
+  const terrainText = Object.keys(replay.map.colors)
+    .map((ch) => `「${ch}」${walk ? (walk[ch] ? "能走" : "不能走") : "地形"}`)
+    .join("、")
+  out.push(`## 地图（${W}×${H}；${terrainText}；「$」资源点；实体按下面的字母，P0 大写、其他玩家小写，「?」中立）`)
+  out.push("字母：" + [...letter].filter(([k]) => types[k]?.kind !== "resource").map(([k, c]) => `${c} ${k}`).join("、"))
+  const tens = Array.from({ length: W }, (_, x) => (x % 10 === 0 ? String(Math.floor(x / 10) % 10) : " ")).join("")
+  const ones = Array.from({ length: W }, (_, x) => String(x % 10)).join("")
+  out.push("```")
+  out.push(`    ${tens}`)
+  out.push(`    ${ones}`)
+  grid.forEach((row, y) => out.push(`${String(y).padStart(3)} ${row.join("")}`))
+  out.push("```")
+  out.push("")
+  out.push("## 实体（编号 类型 (x, y) 生命 命令；资源点的生命是剩余量）")
+  const owners = [...new Set([...s.ents.values()].map((e) => e.owner))].sort((a, b) => a - b)
+  for (const o of owners) {
+    const list = [...s.ents.values()].filter((e) => e.owner === o).sort((a, b) => a.type.localeCompare(b.type) || a.id - b.id)
+    out.push(`${o < 0 ? "中立" : `P${o}`}（${list.length} 个）：`)
+    for (const e of list.slice(0, 120)) {
+      const ty = types[e.type]
+      const hp = ty?.kind === "resource" ? `剩 ${e.hp}` : `${e.hp}/${e.st?.maxHp ?? ty?.maxHp ?? "?"}`
+      out.push(`  #${e.id} ${e.type} (${e.x}, ${e.y}) ${hp}${e.bp !== undefined ? ` 建到 ${e.bp}%` : ""} ${e.ord}`)
+    }
+    if (list.length > 120) out.push(`  ……另有 ${list.length - 120} 个`)
+  }
   return out.join("\n") + "\n"
 }

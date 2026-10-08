@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import { importRuleset } from "../src/cli/catalog.ts"
-import { buildReport } from "../src/cli/report.ts"
+import { buildReport, snapshotText } from "../src/cli/report.ts"
 import { runMatch } from "../src/core/match.ts"
 import type { Replay } from "../src/core/types.ts"
 import { compileBot, createBot } from "../src/sandbox/quickjs.ts"
@@ -40,6 +40,30 @@ test("战报：输家视角有局势抽样、建造事件、战斗、经济对�
   assert.match(text, /工人被卷进战斗：t\d+ 在 \(\d+, \d+\) 附近死了 \d+ 个工人（这一仗一共损失 \d+ 个单位，含这些工人；整局的损失见「经济和损失」；工人死的时候的命令：[a-zA-Z]+ \d+/)
   // 全局视角：给每个玩家的提示都带编号
   assert.match(buildReport(replay), /## 可能的问题\n- P\d：/)
+})
+
+test("战报（克制规则包，D-167）：伤害按谁打谁列、采矿一节、出兵顺序、兵营利用率、侦察兵阵亡进关键事件；--at 出某一 tick 的局面", async () => {
+  const rules = await importRuleset("counter-annihilation")
+  const bot = async (name: string, seed: number) => {
+    const c = compileBot(readFileSync(join(ROOT, "rulesets", "counter-annihilation", "bots", `${name}.ts`), "utf8"))
+    if ("error" in c) throw new Error(c.error)
+    return { name, file: name, runner: await createBot(c.code, seed, { fuel: rules.fuel }) }
+  }
+  const replay: Replay = JSON.parse(JSON.stringify(runMatch({ ruleset: rules, seed: 9, bots: [await bot("counter", 0), await bot("llm", 1)] })))
+  assert.ok(replay.map.walkable && replay.types.spearman.buildTicks === 60 && replay.types.barracks.produces?.includes("cavalry"))
+  const text = buildReport(replay, { player: 0 })
+  assert.match(text, /  伤害：(你|对手 P\d )打出 \d+（打在被自己克的兵上 \d+%）：/)
+  assert.match(text, /## 采矿/)
+  assert.match(text, /\(\d+, \d+\) 交货 \d+ 次、来回约 \d+ tick、最多派 \d+ 人 \/ 站得下 \d+/)
+  assert.match(text, /出兵顺序（前 \d+ 个/)
+  assert.match(text, /兵营利用率：前 \d+ tick 里能出兵的建筑大约 \d+% 的时间在出兵/)
+  // 第一次交火不算侦察兵戳一下
+  assert.doesNotMatch(text, /第一次交火：P\d 的 scout/)
+  const snap = snapshotText(replay, 600)
+  assert.match(snap, /^# 第 600 tick 的局面/)
+  assert.match(snap, /字母：B base、A barracks、W worker/)
+  assert.match(snap, /#\d+ spearman \(\d+, \d+\) \d+\/130 /)
+  assert.equal(snap.split("\n").filter((l) => /^ {0,2}\d{1,3} \S/.test(l)).length, replay.map.height)
 })
 
 test("战报：事件太多时先把采完的资源点合成一行，--full 全列；同一个位置反复被拆；闲下来之前在做什么", () => {

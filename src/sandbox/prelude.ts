@@ -99,7 +99,7 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
       for (xx = x; xx < x + d.w; xx++)
         for (i = 0; i < es.length; i++) {
           e = es[i];
-          if (dist(e, { x: xx, y: yy }) === 0) return "(" + xx + ", " + yy + ") 有 #" + e.id + "（" + e.type + "）挡着";
+          if (dist(e, { x: xx, y: yy }) === 0) return "(" + xx + ", " + yy + ") 有 #" + e.id + "（" + e.type + "）挡着" + (e.owner === view.me && g.types[e.type].kind === "unit" ? "（是你自己的单位，比如去建它的工人站在了地基上：让它站到地基旁边）" : "");
         }
     return null;
   }

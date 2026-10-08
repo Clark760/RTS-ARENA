@@ -25,7 +25,7 @@ import {
   type Workspace,
 } from "./catalog.ts"
 import { PKG_ROOT } from "../paths.ts"
-import { buildReport } from "./report.ts"
+import { buildReport, snapshotText } from "./report.ts"
 import { leagueStandings, leagueTables, rateCi, standingsText, teamSplits, type LeagueGame, type LeagueResult } from "./league.ts"
 import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
 import { excitement, finalScores, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
@@ -55,10 +55,11 @@ const HELP = `用法：rts-arena <命令> [参数]
                                         （auto 是每段各一张，放在 preview/ 里），--check 出完视频后从成品里截图检查（auto 每段一张），
                                         --lint 只核对脚本、列出每段字数和时间表（不开浏览器、不出图）
                                         （在 video-init 建的目录里不用写参数；脚本怎么写见 video-init 生成的 PROMPT.md）
-  report [回放] [--player N] [--every T] [--full]
+  report [回放] [--player N|名字] [--every T] [--full] [--at T]
                                         文字战报：每隔 T tick 双方的经济、兵力、建筑，关键事件、战斗、损失、可能的问题
-                                        （不写回放就看 ./replays 里最新的一局；不写 --player 就按你的 bot 坐的座位写；
-                                        事件太多时会省略中间的，--full 全部列出）
+                                        （不写回放就看 ./replays 里最新的一局，在 bot 目录里是有你的 bot 的最新一局；
+                                        不写 --player 就按你的 bot 坐的座位写，--player 也可以写这局里的 bot 名字；
+                                        事件太多时会省略中间的，--full 全部列出；--at T 只看第 T tick 的局面：字符地图、每个实体的位置、生命、命令）
 
 在任何目录：
   list [规则包]                         列出规则包和现成的 bot（写了规则包就列出它的参考 bot 和打法）
@@ -145,7 +146,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   league: { seed: false, size: false, teams: false, partners: false, "per-table": false, "per-pair": false, tables: false, out: false, "no-check": true, json: true, focus: true },
   check: { ticks: false },
   view: { port: false, open: true },
-  report: { player: false, every: false, full: true },
+  report: { player: false, every: false, full: true, at: false },
   map: { seed: false },
   "video-brief": { out: false },
   "video-init": { text: false, about: false },
@@ -470,13 +471,22 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
 }
 
 /** 目录里最新的回放文件（不算 .series.json） */
-function latestReplay(dir: string): string | null {
+/** 目录里最新的回放；给了 match 就找最新的、符合条件的那一局（最多看最新的 200 局） */
+function latestReplay(dir: string, match?: (file: string) => boolean): string | null {
   if (!existsSync(dir)) return null
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".json") && !f.endsWith(".series.json"))
     .map((f) => join(dir, f))
   files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
-  return files[0] ?? null
+  if (!match) return files[0] ?? null
+  for (const f of files.slice(0, 200)) {
+    try {
+      if (match(f)) return f
+    } catch {
+      // 读不出来的跳过
+    }
+  }
+  return null
 }
 
 /**
@@ -756,6 +766,10 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
         console.log(`  第 ${g.index} 局 对 ${foes}（${g.facts.winner === null ? "平局" : "输了"}，第 ${g.tick} tick）  ${g.replay}`)
       }
       if (lost.length > 12) console.log(`  另有 ${lost.length - 12} 局`)
+      // 已经全胜的对手：比较两个版本时这些局分不出高下（两人局才有对阵表）
+      const swept = labels.map((name, j) => ({ name, c: st.matrix[0]?.[j] })).filter((x, j) => j !== 0 && x.c && x.c.w > 0 && x.c.d === 0 && x.c.l === 0)
+      if (swept.length && swept.length < labels.length - 1)
+        console.log(`  对 ${swept.map((x) => `${x.name}（${x.c!.w} 局）`).join("、")} 全胜：比较版本时这些局分不出高下，看对其余对手的胜负`)
     }
   }
   say(`\n回放和每个 bot 的日志在 ${outDir}；排名和统计记在 ${relative(process.cwd(), seriesFile)}；看某一局：rts-arena report <回放>`)
@@ -983,8 +997,8 @@ async function cmdCheck(rules: Ruleset, src: RulesetRef, args: string[], opt: Re
       } else {
         console.log(`${where}：试打 ${replay.result.tick} tick 通过（调用 ${st.calls} 次，燃料最高 ${st.fuelMax}，被拒命令 ${st.rejected}）`)
       }
-      // bot 自己的 console.log：第一个位置上打印前几行（onStart 里打的也在）
-      if (seat === 0) {
+      // bot 自己的 console.log：每个位置都打印前几行（onStart 里打的也在；右下角座位开局算没算对也看得到）
+      {
         const logs = replay.frames.flatMap((f) => (f.logs ?? []).filter((l) => l.p === seat).flatMap((l) => l.text.map((t) => `t${f.t} ${t}`)))
         if (logs.length) {
           console.log(`  bot 的日志（前 ${Math.min(5, logs.length)} 行，共 ${logs.length} 行；行首的 tN 是记下这行日志的那一帧，日志属于上一次决策，所以常比你自己打的 view.tick 大一点）：`)
@@ -1365,17 +1379,6 @@ async function main(): Promise<void> {
       return
     }
     case "report": {
-      const file = pos[0] ?? latestReplay("replays") ?? fail("./replays 里没有回放；写成 rts-arena report <回放文件>")
-      if (!existsSync(file)) fail(`找不到回放 ${file}`)
-      let replay: Replay
-      try {
-        replay = JSON.parse(readFileSync(file, "utf8")) as Replay
-        if (replay.format !== "rts-arena-replay") throw new Error("不是回放文件")
-      } catch (e) {
-        fail(`${file} 读不出来：${(e as Error).message}`)
-      }
-      let player = typeof opt.player === "string" ? Number(opt.player) : undefined
-      if (player !== undefined && !(Number.isInteger(player) && player >= 0 && player < replay.players.length)) fail(`--player 要是 0～${replay.players.length - 1}`)
       // 在 bot 目录里：自己的 bot 坐在哪（--games 会换边，每局的座位不一样）
       const ws = (() => {
         try {
@@ -1384,6 +1387,29 @@ async function main(): Promise<void> {
           return null
         }
       })()
+      // 不写回放：在 bot 目录里看有自己 bot 的最新一局（跑完 league，最新的一局常常是两个参考 bot 在打）
+      const mine = ws ? (f: string) => (JSON.parse(readFileSync(f, "utf8")) as Replay).players?.some((p) => resolve(p.bot) === resolve(ws.bot)) : null
+      const latest = latestReplay("replays")
+      const ownLatest = !pos[0] && mine ? latestReplay("replays", mine) : null
+      if (!pos[0] && mine && latest && ownLatest !== latest)
+        console.log(ownLatest ? `（./replays 里最新的一局没有你的 bot，下面看的是有你的 bot 的最新一局；看最新那局写成 rts-arena report ${latest}）` : "（./replays 里最近的回放都没有你的 bot，下面看的是最新的一局）")
+      const file = pos[0] ?? ownLatest ?? latest ?? fail("./replays 里没有回放；写成 rts-arena report <回放文件>")
+      if (!existsSync(file)) fail(`找不到回放 ${file}`)
+      let replay: Replay
+      try {
+        replay = JSON.parse(readFileSync(file, "utf8")) as Replay
+        if (replay.format !== "rts-arena-replay") throw new Error("不是回放文件")
+      } catch (e) {
+        fail(`${file} 读不出来：${(e as Error).message}`)
+      }
+      // --player 写座位号，或者写 bot 在这局里的名字（比如联赛里的 v3）
+      let player: number | undefined
+      if (typeof opt.player === "string") {
+        const byName = replay.players.findIndex((p) => p.name === opt.player)
+        player = /^\d+$/.test(opt.player) ? Number(opt.player) : byName
+        if (!(player >= 0 && player < replay.players.length))
+          fail(`--player 要写座位号 0～${replay.players.length - 1}，或者这局里的 bot 名字（${replay.players.map((p, i) => `P${i} ${p.name}`).join("、")}）`)
+      }
       const mySeats = ws ? replay.players.map((p, i) => (resolve(p.bot) === resolve(ws.bot) ? i : -1)).filter((i) => i >= 0) : []
       if (player === undefined && mySeats.length > 0) {
         player = mySeats[0]
@@ -1393,6 +1419,13 @@ async function main(): Promise<void> {
       const every = typeof opt.every === "string" ? Number(opt.every) : undefined
       if (every !== undefined && !(Number.isInteger(every) && every > 0)) fail("--every 要是正整数")
       if (!pos[0]) console.log(`（最新的一局：${file}）`)
+      // --at T：只看第 T tick 的局面（字符地图、每个实体的位置和命令）
+      if (opt.at !== undefined) {
+        const at = Number(opt.at)
+        if (!Number.isInteger(at) || at < 0) fail("--at 要写 tick 数（非负整数），比如 --at 2200")
+        process.stdout.write(snapshotText(replay, at))
+        return
+      }
       process.stdout.write(buildReport(replay, { player, every, full: opt.full === true }))
       return
     }

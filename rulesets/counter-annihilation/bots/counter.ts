@@ -1,5 +1,5 @@
 // 针对（看兵出兵）：记下看到过的敌方兵各有几个，出克它们的兵（枪兵克骑兵、骑兵克弓兵、弓兵克枪兵），按对方的配比配。
-// 开局就派侦察兵去对方主基地前面 9 格的地方盯着，敌方兵靠近就往回退一段，过一会再回去；还没看清对方出什么兵时三种轮流出。
+// 开局就派侦察兵去对方主基地前面 13 格的地方盯着（敌人的视野最多 7，侦察兵 8），敌方兵到 8 格内、工人到 3 格内就往回退一段，过一会再回去；还没看清对方出什么兵时三种轮流出。
 // 经济、集结、进攻、回防和基准一样。
 // - 配比：对方每种兵按数量折成克它的兵（对方骑兵多就多出枪兵……），哪种兵比想要的比例差得最多就出哪种。
 // - 敌方兵记 600 tick，看到死了就划掉，所以对方换兵种以后跟着换。
@@ -13,9 +13,10 @@ const ECO_FIRST = 10
 const PLAN: TypeName[] = ["spearman", "archer", "cavalry"]
 /** 看到过的敌方战斗单位：类型、最后一次出现的 tick，用来估计对方兵力和配比 */
 const enemySeen = new Map<number, { type: TypeName; t: number }>()
-/** 侦察兵盯着的地方离对方主基地几格；敌方兵靠近时退到哪个 tick 为止 */
-const SCOUT_DIST = 9
+/** 侦察兵盯着的地方离对方主基地几格；敌方兵靠近时退到哪个 tick 为止、往哪里跑 */
+const SCOUT_DIST = 13
 let scoutBackUntil = 0
+let scoutFlee: Pos | null = null
 /** 每种兵被谁克 */
 const COUNTER: Partial<Record<TypeName, TypeName>> = { spearman: "archer", cavalry: "spearman", archer: "cavalry" }
 const SEEN_FOR = 600
@@ -143,11 +144,16 @@ export function onTick(view: View, cmd: Commands): void {
   const enemyBaseCenter = { x: eb.x + 1, y: eb.y + 1 }
   rally ??= pointToward(barracks ?? base, enemyBaseCenter, 5)
 
-  // ---------- 侦察兵：去对方主基地前面盯着对方出什么兵；5 格内有敌方兵就往回退 8 格，150 tick 后再回去 ----------
+  // ---------- 侦察兵：去对方主基地前面盯着对方出什么兵；8 格内有敌方兵（它们看不见 8 格外）、3 格内有敌方工人就往回退 8 格，150 tick 后再回去 ----------
   const scout = mine.find((e) => e.type === "scout")
   if (scout) {
-    if (enemyUnits.some((e) => isCombat(e) && dist(e, scout) <= 5)) scoutBackUntil = view.tick + 150
-    const spot = pointToward(enemyBaseCenter, base, view.tick < scoutBackUntil ? SCOUT_DIST + 8 : SCOUT_DIST)
+    // 往远离最近那个敌人的方向跑（侦察兵走一格 1 tick，比谁都快）
+    const threat = nearest(scout, enemyUnits.filter((e) => (isCombat(e) && dist(e, scout) <= 8) || (e.type === "worker" && dist(e, scout) <= 3)))
+    if (threat) {
+      scoutBackUntil = view.tick + 150
+      scoutFlee = pointToward(threat, scout, dist(threat, scout) + 8)
+    }
+    const spot = view.tick < scoutBackUntil ? (scoutFlee ?? pointToward(enemyBaseCenter, base, SCOUT_DIST + 8)) : pointToward(enemyBaseCenter, base, SCOUT_DIST)
     if (dist(scout, spot) > 1 && (scout.order?.kind !== "move" || scout.order.x !== spot.x || scout.order.y !== spot.y)) cmd.move(scout, spot.x, spot.y)
   }
 
