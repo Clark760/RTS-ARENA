@@ -79,7 +79,7 @@ export interface ReplayFrame {
   progress: number
   /** 最后定格时显示结果 */
   final: boolean
-  /** 这段没什么动静，正在快进（不快进就是在打仗，按一倍速放） */
+  /** 这段没什么动静，正在快进（不快进就是在打大战，按 2 倍速放） */
   fast: boolean
   /** 规则包画在地图上的标记（控制点、台址……），和回放页面一样 */
   markers: ({ kind: "zone"; x: number; y: number; w: number; h: number; owner: number | null; label?: string; color?: string } | { kind: "label"; x: number; y: number; text: string; owner?: number | null })[]
@@ -768,9 +768,9 @@ export function installVideoPage(): void {
     roundRect(MX, by, s.width * TILE, 8, 4, "rgba(255,255,255,0.1)")
     roundRect(MX, by, Math.max(8, s.width * TILE * f.progress), 8, 4, C.accent)
     text(`第 ${f.t} tick`, MX + s.width * TILE, by - 6, 15, C.muted, { align: "right" })
-    // 没什么动静的时候快进，打起来按一倍速实时放（D-171）
+    // 大战按 2 倍速放，其余快进（D-172）
     if (f.fast && !f.final) text("▸▸ 快进", MX, by - 6, 15, C.accent, { bold: true })
-    else if (!f.final) text("▶ 一倍速", MX, by - 6, 15, C.text, { bold: true })
+    else if (!f.final) text("▶ 大战 2 倍速", MX, by - 6, 15, C.text, { bold: true })
     if (f.final) {
       g.globalAlpha = 0.85
       roundRect(MX + 120, MY + (s.height * TILE) / 2 - 60, s.width * TILE - 240, 120, 16, "#0b1220", C.accent)

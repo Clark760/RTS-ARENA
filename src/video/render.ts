@@ -9,7 +9,7 @@ import { findBrowser, launchBrowser } from "./browser.ts"
 import { checkScript, codeFacts, factTags, gameScores, highlightPlayerWarnings, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
-import { fighterTest, groupBattles, isRout, MIN_BATTLE } from "../cli/battles.ts"
+import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
 import { importRuleset, listRulesets } from "../cli/catalog.ts"
 
 /** 联赛没挑中的局：现场从回放算看点（不算爆冷） */
@@ -254,27 +254,31 @@ const BATTLE_TAIL = 20
 /** 没动静的地方一共最多放几秒（快进至少 4 倍速） */
 const QUIET_SECONDS = 10
 const QUIET_MIN_SPEED = 4
+/** 大战按几倍速放（D-172，用户看了一倍速说太慢） */
+const BATTLE_SPEED = 2
 
 /**
- * 回放里的战斗时段（D-171）：和战报「战斗」一节同一套切分（死 3 个以上的算一场），从第一个死亡前 BATTLE_LEAD tick
- * 到最后一个死亡后 BATTLE_TAIL tick，挨着的合并
+ * 回放里的大战时段（D-172）：和视频侧栏标「大战」的一样，同一套切分里死 BIG_BATTLE 个以上、又不是一边倒的；
+ * 从第一个死亡前 BATTLE_LEAD tick 到最后一个死亡后 BATTLE_TAIL tick，挨着的合并
  */
 export function battleWindows(replay: Replay): [number, number][] {
   const T = Math.max(1, replay.result.tick)
   const s = new ReplayModel(replay).initialState()
-  const deaths: { t: number; x: number; y: number }[] = []
+  const fighter = fighterTest(replay.types)
+  const team = (p: number) => replay.players[p]?.team ?? p
+  const deaths: { t: number; x: number; y: number; owner: number; fighter: boolean }[] = []
   for (const f of replay.frames) {
     const removed = new Set(f.removed ?? [])
     for (const id of f.die ?? []) {
       const e = s.ents.get(id)
       if (!e || removed.has(id) || replay.types[e.type]?.kind === "resource") continue
-      deaths.push({ t: f.t, x: e.x, y: e.y })
+      deaths.push({ t: f.t, x: e.x, y: e.y, owner: e.owner, fighter: fighter(e.type) })
     }
     applyFrame(s, f)
   }
   const out: [number, number][] = []
   const wins = groupBattles(deaths)
-    .filter((b) => b.length >= MIN_BATTLE)
+    .filter((b) => b.length >= BIG_BATTLE && !isRout(b, team))
     .map((b): [number, number] => [Math.max(0, b[0].t - BATTLE_LEAD), Math.min(T, b[b.length - 1].t + BATTLE_TAIL)])
     .sort((a, b) => a[0] - b[0])
   for (const w of wins) {
@@ -286,7 +290,7 @@ export function battleWindows(replay: Replay): [number, number][] {
 }
 
 /**
- * 回放每帧对应的 tick（D-171，用户定：战斗时放一倍速）：战斗时段按一倍速实时播放（1 秒 = 规则包的 tickRate 个 tick），
+ * 回放每帧对应的 tick（D-171、D-172，用户定）：大战按 BATTLE_SPEED 倍速放（1 秒 = BATTLE_SPEED × 规则包的 tickRate 个 tick），
  * 其余时间快进，加起来最多 QUIET_SECONDS 秒、至少 QUIET_MIN_SPEED 倍速。返回一共放多少帧
  */
 export function pacing(replay: Replay, fps: number): { playFrames: number; tickOf: (i: number) => number; fast: (i: number) => boolean } {
@@ -302,7 +306,7 @@ export function pacing(replay: Replay, fps: number): { playFrames: number; tickO
   let f = 0
   const add = (t1: number, fastSeg: boolean) => {
     if (t1 <= t) return
-    const perTick = fastSeg ? fps / (rate * quietSpeed) : fps / rate
+    const perTick = fastSeg ? fps / (rate * quietSpeed) : fps / (rate * BATTLE_SPEED)
     segs.push({ t0: t, t1, perTick, fast: fastSeg, f0: f })
     f += (t1 - t) * perTick
     t = t1
@@ -329,7 +333,7 @@ export function pacing(replay: Replay, fps: number): { playFrames: number; tickO
   }
 }
 
-/** 回放场景：战斗按一倍速实时放、没动静的地方快进（D-171），最后定格 1.5 秒显示结果 */
+/** 回放场景：大战按 2 倍速放、其余快进（D-172），最后定格 1.5 秒显示结果 */
 function replayScene(replay: Replay, no: number, title: string, commentary: string | null, seats: { name: string; color: string }[], result: string, fps: number): Omit<Scene, "label"> {
   const T = replay.result.tick
   const hold = sec(fps, 1.5)

@@ -197,7 +197,7 @@ test("平台拼的文字：中文名前后的空格去掉，英文名的留着",
   assert.equal(tidy("大肥鱼 获胜"), "大肥鱼获胜")
 })
 
-test("回放变速（D-171）：tick 随帧单调往前、首尾对齐；战斗时段按一倍速（每秒 tickRate 个 tick），其余快进至少 4 倍", () => {
+test("回放变速（D-172）：tick 随帧单调往前、首尾对齐；大战按 2 倍速（每秒 2 × tickRate 个 tick），其余快进至少 4 倍", () => {
   const series = readSeries(seriesFile)
   const g = [...series.results].sort((a, b) => b.tick - a.tick)[0]
   const replay = JSON.parse(readFileSync(join(TMP, "lg", g.replay), "utf8")) as Replay
@@ -211,12 +211,13 @@ test("回放变速（D-171）：tick 随帧单调往前、首尾对齐；战斗�
   const wins = battleWindows(replay)
   const battleTicks = wins.reduce((a, [x, y]) => a + (y - x), 0)
   const rate = replay.tickRate
-  // 战斗一共放 battleTicks / rate 秒，其余最多 10 秒
-  assert.ok(n >= (battleTicks / rate) * fps - 2 && n <= (battleTicks / rate) * fps + 10 * fps + 2, `${n} 帧`)
-  // 战斗中间的帧：一秒正好推进 rate 个 tick；快进的帧推进得多
+  // 大战一共放 battleTicks / (2 × rate) 秒，其余最多 10 秒
+  const battleFrames = (battleTicks / (2 * rate)) * fps
+  assert.ok(n >= battleFrames - 2 && n <= battleFrames + 10 * fps + 2, `${n} 帧`)
+  // 大战中间的帧：一秒正好推进 2 × rate 个 tick；快进的帧推进得多
   for (const [x, y] of wins) {
     const inside = ticks.map((t, i) => i).filter((i) => ticks[i] > x + 1 && ticks[i + fps] !== undefined && ticks[i + fps] < y - 1)
-    for (const i of inside.slice(0, 5)) assert.ok(Math.abs(ticks[i + fps] - ticks[i] - rate) <= 1, `第 ${i} 帧起一秒推进了 ${ticks[i + fps] - ticks[i]} tick`)
+    for (const i of inside.slice(0, 5)) assert.ok(Math.abs(ticks[i + fps] - ticks[i] - 2 * rate) <= 1, `第 ${i} 帧起一秒推进了 ${ticks[i + fps] - ticks[i]} tick`)
     for (const i of inside) assert.equal(p.fast(i), false)
   }
   const fast = ticks.slice(0, -1).map((_, i) => i).filter((i) => p.fast(i))
