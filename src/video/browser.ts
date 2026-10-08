@@ -50,13 +50,16 @@ export async function launchBrowser(executable: string): Promise<Browser> {
   const proc: ChildProcess = spawn(executable, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--mute-audio", url], {
     stdio: "ignore",
   })
-  const cleanup = () => {
+  const exited = new Promise<void>((ok) => proc.once("exit", () => ok()))
+  const cleanup = async () => {
     proc.kill()
     server.close()
+    // 等浏览器真的退出再删它的用户目录：没退出时 Windows 上文件还被占着删不掉（D-176：原来不等，临时目录里攒了 347 个、6 GB）
+    await Promise.race([exited, new Promise((r) => setTimeout(r, 10_000))])
     try {
-      rmSync(profile, { recursive: true, force: true })
+      rmSync(profile, { recursive: true, force: true, maxRetries: 30, retryDelay: 250 })
     } catch {
-      // 浏览器还没完全退出时目录可能删不掉，留给系统清理
+      // 还是删不掉就留给系统清理
     }
   }
   try {
@@ -134,11 +137,11 @@ export async function launchBrowser(executable: string): Promise<Browser> {
       },
       async close() {
         ws.close()
-        cleanup()
+        await cleanup()
       },
     }
   } catch (e) {
-    cleanup()
+    await cleanup()
     throw e
   }
 }
