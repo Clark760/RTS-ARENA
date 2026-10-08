@@ -2,6 +2,7 @@
 import { flowStep, UNREACHABLE } from "./nav.ts"
 import { attackable, rectDist, type World } from "./world.ts"
 import type { EntityState, Rect } from "./types.ts"
+import type { TypeDef } from "../api/bot-api.ts"
 
 /** 追单位时，距离在这以内用小范围 A*，更远用去目标当前格的流场 */
 const CHASE_NEAR = 10
@@ -111,6 +112,12 @@ function attackTarget(w: World, e: EntityState): EntityState | null {
   }
 }
 
+/** 一次攻击打出的伤害：打克制的类型（attack.vs 里列出的）乘倍数，四舍五入（D-166） */
+export function damageOf(atk: NonNullable<TypeDef["attack"]>, target: string): number {
+  const m = atk.vs?.[target]
+  return m === undefined ? atk.damage : Math.round(atk.damage * m)
+}
+
 function combat(w: World): void {
   const hits: EntityState[] = []
   for (const e of w.ents.values()) {
@@ -127,7 +134,7 @@ function combat(w: World): void {
   for (let i = 0; i < hits.length; i += 2) {
     const a = hits[i]
     const t = hits[i + 1]
-    const dmg = a.def.attack!.damage
+    const dmg = damageOf(a.def.attack!, t.type)
     t.hp -= dmg
     t.lastHitBy = a.owner
     t.lastHitNeutral = a.owner < 0

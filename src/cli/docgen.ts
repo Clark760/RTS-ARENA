@@ -66,6 +66,12 @@ function costText(cost: Partial<Record<string, number>>): string {
   return parts.length ? parts.join(" + ") : "—"
 }
 
+/** 克制倍数（D-166）：「（打 cavalry ×3）」 */
+function vsText(vs: Partial<Record<string, number>> | undefined): string {
+  const parts = Object.entries(vs ?? {}).map(([t, m]) => `${t} ×${m}`)
+  return parts.length ? `（打 ${parts.join("、")}）` : ""
+}
+
 export function unitTable(rules: Ruleset): string {
   const defs = Object.entries(rules.types).map(([name, spec]) => ({ spec, d: resolveType(name, spec) }))
   // 有能建造的单位时才加「能建造」一列
@@ -90,7 +96,7 @@ export function unitTable(rules: Ruleset): string {
         d.buildTicks || "—",
         d.moveTicks || "不能动",
         d.sight || "—",
-        d.attack ? `${d.attack.damage} / ${d.attack.range} / ${d.attack.cooldown}` : "—",
+        d.attack ? `${d.attack.damage} / ${d.attack.range} / ${d.attack.cooldown}${vsText(d.attack.vs)}` : "—",
         d.gather ? `${d.gather.amount} / ${d.gather.ticks} / ${d.gather.capacity}` : "—",
         d.dropOff ? "是" : "—",
         d.produces.length ? d.produces.join("、") : "—",
@@ -98,6 +104,9 @@ export function unitTable(rules: Ruleset): string {
         "",
       ].join(" | ").trim(),
     )
+  }
+  if (defs.some(({ d }) => d.attack?.vs)) {
+    rows.push("", "攻击一列括号里是**克制倍数**（`game.types[类型].attack.vs`）：打这些类型时伤害乘这个倍数，四舍五入。比如「打 cavalry ×3」是打 cavalry 一下的伤害是 damage × 3（倍数小于 1 就是打这类吃亏）。")
   }
   if (building) {
     const names = [...buildable].map((n) => "`" + n + "`").join("、")

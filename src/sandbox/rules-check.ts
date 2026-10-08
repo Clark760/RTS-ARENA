@@ -85,6 +85,13 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
       if (s.attack !== undefined && s.attack !== null) {
         const a = s.attack
         if (!isObj(a) || !isInt(a.damage, 0) || !isInt(a.range, 1, 16) || !isInt(a.cooldown, 1)) bad(`${at}.attack 要写成 { damage ≥ 0, range 1～16, cooldown ≥ 1 }（整数）`)
+        else if (a.vs !== undefined) {
+          // 克制倍数（D-166）：打这些类型时伤害乘几倍
+          if (!isObj(a.vs)) bad(`${at}.attack.vs 要写成 { 类型名: 倍数 }，比如 { cavalry: 3 }`)
+          else
+            for (const [k, m] of Object.entries(a.vs))
+              if (!names.has(k) || typeof m !== "number" || !Number.isFinite(m) || m < 0 || m > 10) bad(`${at}.attack.vs.${k}：类型要是已定义的类型名，倍数是 0～10 的数`)
+        }
       }
       if (s.gather !== undefined && s.gather !== null) {
         const g = s.gather

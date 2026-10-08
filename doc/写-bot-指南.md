@@ -51,7 +51,7 @@ export function onTick(view: View, cmd: Commands): void {
 - `queue`：建筑的生产队列；
 - `cooldown`：还要几 tick 才能再攻击。
 
-资源点有 `amount`（剩余量）；没建好的建筑有 `construction`。有的规则包会在局中改单位数值（比如科技），改过的项在 `stats` 里。
+资源点有 `amount`（剩余量）；没建好的建筑有 `construction`。有的规则包会在局中改单位数值（比如科技），改过的项在 `stats` 里。有的规则包有兵种克制（比如克制歼灭）：`game.types[类型].attack.vs` 是克制倍数，打列出的类型时伤害乘倍数；自动攻击不看克制，想专打被自己克的要自己用 `cmd.attack` 指定。
 
 事件（`view.events`）有这几种：
 

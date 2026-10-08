@@ -33,7 +33,7 @@ function stable(r: Replay): string {
   return JSON.stringify({ ...r, perf: null, bots: r.bots.map((b) => ({ ...b, ms: 0 })) })
 }
 
-for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "tech", "beacons", "wild-herd", "caravan-raid", "flag-run"]) {
+for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "tech", "beacons", "wild-herd", "caravan-raid", "flag-run", "counter-annihilation", "counter-frontier"]) {
   test(`自带规则包「${id}」放进沙箱，回放和直接跑完全一样`, async () => {
     const native = await importRuleset(id)
     const boxed = await loadSandboxedRuleset(join(ROOT, "rulesets", id))
@@ -94,11 +94,23 @@ test("ctx.entities 的筛选：沙箱里不管有没有全量快照，结果都�
 })
 
 test("自带规则包的定义都能通过沙箱规则包的格式检查", async () => {
-  for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "tech", "beacons", "wild-herd", "caravan-raid", "flag-run"]) {
+  for (const id of ["annihilation", "koth", "harvest", "melee", "frontier", "tech", "beacons", "wild-herd", "caravan-raid", "flag-run", "counter-annihilation", "counter-frontier"]) {
     const r = await importRuleset(id)
     const fns = ["setup", "onTick", "objectives", "result", "timeUp"].filter((f) => typeof (r as unknown as Record<string, unknown>)[f] === "function")
     assert.deepEqual(checkRulesetData(JSON.parse(JSON.stringify(r)), fns), [], id)
   }
+})
+
+test("格式检查：克制倍数 attack.vs 写错（类型不存在、倍数超范围、不是对象）会报出来", async () => {
+  const r = JSON.parse(JSON.stringify(await importRuleset("counter-annihilation")))
+  const fns = ["setup", "onTick", "objectives", "result", "timeUp"]
+  r.types.spearman.attack.vs = { knight: 3 }
+  r.types.cavalry.attack.vs = { archer: 20 }
+  r.types.archer.attack.vs = 2
+  const errs = checkRulesetData(r, fns).join("\n")
+  assert.match(errs, /spearman\.attack\.vs\.knight/)
+  assert.match(errs, /cavalry\.attack\.vs\.archer/)
+  assert.match(errs, /archer\.attack\.vs 要写成/)
 })
 
 test("new-rules 的模板：加载通过，基准 bot 打赢不动的对手", async () => {

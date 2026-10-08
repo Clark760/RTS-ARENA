@@ -465,9 +465,9 @@ export function installVideoPage(): void {
     g.globalAlpha = 1
     text(s.mapNote, mx, my + s.height * tile + 24, 15, C.muted, { alpha: a2 })
     // 地图下面：单位图例（形状、字、名字、造价和数值）
-    // 6 项以内排一栏，多了排两栏；说明超出栏宽就截断
+    // 排一栏放得下（不超出画面底部）就排一栏，否则排两栏；说明超出栏宽就截断
     const ly = my + s.height * tile + 58
-    const cols = s.legend.length > 6 ? 2 : 1
+    const cols = ly + (s.legend.length - 1) * 34 <= 686 ? 1 : 2
     const colW = (s.width * tile) / cols
     s.legend.forEach((it: Any, k: number) => {
       const col = k % cols

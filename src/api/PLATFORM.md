@@ -55,6 +55,8 @@ export function onTick(view: View, cmd: Commands): void {
 
 自动攻击：`idle` 和 `attackMove` 状态、能攻击的实体（单位，以及规则包里能攻击的建筑）会打射程内的敌人（敌方单位和建筑都算），选最近的，一样近选血最少的，再一样选 id 最小的。`move`、`gather`、`build` 状态的单位不还手。中立实体不会被自动攻击。
 
+伤害：一次攻击扣目标 `attack.damage` 点生命。有的规则包有**兵种克制**：`game.types[类型].attack.vs` 列出克制倍数，打这些类型时伤害乘倍数（四舍五入），比如 `{ cavalry: 3 }` 是打骑兵伤害乘 3；没有 `vs` 就是打谁都一样。自动攻击不看克制（还是挑最近的），想让兵专打被自己克制的，要自己用 `cmd.attack` 指定目标。
+
 ## 建造（规则包里有能建造的单位时）
 
 - 单位能建什么看 `game.types[类型].builds`，建筑的造价是 `cost`，建造工作量是 `buildTicks`。

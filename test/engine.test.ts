@@ -317,3 +317,16 @@ test("队伍：盟友之间不会自动攻击，攻击命令被拒", () => {
   assert.match(reasons[0] ?? "", /盟友/)
   for (const e of (last as unknown as View).entities) assert.equal(e.hp, 100, "贴在一起 20 tick 也没互相打")
 })
+
+test("克制倍数（D-166）：打 attack.vs 里列出的类型伤害乘倍数（四舍五入），damaged 事件记实际伤害，回放 types 记下倍数", () => {
+  const types: Record<string, TypeSpec> = { ...TYPES, lancer: { kind: "unit", maxHp: 100, moveTicks: 1, sight: 4, attack: { damage: 9, range: 1, cooldown: 2, vs: { grunt: 2.5 } }, look } }
+  const rows = Array(3).fill(".".repeat(6))
+  const got: number[][] = [[], []]
+  const watch = (p: number) => (v: View) => {
+    for (const e of v.events) if (e.kind === "damaged") got[p].push(e.damage)
+  }
+  const r = play(mini(rows, [["lancer", 0, 2, 1], ["grunt", 1, 3, 1]], { maxTicks: 4, types }), watch(0), watch(1))
+  assert.ok(got[1].length > 0 && got[1].every((d) => d === 23), `grunt 挨打应该是 9 × 2.5 = 22.5 → 23：${got[1]}`)
+  assert.ok(got[0].length > 0 && got[0].every((d) => d === 10), `lancer 挨打不乘倍数：${got[0]}`)
+  assert.deepEqual(r.types.lancer.attack?.vs, { grunt: 2.5 })
+})

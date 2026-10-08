@@ -1,16 +1,17 @@
-// 歼灭：摧毁对方全部主基地获胜；到时间上限比击杀价值
-// 地图、开局和胜负判定在 ../common/annihilation.ts（克制歼灭也用）
+// 克制歼灭（D-166）：歼灭的地图和胜负，兵营出枪兵、骑兵、弓兵三种兵，枪兵克骑兵、骑兵克弓兵、弓兵克枪兵
+// 地图、开局和胜负判定在 ../common/annihilation.ts，三种兵在 ../common/counter.ts
 import type { Ruleset } from "../../src/core/types.ts"
 import { STANDARD_TERRAIN, standardTypes } from "../common/standard.ts"
 import { annihilationEnemyBases, annihilationResult, annihilationSetup, annihilationTimeUp, scoreAnnihilationKills } from "../common/annihilation.ts"
+import { withCounters } from "../common/counter.ts"
 import type { Objectives } from "./objectives.ts"
 
-const types = standardTypes()
+const types = withCounters(standardTypes())
 
 const ruleset: Ruleset = {
-  id: "annihilation",
-  name: "歼灭",
-  summary: "两人对战，采矿、出兵，摧毁对方主基地获胜",
+  id: "counter-annihilation",
+  name: "克制歼灭",
+  summary: "两人对战，枪兵克骑兵、骑兵克弓兵、弓兵克枪兵，看对手出什么兵再出克它的，摧毁对方主基地获胜",
   players: { min: 2, max: 2 },
   maxTicks: 6000,
   tickRate: 10,

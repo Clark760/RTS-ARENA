@@ -68,7 +68,7 @@ const len = (...xs: (string | null | undefined)[]) => xs.reduce((a, x) => a + [.
 const BLANKISH = /^\s*(?:\/\/+|\/\*+|\*+\/?)?\s*[-=*#~_/]*\s*$/
 
 /** 规则包的单位数值（老回放里没记攻击数据时，规则介绍的图例从这里补） */
-type TypeSpecs = Record<string, { attack?: { damage: number; range: number; cooldown: number } | null; gather?: unknown; builds?: string[]; look?: { name?: string } }>
+type TypeSpecs = Record<string, { attack?: { damage: number; range: number; cooldown: number; vs?: Partial<Record<string, number>> } | null; gather?: unknown; builds?: string[]; look?: { name?: string } }>
 
 export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile: string, fps: number, specs?: TypeSpecs): Scene[] {
   const sum = series.summary!
@@ -192,13 +192,16 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
 }
 
 /** 单位、建筑的一句话数值（图例用）：造价、生命、攻击 */
-function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string]): string {
+function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string], nameOf: (type: string) => string = (x) => x): string {
   const parts: string[] = []
   const cost = Object.values(t.cost ?? {}).reduce((a: number, c) => a + (c ?? 0), 0)
   if (t.kind === "resource") return "可采集"
   if (cost) parts.push(`${cost} 金`)
   if (t.maxHp) parts.push(`${t.maxHp} 血`)
   const attack = t.attack ?? spec?.attack
+  // 克制（D-166）：倍数大于 1 的写「克骑兵」，放在射程前面（图例排两栏、说明被截断时先留住它）
+  const counters = Object.entries(attack?.vs ?? {}).filter(([, m]) => (m ?? 1) > 1)
+  if (counters.length) parts.push(`克${counters.map(([k]) => nameOf(k)).join("、")}`)
   if (attack) parts.push(attack.range > 1 ? `射程 ${attack.range}` : "近战")
   // 能力按规则包里实际的写（歼灭的工人只采矿、不能建造）；老回放没记就看规则包，都没有就按"工人"笼统写采矿
   const gather = t.gather ?? (spec ? !!spec.gather : t.worker)
@@ -224,7 +227,7 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
   const legend = cand
     .filter((x) => kept.has(x.k))
     .sort((a, b) => (order[a.t.kind] ?? 3) - (order[b.t.kind] ?? 3))
-    .map(({ k, t }) => ({ shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, kind: t.kind, name: typeName(replay, k), detail: typeDetail(t, specs?.[k]) }))
+    .map(({ k, t }) => ({ shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, kind: t.kind, name: typeName(replay, k), detail: typeDetail(t, specs?.[k], (x) => typeName(replay, x)) }))
   const chars = lines.reduce((a, l) => a + [...l].length, 0)
   return {
     kind: "rules",
