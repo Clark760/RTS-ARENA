@@ -34,9 +34,10 @@ export function onTick(view: View, cmd: Commands): void {
   }
 
   // 兵营一直出骑兵
-  if (barracks && (barracks.queue?.length ?? 0) < 2 && gold >= 100) {
+  const cavCost = game.types.cavalry.cost.gold ?? 0
+  if (barracks && (barracks.queue?.length ?? 0) < 2 && gold >= cavCost) {
     cmd.produce(barracks, "cavalry")
-    gold -= 100
+    gold -= cavCost
   }
 
   // 够数了就出发；之后新出的骑兵直接跟上

@@ -19,11 +19,11 @@ export function counterUnits(): Record<string, TypeSpec> {
       attack: { damage: 9, range: 1, cooldown: 8, vs: { cavalry: 3 } },
       look: { shape: "diamond", label: "枪", name: "枪兵" },
     },
-    // 骑兵：贵、血厚、走得快（走一格 2 tick，别的兵 3 tick），打弓兵伤害 ×2.5
+    // 骑兵：贵、血厚、走得快（走一格 2 tick，别的兵 3 tick），打弓兵伤害 ×2.5。原来 100 金，配比实验里一半骑兵对平均配比 28:12，用户定改成 105（D-170）
     cavalry: {
       kind: "unit",
       maxHp: 170,
-      cost: { gold: 100 },
+      cost: { gold: 105 },
       buildTicks: 70,
       moveTicks: 2,
       sight: 6,

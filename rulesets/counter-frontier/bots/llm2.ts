@@ -1,6 +1,6 @@
 // 大模型第二轮试写（偏强）：仓库贴着矿放、三座兵营，出兵按小模拟挑「对手多出 30% 克我的兵时最不亏」的那种，侦察兵在对手家外轮换盯着，模拟占优再出击。
 // 外部大模型试写的 bot（2026-10-08，D-168）：子代理只读了 PROMPT.md、看不到平台源码和参考 bot 的源码，写到第 3 版停下，
-// 当时对 baseline、counter、rush、turtle 各 20 局全胜，对 expand 18-2、llm 4-16。原样收录，强度在 llm 和其余参考 bot 之间（参考 bot 联赛 80%，llm 98%）。
+// 当时对 baseline、counter、rush、turtle 各 20 局全胜，对 expand 18-2、llm 4-16。原样收录，强度在 llm 和其余参考 bot 之间（参考 bot 联赛 77%，llm 97%）。
 
 const W = game.width
 const H = game.height
