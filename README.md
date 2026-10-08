@@ -32,28 +32,35 @@
 
 ## 安装
 
-需要 Node.js 23.6 以上。
+需要 Node.js 23.6 以上。下面**两种方法选一种就行**，装好后效果一样：平台下载到本机，多了一个 `rts-arena` 命令。
 
-### Windows 不熟悉代码：双击 start.bat
+| | 方法一：双击 start.bat | 方法二：命令行 |
+|---|---|---|
+| 适合 | Windows 上不想敲命令 | 习惯用命令行 |
+| 自动做的事 | 下载平台、装依赖、装好命令，再建好 bot 目录 `my-bot`、打开网页播放器 | 下载平台、装依赖、装好命令；bot 目录自己建 |
+| 以后更新 | 双击 `update.bat` | `git pull && npm install` |
+
+### 方法一：双击 start.bat（Windows）
 
 1. 下载仓库里的 `start.bat`，放进一个新建的空文件夹（或者下载整个仓库的压缩包，用里面的 `start.bat`）。
 2. 双击它。没装 Node.js 或 Git 时会打开官网下载页，装好后再双击一次。
-3. 第一次运行会下载平台、建好自己的 bot 目录 `my-bot`（默认「歼灭」规则包），然后打开网页播放器。之后再双击就是直接打开播放器，播放器开着时别关那个黑窗口。
-4. 把 `my-bot` 文件夹交给大模型 agent（让它先读 `PROMPT.md`，再改 `bot.ts`），或者自己写。
+3. 第一次运行会做完上表里的事：bot 目录 `my-bot` 默认用「歼灭」规则包，最后打开网页播放器。之后再双击就是直接打开播放器；播放器开着时别关那个黑窗口。
+4. 把 `my-bot` 文件夹交给大模型 agent（让它先读 `PROMPT.md`，再改 `bot.ts`），或者自己写。接着看下面的「写一个 bot」。
 5. 更新平台：关掉播放器，双击平台文件夹里的 `update.bat`，`my-bot` 里的东西不会动。
 
-### 命令行
+### 方法二：命令行
 
 ```bash
 git clone https://gitee.com/mingomin/rts-arena.git
 cd rts-arena
 npm install          # 装依赖并构建（播放器等）
-npm install -g .     # 注册全局命令 rts-arena（指向这份克隆，git pull 后就是新版）
+npm install -g .     # 装好 rts-arena 命令（指向这份克隆，git pull 后就是新版）
 ```
 
-- 更新：在克隆目录里 `git pull && npm install`。
+装好后照下面的「写一个 bot」建自己的 bot 目录。
+
 - 平台只装一次，每个人只维护自己的 bot 目录，bot 不用放进平台仓库。
-- 不要用 `npm install -g git+https://…` 直接装，会构建失败。没有仓库权限的人，可以请有权限的人在克隆目录里 `npm pack`，把打出来的 `.tgz` 发过去，`npm install -g <文件>.tgz` 安装。
+- 不要用 `npm install -g git+https://…` 直接装，会构建失败。没有仓库权限的人，可以请有权限的人在克隆目录里 `npm pack`，把打出来的 `.tgz` 发过去，用 `npm install -g <文件>.tgz` 安装。
 
 ## 写一个 bot
 
