@@ -8,11 +8,11 @@ import { spawnMirrored } from "./standard.ts"
 /** 三种兵（每次返回新对象，可以放心改） */
 export function counterUnits(): Record<string, TypeSpec> {
   return {
-    // 枪兵：便宜、皮实，打骑兵伤害 ×3；打别的兵只是普通近战
+    // 枪兵：皮实，打骑兵伤害 ×3；打别的兵只是普通近战。原来 70 金，试写发现按造价最划算（对接近均衡的对手最好出五六成枪兵），用户定改成 75（D-169）
     spearman: {
       kind: "unit",
       maxHp: 130,
-      cost: { gold: 70 },
+      cost: { gold: 75 },
       buildTicks: 60,
       moveTicks: 3,
       sight: 5,
