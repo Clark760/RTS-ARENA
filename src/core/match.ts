@@ -176,7 +176,11 @@ function play(opts: MatchOptions, w: World): Replay {
   for (const [name, def] of Object.entries(w.types))
     types[name] = { kind: def.kind, w: def.w, h: def.h, maxHp: def.maxHp, moveTicks: def.moveTicks, sight: def.sight, cost: def.cost, worker: def.gather !== null || def.builds.length > 0, gather: def.gather !== null, builds: def.builds.length ? def.builds : undefined, attack: def.attack ?? undefined, look: rules.types[name].look }
   const colors: Record<string, string> = {}
-  for (const [ch, t] of Object.entries(rules.terrain)) colors[ch] = t.color
+  const walkable: Record<string, boolean> = {}
+  for (const [ch, t] of Object.entries(rules.terrain)) {
+    colors[ch] = t.color
+    walkable[ch] = t.walkable
+  }
 
   return {
     format: "rts-arena-replay",
@@ -186,7 +190,7 @@ function play(opts: MatchOptions, w: World): Replay {
     tickRate: rules.tickRate,
     maxTicks: rules.maxTicks,
     players: opts.bots.map((b, i) => ({ name: b.name, bot: b.file, team: w.teams[i] })),
-    map: { width: w.width, height: w.height, terrain: w.terrain, colors },
+    map: { width: w.width, height: w.height, terrain: w.terrain, colors, walkable },
     types,
     fog: rules.fog,
     initial: rec.initial,

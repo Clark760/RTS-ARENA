@@ -53,6 +53,8 @@ for (const rules of [annihilation, koth, harvest, melee, frontier, tech, beacons
     for (const b of bots) {
       assert.ok(b.file.startsWith(b.name === "idle" ? join(ROOT, "bots") : join(ROOT, "rulesets", rules.id, "bots")), b.file)
       assert.ok(b.about.length >= 10, `${b.name} 第一行没写打法`)
+      // 只取第一行：要是一句完整的话（以句号结尾），别写成半句，list 和说明书里看着像被截断了
+      assert.match(b.about, /。$/, `${b.name} 的第一行要以句号结尾`)
       assert.ok(prompt.includes(`| \`${b.name}\` | ${b.about} |`), `PROMPT.md 里没有 ${b.name}`)
     }
   })

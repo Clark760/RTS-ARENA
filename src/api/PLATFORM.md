@@ -65,9 +65,10 @@ export function onTick(view: View, cmd: Commands): void {
 - 没建好的建筑（实体上有 `construction: { done, total }`，谁看见都有）：会挡路、能被打，但不能生产、不能当交货点、不能攻击。被打掉了，去建它的单位变成 idle；你收到的 `died` 事件带 `unfinished: true`。（`died` 事件带 `removed: true` 的是规则包按玩法移除的，不是被打死的。）关键事件里标"（规则包）"的是规则包自己写的事件（比如"扛起了旗"）。
 - 放地基前可以用全局函数 `canBuild(view, type, x, y)` 检查位置，和引擎的判断一致；`buildProblem(view, type, x, y)` 做同样的检查，返回放不下的原因（放得下返回 null），比如哪一格不在视野里、被哪个实体挡着。规则包还可能有自己的放置限制（见玩法说明），这两个函数不知道。
 - 找位置可以用 `findBuildSpot(view, type, near, maxRange?, margin?)`：在 `near` 附近按距离从近到远找（默认 8 格以内），占地四周 `margin` 格（默认 1）以内不挨着建筑和资源点，免得堵路；返回左上角 `{ x, y }`（`buildProblem` 一定是 null），找不到返回 null（附近不在视野里，或者都被占了）。要在很多地方找时注意燃料。
-- 隔着墙时 `dist` 不准，按地形走路的远近用 `pathDistances(view, from)`：从一个点、一个实体或一组出发，绕开地形和看得见的建筑、资源点（单位不算挡路），返回每一格要走几步（下标 `y * game.width + x`，走不到是 -1）。集结点、哪片矿离谁近、绕墙的远近都用得上；整张图算一遍，存起来反复用。
+- 隔着墙时 `dist` 不准，按地形走路的远近用 `pathDistances(view, from)`：从一个点、一个实体或一组出发，绕开地形和看得见的建筑、资源点（单位不算挡路），返回每一格要走几步（下标 `y * game.width + x`，走不到是 -1）。集结点、哪片矿离谁近、绕墙的远近都用得上；整张图算一遍，存起来反复用。`view` 写 `null` 就只看地形，`onStart` 里还没有 `view` 时也能先算。
 - 有战争迷雾时，占地的每一格都要在你方（或盟友）某个实体的视野里，所以去远处建要先派人过去，到了再下 `build`。写法：先 `cmd.move` 让工人走到目标附近，之后每次决策都用 `buildProblem` 看一眼，返回 null 就 `cmd.build`；工人已经停下（idle）还放不下，就把原因打进日志、换个位置。别用"离目标几格以内才 build"这种写死的距离判断：工人可能永远停在差一格的地方，build 一次都没发出去，被拒命令的统计里也看不到。算工人到一块还没放下的地基的距离，用 `dist(工人, { x, y, w, h })`（按占地算）。
 - 注意别把工人去资源点和交货点的路堵死：建筑四周最好留出一格。
+- 交货点（能建仓库这类的规则包）离资源点越近，工人一个来回越快：贴着资源点放，让工人站的格子同时贴着资源点和交货点，采满了不用走路就能交（试写里这样比回主基地交货快 40% 以上）。用 `findBuildSpot` 找这种位置时 `margin` 写 0（默认的 1 会把它放远一格），放好后确认没把别的工人去矿的路堵死。
 
 ## 中立实体
 
@@ -82,6 +83,7 @@ export function onTick(view: View, cmd: Commands): void {
 - 一格只能站一个单位。建筑、资源点和不可通行的地形挡路。
 - 地形和资源点整局都看得见（`game.terrain`；资源点的位置和剩余量 `amount` 一直在 `view.entities` 里）。如果规则包开了战争迷雾，其他实体只看得到己方任一实体视野范围内的。
 - 地图可能每局不同：平台自带的规则包都按种子随机生成墙、水和一部分资源点（对称，每家看到的一样），规则包说明书的「开局地图」一节写了哪些固定、哪些会变。开局从 `game.terrain` 和 `view.entities` 读当局的地图，别把坐标写死；`rts-arena map <规则包> --seed N` 看别的种子的地图，`rts-arena check` 每个位置用不同的种子试打。
+- 两人局的地图中心对称：找位置、挑集结点、挑目标时分数一样的，别总取第一个（左上角那个），否则右下角的座位系统性吃亏、自己打自己会一边倒；右下角的座位按镜像顺序找（从右下往左上），或者分数一样时取离自己家近的。
 - 资源点的 `hp`、`maxHp` 都是 0，剩余量看 `amount`。
 - 单位数值可能在局中改变（有的规则包有科技、增益，看规则说明）：`game.types` 一直是原值，实体的 `stats` 字段列出它现在和原值不一样的项（射程、视野、伤害、走多快、采集），没改过就没有这个字段；生命上限直接看实体的 `maxHp`。算射程、视野时先看 `stats`，没有再看 `game.types`。看得见的对手单位也带 `stats`。
 - 实体 id 是随机分配的正整数，不重复使用，大小不代表先后。
@@ -140,5 +142,5 @@ rts-arena help run                 # 只看某个命令的用法和选项
 - 多人局（规则包允许 3 人以上时）：`--games` 会在同一个种子上把座位轮换一遍，最后报平均名次。
 - 分队：`rts-arena run 队友.ts 对手1.ts 对手2.ts --teams 2v2`，按 你、参数 的顺序分组（你和队友一队）；`--games` 会轮换两队的位置。
 - 想用程序读结果：`rts-arena run ... --json` 每行一个 JSON 事件，`type` 是 start（参赛者）、game（每局：赢家座位 winners、名次 ranking、回放和日志文件名）、summary（胜场、平均名次）、warning、error。
-- 回放默认写在 bot 目录的 `replays/`（`--out` 可以改），每局一个 JSON 文件；每次 run 另有一份 `*.series.json` 汇总。网页播放器能拖进度条、点实体看它当前的命令、对着画面看你的日志和每条被拒命令。
-- 回放 JSON 的结构：`map` 是地图（`width`、`height`、`terrain` 每行一个字符串、`colors`），`types` 是各实体类型的占地、生命、视野、造价等，`players` 是参赛者（名字、bot 文件、队伍），`result` 是结果，`bots` 是每个 bot 的统计；`initial` 是开局快照（`entities` 实体列表，每个有 `id`、`type`、`owner`、`x`、`y`、`hp`、`ord` 命令文字；`players` 每人的资源、分数、是否还在；`markers` 规则包的区域标记；`status` 状态文字），`frames[i]` 是第 i+1 tick 的变化（`t` 字段就是这个 tick），字段有 `spawn`（新实体）、`move`（`[id, x, y, id, x, y, …]`）、`hp`（`[id, 生命, …]`，资源点是剩余量）、`die`（死亡 id）、`removed`（`die` 里规则包移除的，不是被打死的）、`shots`（`[攻击者, 目标, …]`）、`ord`（`[[id, 命令文字], …]`，注意是嵌套数组，不像 `move`、`hp` 是扁平的）、`bp`（`[id, 建造进度百分比, …]`，100 是建好了）、`owner`（`[id, 新主人, …]`，规则包改了归属的实体，-1 是中立）、`st`（`[[id, 改过的数值], …]`，规则包局中改了数值的实体，null 是改回原值）、`notes`（规则包写的事件）、`players`（资源和分数）、`logs`（你的日志）、`errs`（报错和被拒命令）。
+- 回放默认写在 bot 目录的 `replays/`（`--out` 可以改），每局一个 JSON 文件；每次 run、league 另有一份 `*.series.json` 汇总：`participants`（参赛的 bot：`name`、`file`）、`results`（每局一项：局号 `index`、种子 `seed`、各座位的名字 `names`、赢家座位 `winners`、名次 `ranking`、结束原因 `reason`、结束 tick `tick`、回放文件名 `replay`）、`summary`（打完才有；联赛里有排名 `standings`、对阵表 `matrix`、统计 `stats`、精彩对局 `highlights`）。想按对手列出输掉的局，就读它的 `results`。网页播放器能拖进度条、点实体看它当前的命令、对着画面看你的日志和每条被拒命令。
+- 回放 JSON 的结构：`map` 是地图（`width`、`height`、`terrain` 每行一个字符串、`colors`、`walkable` 每种地形能不能走），`types` 是各实体类型的占地、生命、视野、造价等，`players` 是参赛者（名字、bot 文件、队伍），`result` 是结果，`bots` 是每个 bot 的统计；`initial` 是开局快照（`entities` 实体列表，每个有 `id`、`type`、`owner`、`x`、`y`、`hp`、`ord` 命令文字；`players` 每人的资源、分数、是否还在；`markers` 规则包的区域标记；`status` 状态文字），`frames[i]` 是第 i+1 tick 的变化（`t` 字段就是这个 tick），字段有 `spawn`（新实体）、`move`（`[id, x, y, id, x, y, …]`）、`hp`（`[id, 生命, …]`，资源点是剩余量）、`die`（死亡 id）、`removed`（`die` 里规则包移除的，不是被打死的）、`shots`（`[攻击者, 目标, …]`）、`ord`（`[[id, 命令文字], …]`，注意是嵌套数组，不像 `move`、`hp` 是扁平的）、`bp`（`[id, 建造进度百分比, …]`，100 是建好了）、`owner`（`[id, 新主人, …]`，规则包改了归属的实体，-1 是中立）、`st`（`[[id, 改过的数值], …]`，规则包局中改了数值的实体，null 是改回原值）、`notes`（规则包写的事件）、`players`（资源和分数）、`logs`（你的日志）、`errs`（报错和被拒命令）。

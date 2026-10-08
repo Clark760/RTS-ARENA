@@ -26,7 +26,7 @@ let rally: Pos | null = null
 /** 去分矿建仓库的工人 */
 let expander: number | null = null
 
-const isCombat = (e: Entity) => game.types[e.type].kind === "unit" && e.type !== "worker"
+const isCombat = (e: Entity) => game.types[e.type].kind === "unit" && e.type !== "worker" && e.type !== "scout"
 
 /** u 打 e 一下的伤害：打被自己克的兵乘克制倍数（game.types[类型].attack.vs） */
 function hitOn(u: Entity, e: Entity): number {

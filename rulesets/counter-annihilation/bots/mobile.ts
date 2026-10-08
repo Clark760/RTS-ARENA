@@ -1,4 +1,4 @@
-// 骑射（固定配比）：只出骑兵和弓兵（1:1），不出枪兵。骑兵在前面冲、专切对方弓兵，弓兵在后面射对方枪兵；
+// 骑射（固定配比）：只出骑兵和弓兵（1:1），不出枪兵。骑兵在前面冲、专切对方弓兵，弓兵在后面射对方枪兵。
 // 对上三种兵平均出的对手占便宜，碰上多出枪兵的就吃亏。经济、集结、进攻、回防和基准一样。
 
 const ATTACK_AT = 10
@@ -16,7 +16,7 @@ let mode: "defend" | "attack" = "defend"
 let produced = 0
 let rally: Pos | null = null
 
-const isCombat = (e: Entity) => game.types[e.type].kind === "unit" && e.type !== "worker"
+const isCombat = (e: Entity) => game.types[e.type].kind === "unit" && e.type !== "worker" && e.type !== "scout"
 
 /** u 打 e 一下的伤害：打被自己克的兵乘克制倍数（game.types[类型].attack.vs） */
 function hitOn(u: Entity, e: Entity): number {

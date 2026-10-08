@@ -1,5 +1,6 @@
-// 针对（看兵出兵）：记下看到过的敌方兵各有几个，出克它们的兵（枪兵克骑兵、骑兵克弓兵、弓兵克枪兵），按对方的配比配；
-// 还没看清对方出什么兵时三种轮流出，第 300 tick 派一个工人去对方主基地前面 15 格的地方侦察。经济、建造、集结、进攻、回防和基准一样。
+// 针对（看兵出兵）：记下看到过的敌方兵各有几个，出克它们的兵（枪兵克骑兵、骑兵克弓兵、弓兵克枪兵），按对方的配比配。
+// 开局就派侦察兵去对方主基地前面 15 格的地方盯着，敌方兵靠近就往回退一段，过一会再回去；还没看清对方出什么兵时三种轮流出。
+// 经济、建造、集结、进攻、回防和基准一样。
 // - 配比：对方每种兵按数量折成克它的兵（对方骑兵多就多出枪兵……），哪种兵比想要的比例差得最多就出哪种。
 // - 敌方兵记 600 tick，看到死了就划掉，所以对方换兵种以后跟着换。
 
@@ -12,10 +13,9 @@ const PLAN: TypeName[] = ["spearman", "archer", "cavalry"]
 const CREW: Partial<Record<TypeName, number>> = { barracks: 2, depot: 2, tower: 1 }
 /** 看到过的敌方战斗单位：类型、最后一次出现的 tick，用来估计对方兵力和配比 */
 const enemySeen = new Map<number, { type: TypeName; t: number }>()
-/** 侦察的工人：0 还没派，-1 不再派 */
-let scoutId = 0
-let scoutsSent = 0
-const SCOUT_AT = 300
+/** 侦察兵盯着的地方离对方主基地几格；敌方兵靠近时退到哪个 tick 为止 */
+const SCOUT_DIST = 15
+let scoutBackUntil = 0
 /** 每种兵被谁克 */
 const COUNTER: Partial<Record<TypeName, TypeName>> = { spearman: "archer", cavalry: "spearman", archer: "cavalry" }
 const SEEN_FOR = 600
@@ -26,7 +26,7 @@ let rally: Pos | null = null
 /** 去分矿建仓库的工人 */
 let expander: number | null = null
 
-const isCombat = (e: Entity) => game.types[e.type].kind === "unit" && e.type !== "worker"
+const isCombat = (e: Entity) => game.types[e.type].kind === "unit" && e.type !== "worker" && e.type !== "scout"
 
 /** u 打 e 一下的伤害：打被自己克的兵乘克制倍数（game.types[类型].attack.vs） */
 function hitOn(u: Entity, e: Entity): number {
@@ -202,6 +202,14 @@ export function onTick(view: View, cmd: Commands): void {
   const natural = naturalMines(base, enemyBaseCenter, goldmines)
   const homeGold = goldmines.filter((m) => dist(m, base) <= 10).reduce((a, m) => a + (m.amount ?? 0), 0)
 
+  // ---------- 侦察兵：去对方主基地前面盯着对方出什么兵；5 格内有敌方兵就往回退 8 格，150 tick 后再回去 ----------
+  const scout = mine.find((e) => e.type === "scout")
+  if (scout) {
+    if (enemyUnits.some((e) => isCombat(e) && dist(e, scout) <= 5)) scoutBackUntil = view.tick + 150
+    const spot = pointToward(enemyBaseCenter, base, view.tick < scoutBackUntil ? SCOUT_DIST + 8 : SCOUT_DIST)
+    if (dist(scout, spot) > 1 && (scout.order?.kind !== "move" || scout.order.x !== spot.x || scout.order.y !== spot.y)) cmd.move(scout, spot.x, spot.y)
+  }
+
   // ---------- 威胁 ----------
   const threats = enemyUnits.filter(
     (e) => dist(e, base) <= 12 || buildings.some((b) => dist(e, b) <= 8) || workers.some((w) => dist(e, w) <= 5),
@@ -211,20 +219,6 @@ export function onTick(view: View, cmd: Commands): void {
   let gold = view.resources.gold
   let reserve = 0
   const busy = new Set<number>() // 这次已经派了活的工人
-  // 侦察：还没看清对方出什么兵（看到的敌方兵不到 4 个），派一个工人到对方主基地前面 15 格的地方看着；看清了或者死了就回去采矿
-  if (scoutId > 0 && !workers.some((w) => w.id === scoutId)) scoutId = scoutsSent < 2 ? 0 : -1
-  if (scoutId > 0 && enemySeen.size >= 4) scoutId = -1
-  if (scoutId === 0 && view.tick >= SCOUT_AT && enemySeen.size < 4 && workers.length >= 6) {
-    const w = workers.find((x) => !x.carrying && x.order?.kind !== "build") ?? workers[0]
-    scoutId = w.id
-    scoutsSent++
-  }
-  const scout = workers.find((w) => w.id === scoutId)
-  if (scout) {
-    busy.add(scout.id)
-    const spot = pointToward(enemyBaseCenter, base, 15)
-    if (scout.order?.kind !== "move" || scout.order.x !== spot.x || scout.order.y !== spot.y) cmd.move(scout, spot.x, spot.y)
-  }
   const freeWorkers = () => workers.filter((w) => w.order?.kind !== "build" && w.id !== expander && !busy.has(w.id))
   const place = (type: TypeName, near: Pos, maxR: number): void => {
     const cost = game.types[type].cost.gold ?? 0

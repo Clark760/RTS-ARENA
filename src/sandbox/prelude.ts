@@ -134,7 +134,7 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
     var block = new Uint8Array(N), d = new Array(N);
     for (i = 0; i < N; i++) d[i] = -1;
     for (y = 0; y < H; y++) for (x = 0; x < W; x++) if (!g.walkable[g.terrain[y][x]]) block[y * W + x] = 1;
-    var es = view.entities;
+    var es = view && view.entities ? view.entities : [];
     for (i = 0; i < es.length; i++) {
       var e = es[i], t = g.types[e.type];
       if (!t || t.kind === "unit") continue;

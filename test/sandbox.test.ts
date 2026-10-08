@@ -319,12 +319,13 @@ test("pathDistances：按地形走路的步数，绕开墙和建筑；从建筑�
       const a = pathDistances(view, { x: 0, y: 0 })
       const h = pathDistances(view, view.entities.find((e) => e.type === "hut")!)
       const both = pathDistances(view, [{ x: 0, y: 0 }, { x: 5, y: 2 }])
-      console.log(JSON.stringify([a[3], a[4], a[2 * W + 5], h[3], h[2 * W + 4], h[0], both[3]]))
+      const terrainOnly = pathDistances(null, { x: 0, y: 0 })
+      console.log(JSON.stringify([a[3], a[4], a[2 * W + 5], h[3], h[2 * W + 4], h[0], both[3], terrainOnly[4]]))
     }`)
   b.start(game)
   const r = b.tick(view)
-  // (0,0) 到 (3,0) 曼哈顿 3，隔着墙要绕 7 步；建筑的格子走不到；从建筑出发贴着的格子是 1；多个起点取最近的
-  assert.deepEqual(JSON.parse(r.logs[0]), [7, -1, 7, 1, 1, 7, 4])
+  // (0,0) 到 (3,0) 曼哈顿 3，隔着墙要绕 7 步；建筑的格子走不到；从建筑出发贴着的格子是 1；多个起点取最近的；view 写 null 只看地形（建筑不挡）
+  assert.deepEqual(JSON.parse(r.logs[0]), [7, -1, 7, 1, 1, 7, 4, 8])
   b.dispose()
 })
 

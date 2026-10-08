@@ -1,9 +1,9 @@
-// 克制歼灭（D-166）：歼灭的地图和胜负，兵营出枪兵、骑兵、弓兵三种兵，枪兵克骑兵、骑兵克弓兵、弓兵克枪兵
+// 克制歼灭（D-166）：歼灭的地图和胜负，兵营出枪兵、骑兵、弓兵三种兵，枪兵克骑兵、骑兵克弓兵、弓兵克枪兵；开局每家送 1 个侦察兵（D-167）
 // 地图、开局和胜负判定在 ../common/annihilation.ts，三种兵在 ../common/counter.ts
 import type { Ruleset } from "../../src/core/types.ts"
 import { STANDARD_TERRAIN, standardTypes } from "../common/standard.ts"
-import { annihilationEnemyBases, annihilationResult, annihilationSetup, annihilationTimeUp, scoreAnnihilationKills } from "../common/annihilation.ts"
-import { withCounters } from "../common/counter.ts"
+import { ANNIHILATION_H, ANNIHILATION_W, annihilationEnemyBases, annihilationResult, annihilationSetup, annihilationTimeUp, scoreAnnihilationKills } from "../common/annihilation.ts"
+import { spawnScouts, withCounters } from "../common/counter.ts"
 import type { Objectives } from "./objectives.ts"
 
 const types = withCounters(standardTypes())
@@ -25,6 +25,7 @@ const ruleset: Ruleset = {
 
   setup(ctx) {
     annihilationSetup(ctx, types)
+    spawnScouts(ctx, ANNIHILATION_W, ANNIHILATION_H, types)
   },
 
   onTick(ctx) {

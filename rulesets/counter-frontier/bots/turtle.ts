@@ -13,7 +13,7 @@ let mode: "defend" | "attack" = "defend"
 let produced = 0
 let expander: number | null = null
 
-const isCombat = (e: Entity) => game.types[e.type].kind === "unit" && e.type !== "worker"
+const isCombat = (e: Entity) => game.types[e.type].kind === "unit" && e.type !== "worker" && e.type !== "scout"
 const isBuilding = (e: Entity) => game.types[e.type].kind === "building"
 
 function nearest<T extends Pos>(from: Pos, list: T[]): T | undefined {
