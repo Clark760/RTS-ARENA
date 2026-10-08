@@ -9,6 +9,7 @@ import { join } from "node:path"
 import { test } from "node:test"
 import { createArenaApi } from "../src/cli/arena-api.ts"
 import { leagueStandings, leagueTables, los, teamSplits, type LeagueGame } from "../src/cli/league.ts"
+import { isRout } from "../src/cli/battles.ts"
 import { excitement, gameFacts, pickHighlights } from "../src/cli/highlights.ts"
 import type { Replay } from "../src/core/types.ts"
 
@@ -138,6 +139,17 @@ test("命令行：联赛里同一个 bot 可以报名两次（带编号）；统
   }
 })
 
+test("一边倒：只有一方在死人、有一方没死兵、或者死得少的一方不到对方的 1/4，都不算大战", () => {
+  const d = (owner: number, fighter: boolean, k: number) => Array.from({ length: k }, () => ({ owner, fighter }))
+  assert.equal(isRout(d(1, false, 6)), true, "兵冲进矿区杀了 6 个工人，自己没死")
+  assert.equal(isRout([...d(1, false, 8), ...d(0, true, 2)]), true, "杀了 8 个工人、死了 2 个兵：守方没死兵")
+  assert.equal(isRout([...d(0, true, 9), ...d(1, true, 2)]), true, "兵对兵 9 : 2")
+  assert.equal(isRout([...d(0, true, 5), ...d(1, true, 2), ...d(1, false, 4)]), false, "兵对兵 5 : 2，再加 4 个工人")
+  // 分队时盟友合在一起算
+  assert.equal(isRout([...d(0, true, 2), ...d(2, true, 3), ...d(1, true, 1)], (p) => p % 2), true, "盟友合起来死 5 个、对面死 1 个")
+  assert.equal(isRout([...d(0, true, 2), ...d(2, true, 1), ...d(1, true, 1)], (p) => p % 2), false)
+})
+
 test("精彩对局：落后又反超算逆转，主基地差点被拆算险胜；挑的时候同一组对手最多 2 局，太平淡的不要", () => {
   const unit = (id: number, owner: number, x: number) => ({ id, type: "u", owner, x, y: 5, hp: 10, ord: "idle" })
   const frames: Record<string, unknown>[] = Array.from({ length: 100 }, (_, i) => ({ t: i + 1 }))
@@ -179,10 +191,13 @@ test("精彩对局：落后又反超算逆转，主基地差点被拆算险胜�
   assert.match(ex.reasons.join("；"), /逆转：t\d+ 时 甲 的兵力和建筑只有 乙 的 20%/)
   assert.match(ex.reasons.join("；"), /险胜：甲 的主基地一度只剩 20% 血/)
   assert.ok(ex.score > 60 && ex.score <= 100, String(ex.score))
+  // 两边都伤得重才算看点：一方被打光、另一方几乎没损失的不算
+  assert.ok(!excitement({ ...f, sideLoss: [0.05, 0.9] }, null, (s) => names[s]).reasons.some((r) => r.includes("伤得重")))
+  assert.ok(excitement({ ...f, sideLoss: [0.5, 0.6] }, null, (s) => names[s]).reasons.includes("两边都伤得重：乙 损失 60%，甲 损失 50%"))
   // bot 出错扣分
   assert.ok(excitement({ ...f, trouble: true }, null, (s) => names[s]).score < ex.score - 25)
   // 每项都没到写出来的门槛（几样都沾一点）：往后排，看点写占分最多那项的实际数字，不空着
-  const mild = { ...f, materialLow: { ...f.materialLow!, ratio: 0.9 }, leadChanges: 1, killedRatio: 0.3, battles: 1, biggestBattle: 4, winnerBaseMin: 0.9, finalScores: { winner: 400, foe: 280 } }
+  const mild = { ...f, materialLow: { ...f.materialLow!, ratio: 0.9 }, leadChanges: 1, killedRatio: 0.3, sideLoss: [0.3, 0.1], battles: 1, biggestBattle: 4, winnerBaseMin: 0.9, finalScores: { winner: 400, foe: 280 } }
   const exMild = excitement(mild, null, (s) => names[s])
   assert.deepEqual(exMild.reasons, ["比分 400 : 280"])
   // 挑：同一组对手最多 2 局，不到 20 分的不要

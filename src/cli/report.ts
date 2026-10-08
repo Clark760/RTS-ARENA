@@ -2,7 +2,7 @@
 // 列出关键事件、战斗、损失，估算采集量，最后给几条只基于事实的"可能的问题"。
 import { applyFrame, ReplayModel, type State } from "../core/replay-model.ts"
 import type { EntSnap, Replay } from "../core/types.ts"
-import { groupBattles, MIN_BATTLE } from "./battles.ts"
+import { fighterTest, groupBattles, isRout, MIN_BATTLE } from "./battles.ts"
 
 export interface ReportOptions {
   /** 从这个玩家的角度写（"你"、"对手"），只给他的提示；不给就写全部玩家 */
@@ -352,6 +352,8 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
 
   // 战斗：切分规则见 battles.ts（和精彩对局、联赛视频一样），3 个以上才列
   const big = groupBattles(deaths).filter((b) => b.length >= MIN_BATTLE)
+  const fighter = fighterTest(types)
+  const rout = (b: Death[]) => isRout(b.map((d) => ({ owner: d.owner, fighter: fighter(d.type) })), team)
   /** 这场开打前一刻各方的兵数（不算工人） */
   const armyBefore = (b: Death[]) => {
     const st = model.stateAt(Math.max(0, b[0].t - 1))
@@ -359,7 +361,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     for (const e of st.ents.values()) if (e.owner >= 0 && e.owner < n && isArmy(e.type)) army[e.owner]++
     return army
   }
-  out.push(`## 战斗（死 3 个以上的）`)
+  out.push(`## 战斗（死 3 个以上的；只有一方在死人、有一方没死兵、或者死得少的一方不到对方的 1/4 的，标「一边倒」，精彩对局不算大战）`)
   if (big.length === 0) out.push("没有")
   const shownBattles = big.length > 15 && !opts.full ? [...big.slice(0, 5), null, ...big.slice(-10)] : big
   for (const b of shownBattles) {
@@ -378,7 +380,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       })
     const sidesIn = [...new Set(b.map((d) => d.owner))].filter((p) => p >= 0).sort()
     const army = hasArmy && sidesIn.length > 0 ? armyBefore(b) : null
-    out.push(`t${b[0].t}～${b[b.length - 1].t} 在 (${cx}, ${cy}) 附近：${loss.join("；")}${army ? `（开打时兵数：${sidesIn.map((p) => `${who0(p)} ${army[p]}`).join("，")}）` : ""}`)
+    out.push(`t${b[0].t}～${b[b.length - 1].t} 在 (${cx}, ${cy}) 附近${rout(b) ? "（一边倒）" : ""}：${loss.join("；")}${army ? `（开打时兵数：${sidesIn.map((p) => `${who0(p)} ${army[p]}`).join("，")}）` : ""}`)
   }
   out.push("")
 
@@ -498,7 +500,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     if (hasArmy) {
       if (firstArmy[p] < 0 && firstHitTaken[p] >= 0) hints.push(`整局没有兵（只有工人），第 ${firstHitTaken[p]} tick 起挨打`)
       else if (firstArmy[p] > 0 && firstHitTaken[p] >= 0 && firstArmy[p] > firstHitTaken[p]) hints.push(`第 ${firstHitTaken[p]} tick 就挨打了，第一个兵到 t${firstArmy[p]} 才有`)
-      // 第一场大战开打时的兵力
+      // 第一场战斗开打时的兵力
       const first = big.find((b) => b.some((d) => d.owner === p))
       if (first) {
         const army = armyBefore(first)
@@ -507,7 +509,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
         if (foes.length && army[p] < most) {
           const cx = Math.round(first.reduce((a, x) => a + x.x, 0) / first.length)
           const cy = Math.round(first.reduce((a, x) => a + x.y, 0) / first.length)
-          hints.push(`第一场大战（t${first[0].t}，(${cx}, ${cy}) 附近）开打时兵数（不算工人）：${who0(p)} ${army[p]}，${foes.map((q) => `${who0(q)} ${army[q]}`).join("、")}`)
+          hints.push(`第一场战斗（t${first[0].t}，(${cx}, ${cy}) 附近）开打时兵数（不算工人）：${who0(p)} ${army[p]}，${foes.map((q) => `${who0(q)} ${army[q]}`).join("、")}`)
         }
       }
     }

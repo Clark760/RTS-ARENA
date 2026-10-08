@@ -1,8 +1,9 @@
-// 联赛的精彩对局：从回放算每局的"看点"（逆转、优势换手、大战、险胜、爆冷），打个精彩度，挑出最值得看的几局。
+// 联赛的精彩对局：从回放算每局的"看点"（逆转、优势换手、两边都伤得重、大战、险胜、爆冷），打个精彩度，挑出最值得看的几局。
+// 一边倒的不算看点：兵冲进矿区杀工人不算大战，一方被打光、另一方几乎没损失不算伤得重（D-164）
 // 只用回放里的通用信息（实体造价、生命、死亡、分数），所有规则包都能用。
 import { applyFrame, ReplayModel } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
-import { groupBattles, MIN_BATTLE } from "./battles.ts"
+import { fighterTest, groupBattles, isRout, MIN_BATTLE } from "./battles.ts"
 
 /** 一局的看点（和联赛排名无关的部分，打完一局就能算） */
 export interface GameFacts {
@@ -16,11 +17,13 @@ export interface GameFacts {
   scoreLow: { t: number; mine: number; theirs: number; foe: number } | null
   /** 兵力领先的一方换了几次（领先要超过 15% 才算） */
   leadChanges: number
-  /** 死 3 个以上的战斗场数、最大一场死了几个 */
+  /** 大战（死 3 个以上、不是一边倒的战斗）的场数、最大一场死了几个 */
   battles: number
   biggestBattle: number
   /** 打死的（按造价）占双方所有单位和建筑造价的比例 */
   killedRatio: number
+  /** 各方（和 sides 对应）被打掉的占自己造过的比例（按造价） */
+  sideLoss: number[]
   /** 赢家的主建筑（开局最大生命的建筑）最低剩多少血（比例）；没有主建筑时 null */
   winnerBaseMin: number | null
   /** 最后的分数：赢家和最高的对手（规则包有分数时） */
@@ -29,6 +32,7 @@ export interface GameFacts {
   trouble: boolean
 }
 
+const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
 const costOf = (replay: Replay, type: string) => Object.values(replay.types[type]?.cost ?? {}).reduce((a: number, c) => a + (c ?? 0), 0)
 
 export function gameFacts(replay: Replay): GameFacts {
@@ -61,10 +65,13 @@ export function gameFacts(replay: Replay): GameFacts {
     baseMin.set(p, Math.min(baseMin.get(p) ?? 1, Math.max(0, hp) / max))
   }
 
-  let built = 0
-  for (const e of s.ents.values()) if (e.owner >= 0 && kind(e.type) !== "resource") built += costOf(replay, e.type)
-  let killed = 0
-  const deaths: { t: number; x: number; y: number }[] = []
+  // 各方造过的、被打掉的（按造价）
+  const builtBy = sides.map(() => 0)
+  const lostBy = sides.map(() => 0)
+  const addBuilt = (owner: number, type: string) => (builtBy[sides.indexOf(side(owner))] += costOf(replay, type))
+  for (const e of s.ents.values()) if (e.owner >= 0 && e.owner < n && kind(e.type) !== "resource") addBuilt(e.owner, e.type)
+  const fighter = fighterTest(replay.types)
+  const deaths: { t: number; x: number; y: number; owner: number; fighter: boolean }[] = []
   const samples: { t: number; mat: number[]; score: number[] }[] = []
   const sample = (t: number) => {
     const mat = sides.map(() => 0)
@@ -83,14 +90,14 @@ export function gameFacts(replay: Replay): GameFacts {
       const e = s.ents.get(id)
       if (!e || removed.has(id) || kind(e.type) === "resource") continue
       if (mainIds.has(id)) noteHp(id, 0)
-      if (e.owner < 0) continue
-      killed += costOf(replay, e.type)
-      deaths.push({ t: f.t, x: e.x, y: e.y })
+      if (e.owner < 0 || e.owner >= n) continue
+      lostBy[sides.indexOf(side(e.owner))] += costOf(replay, e.type)
+      deaths.push({ t: f.t, x: e.x, y: e.y, owner: e.owner, fighter: fighter(e.type) })
     }
     const hp = f.hp ?? []
     for (let i = 0; i < hp.length; i += 2) noteHp(hp[i], hp[i + 1])
     applyFrame(s, f)
-    for (const e of f.spawn ?? []) if (e.owner >= 0 && kind(e.type) !== "resource") built += costOf(replay, e.type)
+    for (const e of f.spawn ?? []) if (e.owner >= 0 && e.owner < n && kind(e.type) !== "resource") addBuilt(e.owner, e.type)
     if (f.t % every === 0 || f.t === T) sample(f.t)
   }
 
@@ -137,8 +144,8 @@ export function gameFacts(replay: Replay): GameFacts {
     finalScores = { winner: finalScore[w], foe }
   }
 
-  // 战斗：切分规则见 battles.ts（和战报、联赛视频一样）
-  const big = groupBattles(deaths).filter((g) => g.length >= MIN_BATTLE)
+  // 大战：切分规则见 battles.ts（和战报、联赛视频一样），一边倒的（兵冲进矿区杀工人这类）不算
+  const big = groupBattles(deaths).filter((g) => g.length >= MIN_BATTLE && !isRout(g, side))
 
   // 险胜看赢家里主建筑活到最后的（分队时队友已经出局的不算"差点被拆"）
   const winnerSeats = replay.players.map((_, p) => p).filter((p) => winner !== null && side(p) === winner)
@@ -152,7 +159,8 @@ export function gameFacts(replay: Replay): GameFacts {
     leadChanges,
     battles: big.length,
     biggestBattle: Math.max(0, ...big.map((g) => g.length)),
-    killedRatio: built > 0 ? killed / built : 0,
+    killedRatio: sum(builtBy) > 0 ? sum(lostBy) / sum(builtBy) : 0,
+    sideLoss: lostBy.map((l, i) => (builtBy[i] > 0 ? l / builtBy[i] : 0)),
     winnerBaseMin: mins.length ? Math.min(...mins) : null,
     finalScores,
     trouble: replay.bots.some((b) => b.status === "dead" || b.errors > 0 || b.fuelOuts > 0),
@@ -180,7 +188,11 @@ export function excitement(f: GameFacts, upset: { level: number; text: string } 
           : `逆转：t${f.materialLow!.t} 时 ${W} 的兵力和建筑只有 ${name(f.materialLow!.foe)} 的 ${Math.round(f.materialLow!.ratio * 100)}%`,
   })
   parts.push({ v: 15 * (Math.min(f.leadChanges, 4) / 4), text: f.leadChanges >= 2 ? `优势换手 ${f.leadChanges} 次` : null })
-  parts.push({ v: 15 * Math.min(f.killedRatio / 0.6, 1), text: f.killedRatio >= 0.4 ? `造出来的单位和建筑打掉了 ${Math.round(f.killedRatio * 100)}%` : null })
+  // 两边都伤得重：看损失少的那一方（各自为战时是损失第二多的一方）损失了自己造过的多少；一方被打光、另一方几乎没损失的是一边倒，不加分（D-164）
+  const hurt = f.sideLoss.map((v, i) => ({ v, side: f.sides[i] })).sort((a, b) => b.v - a.v)
+  const both = hurt[1]?.v ?? 0
+  const hurtText = hurt.slice(0, 2).map((x) => `${name(x.side)} 损失 ${Math.round(x.v * 100)}%`).join("，")
+  parts.push({ v: 15 * Math.min(both / 0.5, 1), text: both >= 0.3 ? `两边都伤得重：${hurtText}` : null })
   parts.push({ v: 10 * (Math.min(f.battles, 5) / 5), text: f.battles >= 2 ? `${f.battles} 场大战（最大一场死了 ${f.biggestBattle} 个）` : null })
   // 险胜：赢家的主建筑差点被拆，或者比分咬得很紧
   const baseClose = f.winnerBaseMin === null ? 0 : 1 - f.winnerBaseMin
@@ -216,7 +228,7 @@ export function excitement(f: GameFacts, upset: { level: number; text: string } 
     const soft = [
       back <= 0 ? null : scoreBack >= matBack ? `t${f.scoreLow!.t} 时 ${W} 比分落后 ${Math.round(f.scoreLow!.mine)} : ${Math.round(f.scoreLow!.theirs)}` : `t${f.materialLow!.t} 时 ${W} 的兵力和建筑只有 ${name(f.materialLow!.foe)} 的 ${Math.round(f.materialLow!.ratio * 100)}%`,
       f.leadChanges > 0 ? `优势换手 ${f.leadChanges} 次` : null,
-      f.killedRatio > 0 ? `造出来的单位和建筑打掉了 ${Math.round(f.killedRatio * 100)}%` : null,
+      both > 0 ? hurtText : null,
       f.battles > 0 ? `${f.battles} 场大战（最大一场死了 ${f.biggestBattle} 个）` : null,
       f.winner === null ? null : scoreClose >= baseClose && fs0 ? `比分 ${Math.round(fs0.winner)} : ${Math.round(fs0.foe)}` : baseClose > 0 ? `${W} 的主基地一度只剩 ${Math.round(f.winnerBaseMin! * 100)}% 血` : null,
     ]

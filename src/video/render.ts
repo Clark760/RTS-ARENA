@@ -9,7 +9,7 @@ import { findBrowser, launchBrowser } from "./browser.ts"
 import { checkScript, codeFacts, factTags, gameScores, PLAYER_PAGE_CHARS, PLAYER_PAGE_MIN, readSeries, resolveBotFile, RULES_PAGE_CHARS, SCRIPT_LIMITS, scriptWarnings, type SeriesFile, type VideoScript } from "./brief.ts"
 import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
-import { groupBattles } from "../cli/battles.ts"
+import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
 import { importRuleset, listRulesets } from "../cli/catalog.ts"
 
 /** 联赛没挑中的局：现场从回放算看点（不算爆冷） */
@@ -392,11 +392,12 @@ const BIG_BATTLE = 6
 /**
  * 回放里的大事：第一次交火、失去建筑、大战、出局。返回"到第 t tick 为止该显示哪些"。
  * 大战和战报"战斗"一节是同一套切分（battles.ts，死亡算法也一样：不算资源和规则包移除的），时间和损失数对得上；
- * 一开打就显示"交战中"，损失随时间往上加，打完显示起止时间
+ * 一开打就显示"交战中"，损失随时间往上加，打完显示起止时间；一边倒的（兵冲进矿区杀工人这类，见 battles.ts）打完标「一边倒」
  */
 function replayEvents(replay: Replay, seats: { name: string }[]): (t: number) => string[] {
   const fixed: { t: number; text: string }[] = []
-  const deaths: { t: number; x: number; y: number; owner: number }[] = []
+  const deaths: { t: number; x: number; y: number; owner: number; fighter: boolean }[] = []
+  const fighter = fighterTest(replay.types)
   const s = new ReplayModel(replay).initialState()
   const team = (p: number) => replay.players[p]?.team ?? p
   const name = (p: number) => (p >= 0 ? (seats[p]?.name ?? `P${p}`) : "中立")
@@ -421,7 +422,7 @@ function replayEvents(replay: Replay, seats: { name: string }[]): (t: number) =>
       if (!e || removed.has(id)) continue
       const ty = replay.types[e.type]
       if (ty?.kind === "resource") continue
-      deaths.push({ t: f.t, x: e.x, y: e.y, owner: e.owner })
+      deaths.push({ t: f.t, x: e.x, y: e.y, owner: e.owner, fighter: fighter(e.type) })
       if (ty?.kind === "building" && e.owner >= 0) fixed.push({ t: f.t, text: `t${f.t} ${name(e.owner)} 失去${tn(e.type)}${e.bp !== undefined ? "（没建好）" : ""}` })
     }
     applyFrame(s, f)
@@ -433,7 +434,7 @@ function replayEvents(replay: Replay, seats: { name: string }[]): (t: number) =>
   // 门槛：死 6 个以上；这局最大的一仗都不到 6 个（夺点这类小规模交战）时，降到和战报一样的 3 个
   const all = groupBattles(deaths)
   const threshold = Math.max(3, Math.min(BIG_BATTLE, Math.max(0, ...all.map((b) => b.length))))
-  const battles = all.filter((b) => b.length >= threshold)
+  const battles = all.filter((b) => b.length >= threshold).map((b) => Object.assign(b, { rout: isRout(b, team) }))
   return (t) => {
     const items = fixed.filter((e) => e.t <= t)
     for (const b of battles) {
@@ -441,7 +442,7 @@ function replayEvents(replay: Replay, seats: { name: string }[]): (t: number) =>
       const t1 = b[b.length - 1].t
       const owners = [...new Set(b.map((d) => d.owner))].sort((x, y) => x - y)
       const loss = owners.map((p) => `${name(p)} 损失 ${b.filter((d) => d.owner === p && d.t <= t).length}`).join("，")
-      items.push({ t: b[0].t, text: t >= t1 ? `t${b[0].t}～${t1} ${b.length >= BIG_BATTLE ? "大战" : "交战"}：${loss}` : `t${b[0].t} 起交战中：${loss}` })
+      items.push({ t: b[0].t, text: t >= t1 ? `t${b[0].t}～${t1} ${b.rout ? "一边倒" : b.length >= BIG_BATTLE ? "大战" : "交战"}：${loss}` : `t${b[0].t} 起交战中：${loss}` })
     }
     return items.sort((x, y) => x.t - y.t).map((e) => tidy(e.text))
   }

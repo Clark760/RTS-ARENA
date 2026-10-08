@@ -19,3 +19,29 @@ export function groupBattles<D extends { t: number; x: number; y: number }>(deat
 
 /** 死 3 个以上才算一场战斗 */
 export const MIN_BATTLE = 3
+
+/** 算"兵"的：不是工人的单位（规则包里没有兵、只有工人时，工人也算） */
+export function fighterTest(types: Record<string, { kind?: string; worker?: boolean } | undefined>): (type: string) => boolean {
+  const hasArmy = Object.values(types).some((t) => t?.kind === "unit" && !t.worker)
+  return (type) => types[type]?.kind === "unit" && (!hasArmy || !types[type]?.worker)
+}
+
+/**
+ * 一边倒（D-164）：只有一方在死人；或者有一方没死兵（只死了工人、建筑：兵冲进矿区杀工人、撞上箭塔）；
+ * 或者死得少的一方不到死得多的一方的 1/4。这种不算大战：精彩对局不加分，战报和视频侧栏里标成「一边倒」。
+ * 各方按队伍合并，中立算一方
+ */
+export function isRout(b: { owner: number; fighter: boolean }[], team: (p: number) => number = (p) => p): boolean {
+  const loss = new Map<number, { n: number; fighters: number }>()
+  for (const d of b) {
+    const k = d.owner < 0 ? -1 : team(d.owner)
+    const x = loss.get(k) ?? { n: 0, fighters: 0 }
+    x.n++
+    if (d.fighter) x.fighters++
+    loss.set(k, x)
+  }
+  const sides = [...loss.values()].sort((a, c) => c.n - a.n)
+  if (sides.length < 2) return true
+  if (sides.filter((s) => s.fighters > 0).length < 2) return true
+  return sides[1].n * 4 < sides[0].n
+}

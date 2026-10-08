@@ -774,7 +774,7 @@ function rulesetTypeWarning(src: RulesetRef): void {
 }
 
 /**
- * 联赛的精彩对局：每局的看点（逆转、优势换手、大战、险胜）加上按最终排名算的爆冷（得分率低的赢了高的），
+ * 联赛的精彩对局：每局的看点（逆转、优势换手、两边都伤得重、大战、险胜）加上按最终排名算的爆冷（得分率低的赢了高的），
  * 挑精彩度最高的几局（同一组对手最多 2 局）
  */
 function leagueHighlights(
@@ -824,7 +824,7 @@ function leagueHighlights(
 }
 
 function highlightsText(list: Highlight[]): string {
-  const lines = ["## 精彩对局（按逆转、优势换手、大战、险胜、爆冷打的精彩度挑的）"]
+  const lines = ["## 精彩对局（按逆转、优势换手、两边都伤得重、大战、险胜、爆冷打的精彩度挑的；一边倒的不算）"]
   if (list.length === 0) lines.push("  这次没有特别精彩的：大多是一边倒，或者没怎么打起来")
   list.forEach((h, i) => {
     lines.push(`  ${i + 1}. 第 ${h.index} 局 ${h.who}，${h.winner ? `${h.winner} 赢` : "平局"}（第 ${h.tick} tick，精彩度 ${h.score}）`)
