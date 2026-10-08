@@ -7,7 +7,7 @@ import { basename, join, resolve } from "node:path"
 import { after, test } from "node:test"
 import { checkScript, codeFacts, factTags, gameScores, highlightPlayerWarnings, readSeries, resolveBotFile, scriptWarnings, videoBrief, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
-import { battleWindows, buildScenes, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
+import { buildScenes, fightWindows, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
 import type { Replay } from "../src/core/types.ts"
 
 const ROOT = join(import.meta.dirname, "..")
@@ -197,7 +197,7 @@ test("平台拼的文字：中文名前后的空格去掉，英文名的留着",
   assert.equal(tidy("大肥鱼 获胜"), "大肥鱼获胜")
 })
 
-test("回放变速（D-172）：tick 随帧单调往前、首尾对齐；大战按 2 倍速（每秒 2 × tickRate 个 tick），其余快进至少 4 倍", () => {
+test("回放变速（D-172、D-174）：tick 随帧单调往前、首尾对齐；大战 2 倍速，其余有单位倒下的小冲突 4 倍速，没动静的快进至少 4 倍", () => {
   const series = readSeries(seriesFile)
   const g = [...series.results].sort((a, b) => b.tick - a.tick)[0]
   const replay = JSON.parse(readFileSync(join(TMP, "lg", g.replay), "utf8")) as Replay
@@ -208,20 +208,30 @@ test("回放变速（D-172）：tick 随帧单调往前、首尾对齐；大战�
   assert.equal(ticks[0], 0)
   assert.equal(ticks[n - 1], replay.result.tick)
   assert.ok(ticks.every((t, i) => i === 0 || t >= ticks[i - 1]))
-  const wins = battleWindows(replay)
-  const battleTicks = wins.reduce((a, [x, y]) => a + (y - x), 0)
+  const { battles, skirmishes } = fightWindows(replay)
+  assert.ok(skirmishes.length > 0, "这局应该有小冲突")
   const rate = replay.tickRate
-  // 大战一共放 battleTicks / (2 × rate) 秒，其余最多 10 秒
-  const battleFrames = (battleTicks / (2 * rate)) * fps
-  assert.ok(n >= battleFrames - 2 && n <= battleFrames + 10 * fps + 2, `${n} 帧`)
-  // 大战中间的帧：一秒正好推进 2 × rate 个 tick；快进的帧推进得多
-  for (const [x, y] of wins) {
-    const inside = ticks.map((t, i) => i).filter((i) => ticks[i] > x + 1 && ticks[i + fps] !== undefined && ticks[i + fps] < y - 1)
-    for (const i of inside.slice(0, 5)) assert.ok(Math.abs(ticks[i + fps] - ticks[i] - 2 * rate) <= 1, `第 ${i} 帧起一秒推进了 ${ticks[i + fps] - ticks[i]} tick`)
-    for (const i of inside) assert.equal(p.fast(i), false)
+  const T = replay.result.tick
+  const inBattle = (t: number) => battles.some(([x, y]) => t >= x && t < y)
+  const battleTicks = battles.reduce((a, [x, y]) => a + (y - x), 0)
+  let skirmishTicks = 0
+  for (const [x, y] of skirmishes) for (let t = x; t < y; t++) if (!inBattle(t)) skirmishTicks++
+  // 大战一共放 battleTicks / (2 × rate) 秒，小冲突 skirmishTicks / (4 × rate) 秒，没动静的最多 10 秒
+  const lo = (battleTicks / (2 * rate) + skirmishTicks / (4 * rate)) * fps
+  const hi = (battleTicks / (2 * rate) + (T - battleTicks) / (4 * rate)) * fps
+  assert.ok(n >= lo - 2 && n <= Math.max(hi, lo + 10 * fps) + 2, `${n} 帧（${lo}～${hi}）`)
+  // 段中间的帧：大战一秒正好推进 2 × rate 个 tick，小冲突 4 × rate 个
+  const check = (wins: [number, number][], mode: string, per: number) => {
+    for (const [x, y] of wins) {
+      const inside = ticks.map((_, i) => i).filter((i) => ticks[i] > x + 1 && ticks[i + fps] !== undefined && ticks[i + fps] < y - 1 && (mode === "battle" || !battles.some(([bx, by]) => by > ticks[i] && bx < ticks[i + fps])))
+      for (const i of inside.slice(0, 5)) assert.ok(Math.abs(ticks[i + fps] - ticks[i] - per * rate) <= 1, `${mode}：第 ${i} 帧起一秒推进了 ${ticks[i + fps] - ticks[i]} tick`)
+      for (const i of inside) assert.equal(p.mode(i), mode)
+    }
   }
-  const fast = ticks.slice(0, -1).map((_, i) => i).filter((i) => p.fast(i))
-  if (fast.length > fps) assert.ok(ticks[fast[0] + fps] - ticks[fast[0]] >= rate * 4 - 1)
+  check(battles, "battle", 2)
+  check(skirmishes, "skirmish", 4)
+  const quiet = ticks.slice(0, -1).map((_, i) => i).filter((i) => p.mode(i) === "quiet")
+  if (quiet.length > fps) assert.ok(ticks[quiet[0] + fps] - ticks[quiet[0]] >= rate * 4 - 1)
 })
 
 test("选手代码：联赛记的路径找不到时，再找平台目录（自带的参考 bot）和当前目录 bots/ 里的副本", () => {

@@ -256,12 +256,20 @@ const QUIET_SECONDS = 10
 const QUIET_MIN_SPEED = 4
 /** 大战按几倍速放（D-172，用户看了一倍速说太慢） */
 const BATTLE_SPEED = 2
+/** 其余有单位倒下的小冲突按几倍速放（D-174，用户：快进太快不知道发生了什么） */
+const SKIRMISH_SPEED = 4
+/** 两段交火中间只空了这么几 tick 就不快进了，免得快进一闪而过 */
+const SKIRMISH_GAP = 40
+
+/** 回放这一段怎么放：大战 2 倍速、小冲突 4 倍速、没动静快进 */
+export type PaceMode = "battle" | "skirmish" | "quiet"
 
 /**
- * 回放里的大战时段（D-172）：和视频侧栏标「大战」的一样，同一套切分里死 BIG_BATTLE 个以上、又不是一边倒的；
- * 从第一个死亡前 BATTLE_LEAD tick 到最后一个死亡后 BATTLE_TAIL tick，挨着的合并
+ * 回放里的交火时段（D-172、D-174）：同一套切分里，死 BIG_BATTLE 个以上、又不是一边倒的是大战（和视频侧栏标「大战」的一样），
+ * 其余有单位倒下的（哪怕只死一个、一边倒的屠杀）是小冲突。每段从第一个死亡前 BATTLE_LEAD tick 到最后一个死亡后
+ * BATTLE_TAIL tick，挨着的合并；小冲突和大战重叠的部分算大战
  */
-export function battleWindows(replay: Replay): [number, number][] {
+export function fightWindows(replay: Replay): { battles: [number, number][]; skirmishes: [number, number][] } {
   const T = Math.max(1, replay.result.tick)
   const s = new ReplayModel(replay).initialState()
   const fighter = fighterTest(replay.types)
@@ -276,46 +284,55 @@ export function battleWindows(replay: Replay): [number, number][] {
     }
     applyFrame(s, f)
   }
-  const out: [number, number][] = []
-  const wins = groupBattles(deaths)
-    .filter((b) => b.length >= BIG_BATTLE && !isRout(b, team))
-    .map((b): [number, number] => [Math.max(0, b[0].t - BATTLE_LEAD), Math.min(T, b[b.length - 1].t + BATTLE_TAIL)])
-    .sort((a, b) => a[0] - b[0])
-  for (const w of wins) {
-    const last = out[out.length - 1]
-    if (last && w[0] <= last[1]) last[1] = Math.max(last[1], w[1])
-    else out.push([w[0], w[1]])
+  const big = (b: (typeof deaths)[number][]) => b.length >= BIG_BATTLE && !isRout(b, team)
+  const merged = (bs: (typeof deaths)[number][][]) => {
+    const out: [number, number][] = []
+    const wins = bs.map((b): [number, number] => [Math.max(0, b[0].t - BATTLE_LEAD), Math.min(T, b[b.length - 1].t + BATTLE_TAIL)]).sort((a, b) => a[0] - b[0])
+    for (const w of wins) {
+      const last = out[out.length - 1]
+      if (last && w[0] <= last[1]) last[1] = Math.max(last[1], w[1])
+      else out.push([w[0], w[1]])
+    }
+    return out
   }
-  return out
+  const groups = groupBattles(deaths)
+  return { battles: merged(groups.filter(big)), skirmishes: merged(groups.filter((b) => !big(b))) }
 }
 
 /**
- * 回放每帧对应的 tick（D-171、D-172，用户定）：大战按 BATTLE_SPEED 倍速放（1 秒 = BATTLE_SPEED × 规则包的 tickRate 个 tick），
- * 其余时间快进，加起来最多 QUIET_SECONDS 秒、至少 QUIET_MIN_SPEED 倍速。返回一共放多少帧
+ * 回放每帧对应的 tick（D-171、D-172、D-174，用户定）：大战按 BATTLE_SPEED 倍速放（1 秒 = BATTLE_SPEED × 规则包的 tickRate 个 tick），
+ * 其余有单位倒下的小冲突按 SKIRMISH_SPEED 倍速，没动静的时间快进，加起来最多 QUIET_SECONDS 秒、至少 QUIET_MIN_SPEED 倍速。
+ * 返回一共放多少帧
  */
-export function pacing(replay: Replay, fps: number): { playFrames: number; tickOf: (i: number) => number; fast: (i: number) => boolean } {
+export function pacing(replay: Replay, fps: number): { playFrames: number; tickOf: (i: number) => number; mode: (i: number) => PaceMode } {
   const T = Math.max(1, replay.result.tick)
   const rate = Math.max(1, replay.tickRate || 10)
-  const battles = battleWindows(replay)
-  const battleTicks = battles.reduce((a, [x, y]) => a + (y - x), 0)
-  const quietTicks = T - battleTicks
+  const { battles, skirmishes } = fightWindows(replay)
+  // 每个 tick 归哪一类：0 没动静、1 小冲突、2 大战
+  const cls = new Uint8Array(T)
+  for (const [x, y] of skirmishes) cls.fill(1, x, y)
+  for (const [x, y] of battles) cls.fill(2, x, y)
+  for (let t = 0; t < T; ) {
+    let e = t
+    while (e < T && cls[e] === cls[t]) e++
+    if (cls[t] === 0 && t > 0 && e < T && e - t < SKIRMISH_GAP) cls.fill(1, t, e)
+    t = e
+  }
+  const quietTicks = cls.reduce((a, c) => a + (c === 0 ? 1 : 0), 0)
   const quietSpeed = Math.max(QUIET_MIN_SPEED, quietTicks / (rate * QUIET_SECONDS))
-  // 一段一段：从哪个 tick 到哪个 tick、每 tick 几帧、是不是快进
-  const segs: { t0: number; t1: number; perTick: number; fast: boolean; f0: number }[] = []
-  let t = 0
+  const MODES: PaceMode[] = ["quiet", "skirmish", "battle"]
+  const SPEEDS = [quietSpeed, SKIRMISH_SPEED, BATTLE_SPEED]
+  // 一段一段：从哪个 tick 到哪个 tick、每 tick 几帧、怎么放
+  const segs: { t0: number; t1: number; perTick: number; mode: PaceMode; f0: number }[] = []
   let f = 0
-  const add = (t1: number, fastSeg: boolean) => {
-    if (t1 <= t) return
-    const perTick = fastSeg ? fps / (rate * quietSpeed) : fps / (rate * BATTLE_SPEED)
-    segs.push({ t0: t, t1, perTick, fast: fastSeg, f0: f })
-    f += (t1 - t) * perTick
-    t = t1
+  for (let t = 0; t < T; ) {
+    let e = t
+    while (e < T && cls[e] === cls[t]) e++
+    const perTick = fps / (rate * SPEEDS[cls[t]])
+    segs.push({ t0: t, t1: e, perTick, mode: MODES[cls[t]], f0: f })
+    f += (e - t) * perTick
+    t = e
   }
-  for (const [x, y] of battles) {
-    add(x, true)
-    add(y, false)
-  }
-  add(T, true)
   const playFrames = Math.max(2, Math.round(f))
   const segAt = (i: number) => {
     let k = 0
@@ -329,11 +346,11 @@ export function pacing(replay: Replay, fps: number): { playFrames: number; tickO
       const g = segAt(i)
       return Math.min(T, Math.max(0, Math.floor(g.t0 + (i - g.f0) / g.perTick)))
     },
-    fast: (i) => segAt(Math.min(i, playFrames - 1)).fast,
+    mode: (i) => segAt(Math.min(i, playFrames - 1)).mode,
   }
 }
 
-/** 回放场景：大战按 2 倍速放、其余快进（D-172），最后定格 1.5 秒显示结果 */
+/** 回放场景：大战按 2 倍速放、小冲突 4 倍速、没动静快进（D-172、D-174），最后定格 1.5 秒显示结果 */
 function replayScene(replay: Replay, no: number, title: string, commentary: string | null, seats: { name: string; color: string }[], result: string, fps: number): Omit<Scene, "label"> {
   const T = replay.result.tick
   const hold = sec(fps, 1.5)
@@ -410,7 +427,7 @@ function replayScene(replay: Replay, no: number, title: string, commentary: stri
       events: eventsAt(t),
       progress: T ? t / T : 1,
       final: i >= playFrames,
-      fast: i < playFrames && pace.fast(i),
+      pace: pace.mode(Math.min(i, playFrames - 1)),
       markers: state.markers,
       status: relabelSeats(state.status, seats, false),
     }
