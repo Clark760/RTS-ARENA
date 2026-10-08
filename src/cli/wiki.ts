@@ -17,9 +17,12 @@ export const WIKI_PAGES = [
   { file: "联赛视频指南.md", page: "联赛视频指南", title: "联赛视频指南", about: "把一场联赛做成视频：视频长什么样、从联赛到成片的四步、脚本怎么写好、交给 agent 一句话做完" },
 ]
 
+/** 仓库文件的原始内容地址（图片要用它，blob 地址是网页） */
+const RAW = "https://raw.githubusercontent.com/Clark760/RTS-ARENA/main"
+
 /**
  * 把 doc/ 里一份文档的链接改成 wiki 里能用的：链到另一份同步的文档换成 wiki 页面名，
- * 链到仓库里别的文件换成 GitHub 上的地址（README 换成仓库首页）。代码块里的不动
+ * 链到仓库里别的文件换成 GitHub 上的地址（README 换成仓库首页，图片换成原始文件地址）。代码块里的不动
  */
 export function toWiki(md: string): string {
   return md
@@ -27,15 +30,16 @@ export function toWiki(md: string): string {
     .map((part, i) =>
       i % 2 === 1
         ? part
-        : part.replace(/\]\(([^)\s]+)\)/g, (m, href: string) => {
+        : part.replace(/(!?\[[^\]]*\])\(([^)\s]+)\)/g, (m, label: string, href: string) => {
             if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("#")) return m
             const [path, hash] = href.split("#")
             const tail = hash ? `#${hash}` : ""
             const page = WIKI_PAGES.find((p) => p.file === path)
-            if (page) return `](${page.page}${tail})`
+            if (page) return `${label}(${page.page}${tail})`
             const file = posix.normalize(posix.join("doc", path))
-            if (file === "README.md") return `](${REPO}${tail})`
-            return `](${REPO}/blob/main/${file}${tail})`
+            if (label.startsWith("!")) return `${label}(${RAW}/${file})`
+            if (file === "README.md") return `${label}(${REPO}${tail})`
+            return `${label}(${REPO}/blob/main/${file}${tail})`
           }),
     )
     .join("")
@@ -53,7 +57,7 @@ export function wikiHome(): string {
     "",
     "**大模型写 bot 的即时战略竞技平台。** 大模型（或人）用 TypeScript 写一个 bot 控制一方，在格子地图上采矿、造兵、打仗。平台负责跑比赛、出排行榜、放回放，还能把一场联赛做成视频。玩法由「规则包」决定，自带 10 种，也可以自己写。",
     "",
-    `![一局回放：左边是地图，右边是双方的兵力、科技和战况](https://raw.githubusercontent.com/Clark760/RTS-ARENA/main/doc/images/replay.jpg)`,
+    `![一局回放：左边是地图，右边是双方的兵力、科技和战况](${RAW}/doc/images/replay.jpg)`,
     "",
     "## 从这里开始",
     "",
