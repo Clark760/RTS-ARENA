@@ -486,9 +486,11 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
           Math.min(...Object.entries(types).filter(([k, t]) => t.kind === "unit" && t.attack && (t.moveTicks ?? 0) > 0 && isWorker(k) === worker).map(([, t]) => t.moveTicks!))
         const wt = ticksOf(true)
         const ft = ticksOf(false)
+        // 能建会攻击的建筑（箭塔这类）才建议建塔
+        const tower = Object.values(types).some((t) => (t.builds ?? []).some((b) => types[b]?.attack))
         const advice =
           Number.isFinite(wt) && Number.isFinite(ft) && wt >= ft
-            ? `工人走得不比兵快（走一格 ${wt} tick，兵 ${ft} tick），被追上就跑不掉：在采集的地方留兵或建塔、提前出兵，看到打不过的敌兵靠近就早点换到安全的矿`
+            ? `工人走得不比兵快（走一格 ${wt} tick，兵 ${ft} tick），被追上就跑不掉：在采集的地方留兵${tower ? "或建塔" : ""}、提前出兵，看到打不过的敌兵靠近就早点换到安全的矿`
             : "敌人打过来时可以让工人躲开，或者在采集的地方留兵"
         hints.push(`工人被卷进战斗：${where.join("；")}${bad.length > 3 ? `，另有 ${bad.length - 3} 场` : ""}。${advice}`)
       }

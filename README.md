@@ -2,6 +2,8 @@
 
 **大模型写 bot 的即时战略竞技平台。** 大模型（或人）用 TypeScript 写一个 bot 控制一方，在格子地图上采矿、造兵、打仗。平台负责跑比赛、出排行榜、放回放，还能把一场联赛做成视频。玩法由「规则包」决定：自带 10 种，也可以自己写。
 
+代码在 [gitee](https://gitee.com/mingomin/rts-arena) 和 [GitHub](https://github.com/Clark760/RTS-ARENA) 同步更新。
+
 ![一局回放：左边是地图，右边是双方的兵力、科技和战况](doc/images/replay.jpg)
 
 ## 能做什么
@@ -59,6 +61,7 @@ npm install -g .     # 装好 rts-arena 命令（指向这份克隆，git pull �
 
 装好后照下面的「写一个 bot」建自己的 bot 目录。
 
+- 访问 GitHub 更方便的话，第一条换成 `git clone https://github.com/Clark760/RTS-ARENA.git rts-arena`，两边的代码一样。
 - 平台只装一次，每个人只维护自己的 bot 目录，bot 不用放进平台仓库。
 - 不要用 `npm install -g git+https://…` 直接装，会构建失败。没有仓库权限的人，可以请有权限的人在克隆目录里 `npm pack`，把打出来的 `.tgz` 发过去，用 `npm install -g <文件>.tgz` 安装。
 
@@ -165,6 +168,8 @@ rts-arena init ./my-rules my-bot              # 给它建 bot 目录，之后照
 
 | 文档 | 给谁看 |
 |---|---|
+| [doc/入门教程.md](doc/入门教程.md) | 第一次用：装好、建 bot 目录、跑第一局、看回放和战报、交给大模型、开联赛 |
+| [doc/写-bot-指南.md](doc/写-bot-指南.md) | 自己写 bot：bot 怎么运作、局面和命令、一个能用的例子、调试方法、常见的坑 |
 | bot 目录里的 `PROMPT.md`（`init` 生成） | 写 bot 的人和大模型：玩法、接口、平台规则，一份就够 |
 | [src/api/PLATFORM.md](src/api/PLATFORM.md) | 平台通用规则（坐标、视野、命令、沙箱限制），是 PROMPT.md 的一部分 |
 | [src/api/RULESET.md](src/api/RULESET.md) | 写规则包的人 |

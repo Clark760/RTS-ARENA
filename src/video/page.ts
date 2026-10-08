@@ -94,8 +94,8 @@ export function installVideoPage(): void {
   let SCALE = 1.5
   const FONT = '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif'
   const MONO = 'Consolas, "Cascadia Mono", "Microsoft YaHei", monospace'
-  /** 平台的远程仓库（片头下方、片尾署名里） */
-  const REPO = "gitee.com/mingomin/rts-arena"
+  /** 平台的远程仓库：gitee 和 GitHub（片头下方、片尾署名里） */
+  const REPO = "gitee.com/mingomin/rts-arena  ·  github.com/Clark760/RTS-ARENA"
   const C = { bg1: "#0b1220", bg2: "#14203a", text: "#e8edf7", muted: "#8fa0bf", accent: "#f5b942", line: "#26344f", panel: "rgba(16,26,46,0.92)" }
   let canvas = new OffscreenCanvas(W * SCALE, H * SCALE)
   let g = canvas.getContext("2d")!
