@@ -807,11 +807,15 @@ export function installVideoPage(): void {
     g.stroke()
   }
 
-  /** 一段文字：放不下就缩字号（最小 minPx），还放不下就折行（最多 maxLines 行）；返回最后一行下面的 y */
-  function fitLines(s: string, x: number, y: number, px: number, minPx: number, maxW: number, maxLines: number, color: string, opts: { bold?: boolean; align?: CanvasTextAlign } = {}): number {
+  /**
+   * 一段文字：放不下就缩字号（最小 minPx），还放不下就折行（最多 maxLines 行）；返回最后一行下面的 y。
+   * wrapFirst：先折行、折到 maxLines 行还放不下才缩字号（竖屏开场的大字，D-183：长标题缩成一行小字看不清）
+   */
+  function fitLines(s: string, x: number, y: number, px: number, minPx: number, maxW: number, maxLines: number, color: string, opts: { bold?: boolean; align?: CanvasTextAlign; wrapFirst?: boolean } = {}): number {
     let size = px
     g.font = font(size, opts.bold)
-    while (size > minPx && g.measureText(s).width > maxW) g.font = font(--size, opts.bold)
+    const fits = () => (opts.wrapFirst ? wrapBalanced(s, maxW).length <= maxLines : g.measureText(s).width <= maxW)
+    while (size > minPx && !fits()) g.font = font(--size, opts.bold)
     const ls = g.measureText(s).width > maxW ? wrapBalanced(s, maxW).slice(0, maxLines) : [s]
     ls.forEach((l, k) => text(l, x, y + k * size * 1.3, size, color, opts))
     return y + ls.length * size * 1.3
@@ -863,7 +867,7 @@ export function installVideoPage(): void {
     })
     // 大字压在立绘上面
     const ty = vert ? 150 : 84
-    fitLines(s.title, VWW / 2, ty, vert ? 50 : 46, 24, VWW - 80, 2, C.text, { bold: true, align: "center" })
+    fitLines(s.title, VWW / 2, ty, vert ? 50 : 46, 24, VWW - 80, 2, C.text, { bold: true, align: "center", wrapFirst: vert })
     text(s.sub, VWW / 2, vert ? 270 : 128, vert ? 24 : 20, C.accent, { bold: true, align: "center" })
     // 平台署名（D-181：不再单独放片头页，用小字放在开场阵容最下面）
     if (vert) {
