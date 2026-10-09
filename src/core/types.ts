@@ -176,8 +176,8 @@ export interface SetupContext {
   /** 两个玩家是否同队 */
   isAlly(a: number, b: number): boolean
   /**
-   * 在 (x, y) 附近找空位放实体（setup 里也能用，比自己记占用的格子省事）。(x, y) 放得下就放在那里，否则往外找：(x, y) 落在建筑或资源点里时从它的外圈开始找；单位按走路的步数往外找（不穿墙，最多 8 步），
-   * 建筑按距离一圈一圈找（最多 8 圈）。找不到返回 null；
+   * 在 (x, y) 附近找空位放实体（setup 里也能用，比自己记占用的格子省事）。(x, y) 放得下就放在那里，否则往外找：(x, y) 落在建筑或资源点里时从它的外圈开始找；单位和 1×1 的实体（1×1 的建筑、资源点也是）按走路的步数往外找（不穿墙，最多 8 步；四周被挡死就找不到），
+   * 多格的建筑按距离一圈一圈找（最多 8 圈）；同样近的选离地图中心近的，再一样随机挑。找不到返回 null；
    * setup 里返回 null 时 rts-arena check 会提醒
    */
   spawnNear(type: string, owner: number, x: number, y: number, opts?: { amount?: number }): number | null

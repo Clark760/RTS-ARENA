@@ -240,7 +240,8 @@ const avg = (x: number, n: number, digits = 0) => (n ? (x / n).toFixed(digits) :
 export function statsText(stats: LeagueStatsJson, result: LeagueResult): string {
   const lines: string[] = ["## 统计"]
   lines.push("", "把握度（相邻名次直接对阵时，上面的比下面的强的把握；平局不算，局数少时不可靠）")
-  for (const c of adjacentConfidence(result))
+  // 没直接对打过的相邻两名（league --focus 时常见）不列
+  for (const c of adjacentConfidence(result).filter((x) => x.w + x.d + x.l > 0))
     lines.push(
       `  ${c.upper} > ${c.lower}：${c.w}-${c.d}-${c.l}，${c.los === null ? "两人没分出过先后" : `把握 ${(c.los * 100).toFixed(c.los > 0.99 ? 1 : 0)}%`}${c.w + c.l < 6 ? "（分出胜负的不到 6 局，偏乐观）" : ""}`,
     )

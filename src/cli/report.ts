@@ -158,6 +158,8 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   let firstContact = -1
   /** 每个实体最后一次被哪个玩家打 */
   const lastHit = new Map<number, number>()
+  /** 最后一击的攻击者：类型和当时的位置 */
+  const lastHitter = new Map<number, { type: string; x: number; y: number }>()
   /** 工人闲着的开始时间 */
   const idleFrom = new Map<number, number>()
   const idleSpans: IdleSpan[] = []
@@ -221,6 +223,8 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   }
   // 有兵种克制的规则包（attack.vs）：记下每一下打了多少、是不是打在被自己克的兵上，战斗一节按兵种列（D-167，试写反馈）
   const hasCounters = Object.values(types).some((t) => t.attack?.vs && Object.keys(t.attack.vs).length > 0)
+  /** 有光环或者回放里出现过增益（D-186）：战斗一节列出增益覆盖了多少兵 */
+  const hasBuffs = Object.values(types).some((t) => t.auras?.length) || replay.frames.some((f) => f.bf?.length)
   // 每一下都记（谁打的：战斗一节数「战场附近没出手的兵」也用它），伤害按克制倍数算
   const hits: { t: number; x: number; y: number; id: number; owner: number; from: string; to: string; dmg: number; bonus: boolean }[] = []
   // 采矿：工人的命令从"gather #矿 回程"变回"gather #矿"就是交了一次货（D-167，试写反馈：战报看不出采矿效率、工人挤在一个矿上）
@@ -256,6 +260,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       if (!a || !tg) continue
       // 最后一击：玩家编号；中立实体打的记 -2
       lastHit.set(tg.id, a.owner >= 0 ? a.owner : -2)
+      lastHitter.set(tg.id, { type: a.type, x: a.x, y: a.y })
       if (!enemies(a.owner, tg.owner)) continue
       if (firstContact < 0 && !isFree(a.type) && !isFree(tg.type)) {
         firstContact = f.t
@@ -291,7 +296,9 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       }
       const by = lastHit.get(id) ?? -1
       deaths.push({ t: f.t, owner: e.owner, type: e.type, x: e.x, y: e.y, by, ord: e.ord })
-      const byText = by >= 0 ? `，最后一击是 P${by}` : by === -2 ? "，被中立实体打死" : ""
+      // 最后一击是谁的什么单位、在哪（D-188，试写反馈：只写玩家编号看不出领主是被塔还是兵打死的）
+      const hitter = lastHitter.get(id)
+      const byText = by >= 0 ? `，最后一击是 P${by}${hitter ? ` 的 ${hitter.type} ${at(hitter)}` : ""}` : by === -2 ? (hitter ? `，被中立的 ${hitter.type} 打死` : "，被中立实体打死") : ""
       if (e.owner < 0) events.push({ t: f.t, p: -1, text: `中立的 ${e.type} 死了 ${at(e)}${byText}` })
       else if (isFree(e.type)) events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}失去 ${e.type}（这种单位造不出来，丢了就没了）${at(e)}${byText}`, cat: "key" })
       else if (kind(e.type) === "building") events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}失去 ${e.type}${e.bp !== undefined ? "（还没建好）" : ""} ${at(e)}${byText}` })
@@ -564,6 +571,32 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
         out.push(
           `  队形：t${fm.t} 打出第一下时战场 20 格内，${forms.map(([p, f]) => `${who0(p)} ${f.n} 个兵占 ${f.w}×${f.h} 格、离自己中心平均 ${f.avg.toFixed(1)} 格${f.far ? `（${FORM_FAR} 格以上 ${f.far} 个）` : ""}`).join("；")}`,
         )
+      // 增益（光环、技能）覆盖了多少兵、战场在不在能攻击的建筑（箭塔）射程里（D-188）
+      const st = model.stateAt(fm.t)
+      const near = [...st.ents.values()].filter((e) => e.owner >= 0 && e.owner < n && Math.abs(e.x - cx) + Math.abs(e.y - cy) <= 20)
+      if (hasBuffs) {
+        const parts = sidesIn.flatMap((p) => {
+          const mine = near.filter((e) => e.owner === p && isArmy(e.type))
+          if (mine.length === 0) return []
+          const names = new Set(mine.flatMap((e) => e.bf ?? []))
+          return [`${who0(p)} ${mine.filter((e) => e.bf?.length).length}/${mine.length} 个兵${names.size ? `（${[...names].join("、")}）` : ""}`]
+        })
+        if (parts.length) out.push(`  增益：开打时战场 20 格内带增益的兵 ${parts.join("，")}`)
+      }
+      const towers = new Map<number, Map<string, number>>()
+      for (const e of near) {
+        const atk = types[e.type]?.attack
+        if (kind(e.type) !== "building" || !atk || e.bp !== undefined) continue
+        const w = types[e.type]?.w ?? 1
+        const h = types[e.type]?.h ?? 1
+        const dx = Math.max(0, e.x - cx, cx - (e.x + w - 1))
+        const dy = Math.max(0, e.y - cy, cy - (e.y + h - 1))
+        if (dx + dy > (e.st?.attack?.range ?? atk.range) + 1) continue
+        const m = towers.get(e.owner) ?? new Map<string, number>()
+        m.set(e.type, (m.get(e.type) ?? 0) + 1)
+        towers.set(e.owner, m)
+      }
+      if (towers.size) out.push(`  战场在${[...towers].map(([p, m]) => `${who(p)}${countList(m)}`).join("、")}的射程内（打出第一下时，离战场中心不超过射程 + 1 格）`)
     }
     // 在战场附近却一下都没打的兵（停着的兵只打射程内的，团战时没给命令就干站着）
     const idle = [...idleInBattle(b)].filter(([, r]) => r.n >= 3).sort((x, y) => x[0] - y[0])
@@ -899,7 +932,7 @@ export function snapshotText(replay: Replay, t: number): string {
   grid.forEach((row, y) => out.push(`${String(y).padStart(3)} ${row.join("")}`))
   out.push("```")
   out.push("")
-  out.push("## 实体（编号 类型 (x, y) 生命 命令；资源点的生命是剩余量）")
+  out.push("## 实体（编号 类型 (x, y) 生命 命令，有增益的列出增益名；资源点的生命是剩余量）")
   const owners = [...new Set([...s.ents.values()].map((e) => e.owner))].sort((a, b) => a - b)
   for (const o of owners) {
     const list = [...s.ents.values()].filter((e) => e.owner === o).sort((a, b) => a.type.localeCompare(b.type) || a.id - b.id)
@@ -907,7 +940,7 @@ export function snapshotText(replay: Replay, t: number): string {
     for (const e of list.slice(0, 120)) {
       const ty = types[e.type]
       const hp = ty?.kind === "resource" ? `剩 ${e.hp}` : `${e.hp}/${e.st?.maxHp ?? ty?.maxHp ?? "?"}`
-      out.push(`  #${e.id} ${e.type} (${e.x}, ${e.y}) ${hp}${e.bp !== undefined ? ` 建到 ${e.bp}%` : ""} ${e.ord}`)
+      out.push(`  #${e.id} ${e.type} (${e.x}, ${e.y}) ${hp}${e.bp !== undefined ? ` 建到 ${e.bp}%` : ""} ${e.ord}${e.bf?.length ? ` 增益：${e.bf.join("、")}` : ""}`)
     }
     if (list.length > 120) out.push(`  ……另有 ${list.length - 120} 个`)
   }

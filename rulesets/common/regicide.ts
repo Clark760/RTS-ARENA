@@ -1,14 +1,16 @@
 // 弑君（D-187）：歼灭、拓荒的基础上，开局每家送 1 个领主（lord）。主基地被拆或者领主阵亡都判负。
 // 领主用的是平台的技能、光环、被动（D-186）：
-// - 光环「领主光环」：视野（8 格）内自己的战士、弓手打出的伤害 +25%、受到的伤害 −25%
+// - 光环「领主光环」：视野（8 格）内自己的战士、弓手打出的伤害 +20%、受到的伤害 −20%（D-188：试写反馈光环太强，25% 降到 20%）
 // - 被动「休养生息」：100 tick 没出手、没挨打以后，每 10 tick 回 10 生命
-// - 技能「点金」（goldmine）：在领主身边的空地上造一座 300 金的中立金矿，冷却 600 tick
+// - 技能「点金」（goldmine）：在领主 3 格内的空地上造一座 300 金的中立金矿，冷却 600 tick（落点见 mineSpot）
 // 领主的移速、视野、攻击和克制规则包的侦察兵一样（走一格 1 tick、视野 8、攻击 1），生命 500（主基地 1500 的三分之一）
 import type { CastInfo, MatchResult, RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
-import { spawnMirrored } from "./standard.ts"
+import { spawnMirrored, STANDARD_TERRAIN } from "./standard.ts"
 
 /** 点金造出来的金矿储量 */
 export const LORD_MINE_AMOUNT = 300
+/** 点金的金矿最远放在离领主几格 */
+export const LORD_MINE_RANGE = 3
 
 /** 领主：troops 是光环加成的兵种 */
 export function lordType(troops: string[]): TypeSpec {
@@ -18,8 +20,8 @@ export function lordType(troops: string[]): TypeSpec {
     moveTicks: 1,
     sight: 8,
     attack: { damage: 1, range: 1, cooldown: 10 },
-    skills: [{ id: "goldmine", name: "点金", cooldown: 600, desc: `在领主身边的空地上造一座 ${LORD_MINE_AMOUNT} 金的中立金矿（谁都能采）` }],
-    auras: [{ name: "领主光环", radius: -1, affects: "own", types: troops, damagePct: 25, defensePct: 25 }],
+    skills: [{ id: "goldmine", name: "点金", cooldown: 600, desc: `在领主 ${LORD_MINE_RANGE} 格内最近的空地上造一座 ${LORD_MINE_AMOUNT} 金的中立金矿（谁都能采）` }],
+    auras: [{ name: "领主光环", radius: -1, affects: "own", types: troops, damagePct: 20, defensePct: 20 }],
     passives: [{ kind: "regen", name: "休养生息", delay: 100, every: 10, amount: 10 }],
     look: { shape: "hex", label: "王", name: "领主" },
   }
@@ -40,14 +42,69 @@ export function spawnLords(ctx: SetupContext, width: number, height: number, typ
   spawnMirrored(ctx, width, height, types, [{ type: "lord", owner: 0, x: 1, y: 1 }])
 }
 
-/** 点金：在领主身边找空地放一座中立金矿；没有空地就拒绝（不进冷却） */
+/**
+ * 点金的落点（D-188，试写反馈：原来按走路找空位，四周四格放满就拒绝，斜对角空着也不放；领主还能拿金矿把自己围死、近战打不到）：
+ * 离领主曼哈顿距离 1～3 格里最近的空格（地形能走、没有任何实体，单位站着的也不算空）；同样近的选离地图中心近的（曼哈顿距离），再一样随机挑。
+ * 放了以后领主要还能走到自家主基地旁边（只算地形、建筑和资源点挡路，单位不算），不然这一格不放（不能把领主或主基地的路堵死）
+ */
+export function mineSpot(ctx: RuleContext, lord: { x: number; y: number }, player: number): { x: number; y: number } | null {
+  const W = ctx.width
+  const H = ctx.height
+  const open = new Uint8Array(W * H) // 地形能走、没有建筑和资源点
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) open[y * W + x] = STANDARD_TERRAIN[ctx.terrain[y][x]]?.walkable ? 1 : 0
+  const free = open.slice() // 再去掉单位站着的
+  for (const e of ctx.entities()) {
+    for (let y = e.y; y < e.y + e.h; y++)
+      for (let x = e.x; x < e.x + e.w; x++) {
+        if (e.def.kind !== "unit") open[y * W + x] = 0
+        free[y * W + x] = 0
+      }
+  }
+  const base = ctx.entities({ owner: player, type: "base" })[0]
+  // 领主到主基地旁边还走得通吗（mine 这格当成挡路）
+  const reachable = (mine: number): boolean => {
+    if (!base) return true
+    const seen = new Uint8Array(W * H)
+    const start = lord.y * W + lord.x
+    const q = [start]
+    seen[start] = 1
+    for (let h = 0; h < q.length; h++) {
+      const c = q[h]
+      const x = c % W
+      const y = (c - x) / W
+      if (ctx.dist({ x, y, w: 1, h: 1 }, base) <= 1) return true
+      for (const n of [x > 0 ? c - 1 : -1, x < W - 1 ? c + 1 : -1, y > 0 ? c - W : -1, y < H - 1 ? c + W : -1]) {
+        if (n < 0 || seen[n] || !open[n] || n === mine) continue
+        seen[n] = 1
+        q.push(n)
+      }
+    }
+    return false
+  }
+  for (let d = 1; d <= LORD_MINE_RANGE; d++) {
+    const ring: { x: number; y: number; c: number; r: number }[] = []
+    for (let dx = -d; dx <= d; dx++)
+      for (const dy of Math.abs(dx) === d ? [0] : [d - Math.abs(dx), -(d - Math.abs(dx))]) {
+        const x = lord.x + dx
+        const y = lord.y + dy
+        if (x < 0 || y < 0 || x >= W || y >= H || !free[y * W + x]) continue
+        ring.push({ x, y, c: Math.abs(2 * x - (W - 1)) + Math.abs(2 * y - (H - 1)), r: ctx.rng.next() })
+      }
+    ring.sort((a, b) => a.c - b.c || a.r - b.r)
+    for (const s of ring) if (reachable(s.y * W + s.x)) return { x: s.x, y: s.y }
+  }
+  return null
+}
+
+/** 点金：在领主 3 格内找空地放一座中立金矿；没有能放的空地就拒绝（不进冷却） */
 export function regicideCast(ctx: RuleContext, c: CastInfo): string | null {
   if (c.skill !== "goldmine") return `没有技能 ${c.skill}`
   const lord = ctx.get(c.unit)
   if (!lord) return "领主不在了"
-  const id = ctx.spawnNear("goldmine", -1, lord.x, lord.y, { amount: LORD_MINE_AMOUNT })
-  if (id === null) return "领主身边没有空地放金矿，换个地方再放"
-  ctx.note(`P${c.player} 的领主点出一座金矿`, c.player)
+  const spot = mineSpot(ctx, lord, c.player)
+  if (!spot) return `领主 ${LORD_MINE_RANGE} 格内没有能放金矿的空地（单位站着的格子不算空，也不能把领主到主基地的路堵死），换个地方再放`
+  ctx.spawnNear("goldmine", -1, spot.x, spot.y, { amount: LORD_MINE_AMOUNT })
+  ctx.note(`P${c.player} 的领主在 (${spot.x}, ${spot.y}) 点出一座金矿`, c.player)
   return null
 }
 

@@ -1,17 +1,21 @@
-// 刺杀：拓荒的基准打法，凑够 12 个兵（战士弓手 2:1）带着领主出门，直奔对方领主开局的角落，看得见对方领主就全体追着打（杀了领主直接赢）。
-// - 没看见对方领主时去它开局的角落找，路上只打 5 格内挡路的兵；箭塔、兵营不拆。
-// - 领主跟在军队后面 3 格（和领主随军一样），冷却好了先回家点金；其余（建造、经济、回防）和基准一样。
-const ATTACK_AT = 12
+// 守家反击：兵守在家门口、领主在旁边给光环，不主动出击；挡住一波进攻（守的时候杀了 4 个以上）就趁对方兵少反攻，快到时间上限还不领先就出击。
+// - 集结点离兵营只有 3 格（在家里的领主光环范围内）；家里或领主附近来敌人全军回防，领主跟着守军。
+// - 其余（经济、建造、点金、挑目标、撤退）和基准一样。
+const ATTACK_AT = 60
 const REINFORCE_AT = 3
 const RETREAT_BELOW = 4
 const MAX_PER_MINE = 3
-const PLAN: TypeName[] = ["soldier", "soldier", "archer"]
+const PLAN: TypeName[] = ["soldier", "archer"]
 /** 每种地基要几个工人建 */
 const CREW: Partial<Record<TypeName, number>> = { barracks: 2, depot: 2, tower: 1 }
 const enemySeen = new Map<number, number>()
 const SEEN_FOR = 600
 
 let mode: "defend" | "attack" = "defend"
+/** 守家：正在挨打、这一波守的时候杀了几个、上次挡住一波的 tick */
+let hadThreats = false
+let killsInDefense = 0
+let repelledAt = -1000
 let produced = 0
 let rally: Pos | null = null
 /** 去分矿建仓库的工人 */
@@ -201,7 +205,7 @@ export function onTick(view: View, cmd: Commands): void {
   const eb = view.objectives.enemyBases[0]
   const enemyBaseCenter = { x: eb.x + 1, y: eb.y + 1 }
   const home = center(base)
-  if (!rally && barracks.length > 0) rally = pointToward(center(barracks[0]), enemyBaseCenter, 5)
+  if (!rally && barracks.length > 0) rally = pointToward(center(barracks[0]), enemyBaseCenter, 3)
   const rallyPoint = rally ?? pointToward(home, enemyBaseCenter, 5)
   const drops = buildings.filter((b) => game.types[b.type].dropOff && !b.construction)
   const natural = naturalMines(base, enemyBaseCenter, goldmines)
@@ -211,14 +215,6 @@ export function onTick(view: View, cmd: Commands): void {
   const lord = mine.find((e) => e.type === "lord")
   if (lord) {
     lordHome ??= { x: lord.x, y: lord.y }
-    // 出击时跟着军队：站在军队中心往家退 3 格，兵在光环范围里；4 格内有敌兵、或者冷却好了要回家点金时不跟
-    const outArmy = army.filter((u) => dist(u, base) > 12)
-    const close = enemyUnits.some((e) => game.types[e.type].attack !== null && e.type !== "worker" && dist(e, lord) <= 4)
-    const ready = (lord.skillCooldowns?.goldmine ?? 1) === 0
-    if (mode === "attack" && outArmy.length >= 3 && !close && !ready) {
-      moveTo(cmd, lord, pointToward(centroid(outArmy), home, 3))
-      post = null
-    } else {
     const danger = enemyUnits.some((e) => game.types[e.type].attack !== null && e.type !== "worker" && dist(e, lord) <= 7)
     if (danger) {
       moveTo(cmd, lord, lordHome)
@@ -237,7 +233,6 @@ export function onTick(view: View, cmd: Commands): void {
           post = null
         }
       }
-    }
     }
   }
 
@@ -362,6 +357,14 @@ export function onTick(view: View, cmd: Commands): void {
   }
 
   // ---------- 军队 ----------
+  // 守家：记下这一波杀了几个，打退了就记下时间（之后 100 tick 内可以反攻）
+  if (hadThreats) for (const ev of view.events) if (ev.kind === "died" && ev.owner >= 0 && ev.owner !== view.me && game.types[ev.type].kind === "unit") killsInDefense++
+  if (threats.length > 0) hadThreats = true
+  else if (hadThreats) {
+    hadThreats = false
+    if (killsInDefense >= 4) repelledAt = view.tick
+    killsInDefense = 0
+  }
   if (threats.length > 0) {
     for (const u of army) attack(cmd, u, pickTarget(u, threats)!)
     // 领主跟着回防的兵（光环盖住守军）；身边 4 格内有敌兵就不过去
@@ -373,7 +376,11 @@ export function onTick(view: View, cmd: Commands): void {
   const inside = army.filter((u) => dist(u, base) <= 15)
   const out = army.filter((u) => dist(u, base) > 15)
   const gathered = inside.every((u) => dist(u, rallyPoint) <= 6)
-  const enemyWeak = view.tick > 2000 && army.length >= 4 && army.length >= enemyArmy * 2
+  // 反攻：刚挡住一波、兵还有 6 个以上；或者快到时间上限、击杀价值不领先
+  const kv = view.objectives.killValue
+  // 不领先（落后或者打平）：打平也出击，免得两个守家的拖成平局
+  const behind = kv[view.me] <= Math.max(...kv.filter((_, i) => i !== view.me))
+  const enemyWeak = (view.tick - repelledAt < 100 && army.length >= 6) || (view.tick > game.maxTicks - 1500 && behind && army.length >= 6)
   if (mode === "defend" && gathered && (army.length >= ATTACK_AT || enemyWeak)) {
     mode = "attack"
     console.log(`第 ${view.tick} tick 进攻，兵力 ${army.length}，估计对方 ${enemyArmy}`)
@@ -391,21 +398,18 @@ export function onTick(view: View, cmd: Commands): void {
     return
   }
 
-  // 进攻：直奔对方领主。看得见就全体追；看不见就去它开局的角落（和自己领主的开局位置中心对称），路上只打 5 格内挡路的兵
-  const enemyLord = enemyUnits.find((e) => e.type === "lord")
-  const lordCorner = lordHome ? { x: game.width - 1 - lordHome.x, y: game.height - 1 - lordHome.y } : enemyBaseCenter
+  // 进攻：先打看得见的敌方单位，再拆箭塔、兵营，最后打主基地
+  const goal =
+    enemyBuildings.find((e) => e.type === "tower") ?? enemyBuildings.find((e) => e.type === "barracks") ?? enemyBuildings.find((e) => e.type === "base")
   const sendHome = inside.length >= REINFORCE_AT || out.length === 0
   for (const u of army) {
     if (out.indexOf(u) < 0 && !sendHome) {
       if (dist(u, rallyPoint) > 3) attackMove(cmd, u, rallyPoint)
       continue
     }
-    if (enemyLord && dist(enemyLord, u) <= 14) {
-      attack(cmd, u, enemyLord)
-      continue
-    }
-    const fighters = enemyUnits.filter((e) => isCombat(e) && dist(e, u) <= 5)
+    const fighters = enemyUnits.filter((e) => dist(e, u) <= 8 || (e.type === "lord" && dist(e, u) <= 10))
     if (fighters.length > 0) attack(cmd, u, pickTarget(u, fighters)!)
-    else attackMove(cmd, u, lordCorner)
+    else if (goal && dist(u, goal) <= 12) attack(cmd, u, goal)
+    else attackMove(cmd, u, enemyBaseCenter)
   }
 }

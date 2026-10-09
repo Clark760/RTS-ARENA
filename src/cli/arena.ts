@@ -1,6 +1,6 @@
 // 命令行入口：rts-arena <命令> ...（在平台仓库里开发时等价于 npm run arena -- <命令> ...）
 import { randomBytes } from "node:crypto"
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import { checkLimits } from "../core/limits.ts"
 import { runMatch, type MatchBot } from "../core/match.ts"
@@ -42,8 +42,12 @@ const HELP = `用法：rts-arena <命令> [参数]
   init <规则包> [目录]                   建 bot 目录（默认当前目录）：arena.json、bot.ts 模板、PROMPT.md、arena.d.ts、tsconfig.json
   init                                  在 bot 目录里重新生成说明书和接口（平台升级后跑一次），不动 bot.ts
   check [--ticks N]                     检查自己的 bot：类型检查 + 在每个位置上和不动的对手试打 N tick（默认 300）
-  run [对手...] [选项]                  自己的 bot 打对手（不写就打 baseline），回放和日志写到 ./replays
-  league [对手...] [选项]               联赛：自己的 bot 和对手循环对打，出排行榜（不写对手就和所有现成的 bot 打）
+  run [对手...] [选项]                  自己的 bot 打对手（不写就打 baseline），回放和日志写到 ./replays；
+                                        想让两个别的 bot 互相打，写 run <规则包> a.ts b.ts（比如自己打自己查座位偏不偏：run <规则包> bot.ts bot.ts --games 30）
+  league [对手...] [选项]               联赛：自己的 bot 和对手循环对打，出排行榜（不写对手就和所有现成的 bot 打）；
+                                        写的文件是另外加进来的对手（比如 versions/v3.ts），自己现在的 bot.ts 总在里面
+  clean [--all]                         清掉 ./replays 里的回放和日志（每局一个 JSON、每个 bot 一份日志），留着 *.series.json 汇总；
+                                        --all 连汇总一起清（联赛视频要用回放，做视频前别清）
   compare <另一个版本> [对手...] [选项]  两个版本比强弱：你现在的 bot 和另一个版本（比如 versions/v3.ts）对每个对手用同一批种子、
                                         坐同一个位置各打一局，按组配对比，告诉你分不分得出高下（不写对手就和所有现成的 bot 打）
   view [回放目录] [--port N] [--open]   网页播放器（默认看 ./replays，端口 5180；--open 起来后打开浏览器）
@@ -1623,6 +1627,23 @@ async function main(): Promise<void> {
       const [a, b, ...foes] = t.mine ? [t.bots[1], t.bots[0], ...t.bots.slice(2)] : t.bots
       if (!foes.length) for (const x of knownBots(t.src)) if (x !== "idle") foes.push(x)
       await cmdCompare(t.rules, t.src, a, b, foes, opt)
+      return
+    }
+    case "clean": {
+      // 清回放（D-188，试写反馈：一小时攒下两百多个文件，又没有清理命令）：只动 ./replays 这一层的 .json 和 .log
+      const dir = resolve(pos[0] ?? "replays")
+      if (!existsSync(dir)) return void console.log(`没有 ${pos[0] ?? "replays"} 目录，不用清`)
+      let n = 0
+      let bytes = 0
+      for (const f of readdirSync(dir)) {
+        if (!/\.(json|log)$/.test(f) || (f.endsWith(".series.json") && opt.all !== true)) continue
+        const p = join(dir, f)
+        if (!statSync(p).isFile()) continue
+        bytes += statSync(p).size
+        unlinkSync(p)
+        n++
+      }
+      console.log(`清掉 ${n} 个文件、${(bytes / 1048576).toFixed(1)} MB（${dir}）${opt.all === true ? "" : "；联赛汇总 *.series.json 留着，连它一起清用 --all"}`)
       return
     }
     case "view": {

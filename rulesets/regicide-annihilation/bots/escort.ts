@@ -105,6 +105,9 @@ function moveTo(cmd: Commands, u: Entity, p: Pos): void {
 }
 
 export function onTick(view: View, cmd: Commands): void {
+  // 单位数（含生产队列）到上限就不再排生产，排了也会被拒
+  const own = view.entities.filter((e) => e.owner === view.me)
+  let room = game.unitCap > 0 ? game.unitCap - own.filter((e) => game.types[e.type].kind === "unit").length - own.reduce((a, e) => a + (e.queue?.length ?? 0), 0) : Infinity
   const mine: Entity[] = []
   const enemyUnits: Entity[] = []
   const enemyBuildings: Entity[] = []
@@ -172,20 +175,20 @@ export function onTick(view: View, cmd: Commands): void {
   let gold = view.resources.gold
   const baseIdle = (base.queue?.length ?? 0) === 0
   if (baseIdle && workers.length < ECO_FIRST && gold >= 50) {
-    cmd.produce(base, "worker")
+    room-- > 0 && cmd.produce(base, "worker")
     gold -= 50
   }
   if (barracks && (barracks.queue?.length ?? 0) === 0 && (workers.length >= ECO_FIRST || !baseIdle || gold >= 125)) {
     const type = PLAN[produced % PLAN.length]
     const cost = game.types[type].cost.gold ?? 0
     if (gold >= cost) {
-      cmd.produce(barracks, type)
+      room-- > 0 && cmd.produce(barracks, type)
       gold -= cost
       produced++
     }
   }
   if (baseIdle && workers.length >= ECO_FIRST && workers.length < MAX_WORKERS && gold >= 50) {
-    cmd.produce(base, "worker")
+    room-- > 0 && cmd.produce(base, "worker")
     gold -= 50
   }
 
@@ -224,6 +227,9 @@ export function onTick(view: View, cmd: Commands): void {
   // ---------- 军队 ----------
   if (threats.length > 0) {
     for (const u of army) attack(cmd, u, pickTarget(u, threats)!)
+    // 领主跟着回防的兵（光环盖住守军）；身边 4 格内有敌兵就不过去
+    if (lord && lordHome && army.length >= 3 && !enemyUnits.some((e) => game.types[e.type].attack !== null && e.type !== "worker" && dist(e, lord) <= 4))
+      moveTo(cmd, lord, pointToward(centroid(army), lordHome, 2))
     return
   }
 

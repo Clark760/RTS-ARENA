@@ -418,7 +418,7 @@ test("规则包写的事件进回放和战报；被中立实体打死的 died �
   assert.deepEqual(notes, ["0:测试事件 true", "-1:中立打死了 hq -1"])
   const text = buildReport(replay, { player: 0 })
   assert.match(text, /（规则包）测试事件 true/)
-  assert.match(text, /你失去 hq \(1, 1\)，被中立实体打死/)
+  assert.match(text, /你失去 hq \(1, 1\)，被中立的 creep 打死/)
   await assert.rejects(loadSandboxedRuleset(rules({ extra: `summary: "${"长".repeat(61)}",` }), quiet), /summary/)
 })
 
