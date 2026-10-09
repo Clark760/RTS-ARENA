@@ -136,12 +136,12 @@ test("脚本提醒：粗体字段里的「一」像破折号，常规字重的�
   // 不再有标题页（D-177）：老脚本的 title、userText、theme 提醒删掉
   assert.ok(scriptWarnings({ title: "x", userText: "y", players: [] }).some((x) => /title、userText 不再使用/.test(x)))
   assert.deepEqual(scriptWarnings(null), [])
-  // 选手页：tagline 加 intro 超过 170 字读不完，少于 100 字页面显得空，都提醒（和最初的视频一样写 3～4 句、120～170 字）
+  // 选手页：tagline 加 intro 超过 260 字太挤，少于 160 字页面显得空，都提醒（4～5 句、180～260 字；D-183 只减半时长、字数不变）
   const long = scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["很长".repeat(70), "很长".repeat(70)] }] })
   assert.match(long[0], /players\[0\]（a）的 tagline 加 intro 共 282 字/)
   const short = scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["很短".repeat(20)] }] })
   assert.match(short[0], /players\[0\]（a）的 tagline 加 intro 只有 42 字，选手页显得空/)
-  assert.deepEqual(scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["正好".repeat(100)] }] }), [])
+  assert.deepEqual(scriptWarnings({ players: [{ name: "a", tagline: "定位", intro: ["正好".repeat(30), "正好".repeat(30), "正好".repeat(30)] }] }), [])
   // 规则介绍提到别的规则包：观众不一定玩过，提醒直接讲规则（D-155）
   const other = scriptWarnings({ rules: ["在拓荒的基础上加了 4 种科技建筑。", "先拆掉对方主基地的赢。"] }, ["拓荒", "夺点"])
   assert.equal(other.length, 1)
@@ -190,13 +190,21 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   // 脚本写了开场的大字就用它
   const hooked = buildScenes(series, { ...script, hook: { text: "两个参考 bot 谁更强？" } }, seriesFile, 10)
   assert.equal((hooked[0].data as { title: string }).title, "两个参考 bot 谁更强？")
-  // 竖屏短版：开场、精彩对局的大战（前三局，每段最多 12 秒）、排名、片尾
-  const short = buildScenes(series, script, seriesFile, 10, undefined, null, { short: true })
-  const sk = short.map((x) => x.data.kind)
-  assert.deepEqual(sk.slice(0, 2), ["lineup", "replay"])
-  assert.deepEqual(sk.slice(-2), ["standings", "brandClose"])
-  assert.ok(!sk.includes("player") && !sk.includes("hlTitle") && !sk.includes("rules"))
-  assert.ok(short.filter((x) => x.data.kind === "replay").every((x) => x.data.frames <= 12 * 10))
+  // 竖屏（D-183）：开场、规则，然后每个选手「介绍 → 他的高光对局（整局，不加标题卡）」，最后排名和片尾
+  const vert = buildScenes(series, script, seriesFile, 10, undefined, null, { vertical: true })
+  assert.deepEqual(
+    vert.map((x) => x.data.kind),
+    ["lineup", "rules", "player", "replay", "player", "replay", "standings", "brandClose"],
+  )
+  // 没写 players[].highlight：从精彩对局里挑有他的，两个人不重复
+  const vIdx = vert.filter((x) => x.data.kind === "replay").map((x) => Number(/（第 (\d+) 局）$/.exec(x.label)![1]))
+  assert.equal(new Set(vIdx).size, 2)
+  // 写了就用它；局号不对、这局没有他都报错
+  const pin = series.results.at(-1)!.index
+  const pinned = { ...script, players: [{ ...script.players[0], highlight: pin }, script.players[1]] }
+  assert.deepEqual(checkScript(pinned, series), [])
+  assert.ok(buildScenes(series, pinned, seriesFile, 10, undefined, null, { vertical: true }).some((x) => x.label === `基准的高光对局 回放（第 ${pin} 局）` && x.data.kind === "replay" && (x.data as { kicker?: string }).kicker === "基准的高光对局"))
+  assert.match(checkScript({ ...script, players: [{ ...script.players[0], highlight: 9999 }, script.players[1]] }, series).join("\n"), /players\[0\]\.highlight 要是联赛里的局号/)
   const hl = series.summary!.highlights!.slice(0, 3).length
   assert.equal(kinds.filter((k) => k === "replay").length, hl)
   // 时间表：每段都有名字，首尾相接
@@ -428,10 +436,10 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   assert.match(out, /预览图/)
   assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～2\.5\s+秒  开场阵容\n\s+2\.5～[\d.]+\s+秒  规则介绍/)
   assert.ok(statSync(join(dir, "preview", "夺点联赛-6s.png")).size > 10_000)
-  // 竖屏短版（D-179、D-181）：开场阵容和回放都按竖屏画（回放地图拉满宽度），1080×1920
-  const vert = sh(["video", "--short", "--preview", "1,5", "--out", "短.mp4"], dir)
-  assert.match(vert, /0\.0～2\.5\s+秒  开场阵容\n\s+2\.5～[\d.]+\s+秒  精彩对局 1/)
-  const vpng = readFileSync(join(dir, "preview", "短-5s.png"))
+  // 竖屏（D-179、D-183）：开场阵容、规则、选手页和回放都按竖屏画，1080×1920；选手介绍后面紧跟他的高光对局
+  const vert = sh(["video", "--vertical", "--preview", "1,5", "--out", "竖.mp4"], dir)
+  assert.match(vert, /0\.0～2\.5\s+秒  开场阵容\n\s+2\.5～[\d.]+\s+秒  规则介绍\n\s+[\d.]+～[\d.]+\s+秒  选手 \S+\n\s+[\d.]+～[\d.]+\s+秒  .+的高光对局 回放（第 \d+ 局）/)
+  const vpng = readFileSync(join(dir, "preview", "竖-5s.png"))
   assert.deepEqual([vpng.readUInt32BE(16), vpng.readUInt32BE(20)], [1080, 1920])
   // 两张以上的预览拼一张总览
   assert.match(out, /总览：preview[\\/]夺点联赛-总览\.png/)

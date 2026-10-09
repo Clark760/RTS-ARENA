@@ -47,8 +47,8 @@ export interface RenderOptions {
   /** 预览图和检查截图放在哪个目录（默认视频旁边的 preview/）；--out 指到别处时截图也不跟过去 */
   imagesDir?: string
   onProgress?: (done: number, total: number) => void
-  /** 竖屏短版（1080×1920，D-179）：开场、三局精彩对局的大战、排名、片尾 */
-  short?: boolean
+  /** 竖屏版（1080×1920，D-183）：开场阵容、规则，然后每个选手「介绍 → 他的高光对局」，最后排名和片尾 */
+  vertical?: boolean
 }
 
 interface Scene {
@@ -80,8 +80,6 @@ export const DEFAULT_AVATAR = [0.49, 0.115, 0.32]
  * analysis 是这次联赛的分析（雷达图、胜率模型，见 analysis.ts）；不给（只核对脚本、算时间表时）就不画雷达图和胜率。
  * 选手有形象图（脚本的 portrait）时，页面里按选手的联赛名字取图（renderLeagueVideo 先把图送进页面）
  */
-/** 竖屏短版里每局精彩对局的大战最多放几秒 */
-const SHORT_BATTLE_SECONDS = 12
 
 export function buildScenes(
   series: SeriesFile,
@@ -90,7 +88,7 @@ export function buildScenes(
   fps: number,
   specs?: TypeSpecs,
   analysis?: LeagueAnalysis | null,
-  opts: { short?: boolean } = {},
+  opts: { vertical?: boolean } = {},
 ): Scene[] {
   const sum = series.summary!
   const names = series.participants.map((p) => p.name)
@@ -133,14 +131,6 @@ export function buildScenes(
     const seats = seatOf.map((i, p) => ({ name: display(g.names[p]), color: color(i), avatar: imageOf(g.names[p]), crop: avatarOf(g.names[p]) }))
     return { g, replay, seatOf, sides, result, title, commentary, seats }
   }
-  /** 一局里最大的那一仗按 2 倍速放 seconds 秒（竖屏短版用）；没打过仗返回 null */
-  const battleClip = (h: ReturnType<typeof hlData>, seconds: number, no: number) => {
-    const w = biggestBattle(h.replay)
-    if (!w) return null
-    const rate = Math.max(1, h.replay.tickRate || 10)
-    const t1 = Math.min(h.replay.result.tick, w[0] + Math.round(seconds * rate * BATTLE_SPEED))
-    return replayScene(h.replay, no, h.title, h.commentary, h.seats, h.result, fps, analysis?.weights ?? null, { window: [w[0], t1] })
-  }
   // 开场（D-179，用户：视频三秒跳出率高）：第一帧就是全体选手的立绘阵容和一句大字（不从黑屏淡入，也当封面）；
   // 平台署名和仓库地址用小字放在它最下面（D-181：冷开场效果不好删掉，片头署名页也不单独出现）
   const hookText = script.hook?.text || `${names.length} 位选手的${series.ruleset.name}联赛，谁能夺冠？`
@@ -154,28 +144,21 @@ export function buildScenes(
       players: script.players.map((p) => ({ name: display(p.name), color: color(names.indexOf(p.name)), portrait: imageOf(p.name) })),
     },
   })
-  // 竖屏短版（D-179，可选）：开场之后，前三局精彩对局各放最大的一仗，再是排名和片尾
-  if (opts.short) {
-    picks.slice(0, 3).forEach((pick, k) => {
-      const h = hlData(pick)
-      const clip = battleClip(h, SHORT_BATTLE_SECONDS, k + 1)
-      if (clip) scenes.push({ label: `精彩对局 ${k + 1}（第 ${h.g.index} 局最大的一仗）`, ...clip })
-    })
-    scenes.push({
-      label: "联赛排名",
-      data: {
-        kind: "standings",
-        frames: sec(fps, 5),
-        title: "联赛排名",
-        rows: sum.standings.map((x) => ({ name: display(x.name), color: color(x.index), rank: x.rank, record: `${x.wins} 胜 ${x.draws} 平 ${x.losses} 负 · 等级分 ${x.elo}`, rate: x.rate, elo: x.elo, portrait: imageOf(x.name) })),
-      },
-    })
-    const credits = script.players.map((x) => `${x.displayName || x.name}${x.byline ? ` · ${x.byline}` : ""}`)
-    scenes.push({ label: "片尾署名", data: { kind: "brandClose", frames: sec(fps, 4), speed: BRISK, outro: script.outro || null, credits: [...credits, "比赛、回放、精彩对局和这段视频都由平台自动生成"] } })
-    return scenes
+  /**
+   * 竖屏里每个选手的高光对局（D-183）：脚本写了 players[].highlight 就用它；否则在精彩对局（先脚本的、再联赛挑的）里
+   * 找第一局有他、还没给别人用过的；精彩对局里没有（或者都给别人用了），从他打过的局里挑：赢过就挑结束最快的一局，没赢过就挑撑得最久的
+   */
+  const highlightOf = (p: VideoScript["players"][number], used: Set<number>): number | null => {
+    if (p.highlight !== undefined) return p.highlight
+    const pool = [...picks.map((x) => x.index), ...(sum.highlights ?? []).map((h) => h.index)]
+    const has = (idx: number) => series.results.find((r) => r.index === idx)?.names.includes(p.name) ?? false
+    const fromPool = pool.find((idx) => has(idx) && !used.has(idx))
+    if (fromPool !== undefined) return fromPool
+    const mine = series.results.filter((r) => r.names.includes(p.name) && !used.has(r.index))
+    const won = mine.filter((r) => r.winners.some((w) => r.names[w] === p.name)).sort((a, b) => a.tick - b.tick)
+    return (won[0] ?? [...mine].sort((a, b) => b.tick - a.tick)[0])?.index ?? pool.find(has) ?? null
   }
-  // 片头之后直接是规则介绍（D-177：不再有标题页、不再展示用户的话）
-  // 规则介绍：脚本写的几句（不写就用规则包的一句话简介），右边是第一局精彩对局的开局地图和单位图例
+  // 规则介绍（开场阵容之后直接是它）：脚本写的几句（不写就用规则包的一句话简介），配第一局精彩对局的开局地图和单位图例
   const rulesLines = script.rules?.length ? script.rules : series.ruleset.summary ? [series.ruleset.summary] : []
   const mapIndex = script.highlights?.[0]?.index ?? sum.highlights?.[0]?.index ?? series.results[0]?.index
   const mapGame = series.results.find((r) => r.index === mapIndex)
@@ -184,10 +167,10 @@ export function buildScenes(
     const seatOf = mapGame.names.map((n) => names.indexOf(n))
     scenes.push({ label: "规则介绍", data: rulesScene(replay, series.ruleset.name, rulesLines, `第 ${mapGame.index} 局的开局地图`, seatOf.map((i) => color(i)), fps, specs) })
   }
-  // 选手介绍：按联赛名次倒着出场，最后一名先上、冠军压轴（D-181，用户要求）；名次一样的按脚本里的顺序
+  // 选手按联赛名次倒着出场，最后一名先上、冠军压轴（D-181，用户要求）；名次一样的按脚本里的顺序
   const rankOf = (name: string) => sum.standings.find((x) => x.index === names.indexOf(name))?.rank ?? names.length
   const byRank = script.players.map((p, k) => ({ p, k })).sort((a, b) => rankOf(b.p.name) - rankOf(a.p.name) || a.k - b.k)
-  for (const { p } of byRank) {
+  const playerScene = (p: VideoScript["players"][number]): Scene => {
     const i = names.indexOf(p.name)
     const st = sum.standings.find((s) => s.index === i)
     const file = resolveBotFile(series.participants[i].file, seriesFile)
@@ -199,12 +182,12 @@ export function buildScenes(
           `attackMove ×${facts.features["cmd.attackMove"]} · attack ×${facts.features["cmd.attack"]}`,
         ]
       : ["（没找到代码文件）"]
-    scenes.push({
+    return {
       label: `选手 ${p.displayName || p.name}`,
       data: {
         kind: "player",
-        // 按字数算：读字速度按每秒 11 字的 1.3 倍（约 14 字），4.6～13 秒（D-148；D-178 字数放到 180～260 字，最长从 6.9 秒放到 13 秒）
-        frames: sec(fps, Math.min(13, Math.max(6 / BRISK, len(p.tagline, ...p.intro) / (11 * BRISK)))),
+        // 按字数算：原来按每秒 11 字的 1.3 倍（约 14 字）读、4.6～13 秒；D-183 时长减半、字数不变（用户：观众是读长文本很快的程序员），2.3～6.5 秒
+        frames: sec(fps, Math.min(13, Math.max(4.6, len(p.tagline, ...p.intro) / (11 * BRISK))) / 2),
         speed: BRISK,
         color: color(i),
         displayName: p.displayName || p.name,
@@ -218,37 +201,63 @@ export function buildScenes(
         record: st ? [`联赛 ${st.wins} 胜 ${st.draws} 平 ${st.losses} 负`, `得分率 ${Math.round(st.rate * 100)}% · 等级分 ${st.elo}`] : [],
         rank: st?.rank ?? names.length,
         total: names.length,
-        // 背后的半透明半身像、右上的能力雷达图（D-177）
+        // 背后的半透明半身像、能力雷达图（D-177）
         portrait: imageOf(p.name),
         radar: analysis?.radar[p.name] ?? null,
       },
-    })
+    }
   }
-  scenes.push({
+  const standingsScene = (secs: number): Scene => ({
     label: "联赛排名",
     data: {
       kind: "standings",
-      frames: sec(fps, 6),
+      frames: sec(fps, secs),
       title: "联赛排名",
       rows: sum.standings.map((s) => ({ name: display(s.name), color: color(s.index), rank: s.rank, record: `${s.wins} 胜 ${s.draws} 平 ${s.losses} 负 · 等级分 ${s.elo}`, rate: s.rate, elo: s.elo, portrait: imageOf(s.name) })),
     },
   })
   // 全联赛之最（最快、最久、比分最接近）的标签，挑中这几局时排在看点最前面
   const tags = factTags(series, gameScores(series, seriesFile))
-  picks.forEach((pick, k) => {
+  /** 一局精彩对局：标题卡（withCard 时）和整局回放；no 是第几局 */
+  const hlScenes = (pick: { index: number; title?: string; commentary?: string }, no: number, withCard: boolean, label: string): Scene[] => {
     const { g, replay, sides, result, title, commentary, seats } = hlData(pick)
-    const hl = sum.highlights?.find((h) => h.index === pick.index)
-    const reasons = [...(tags.get(g.index) ?? []), ...(hl ? hl.reasons.map(relabel) : gameReasons(replay, g.names.map(display)).map(tidy))].slice(0, 4)
-    scenes.push({
-      label: `精彩对局 ${k + 1} 标题卡（第 ${g.index} 局）`,
-      // 标题卡要读的东西多（标题、对阵、结果、看点、解说），保持原来的速度（D-149：用户让标题卡退回原速）
-      data: { kind: "hlTitle", frames: sec(fps, readSecs(len(commentary) + 0.4 * len(...reasons), 2.5, 4.5, 8)), no: k + 1, title, sides, result: `第 ${g.index} 局 · ${result} · 第 ${g.tick} tick · ${relabel(g.reason)}`, reasons, commentary },
-    })
-    scenes.push({ label: `精彩对局 ${k + 1} 回放`, ...replayScene(replay, k + 1, title, commentary, seats, result, fps, analysis?.weights ?? null) })
-  })
-  // 片尾名单按脚本里的出场顺序
+    const out: Scene[] = []
+    if (withCard) {
+      const hl = sum.highlights?.find((h) => h.index === pick.index)
+      const reasons = [...(tags.get(g.index) ?? []), ...(hl ? hl.reasons.map(relabel) : gameReasons(replay, g.names.map(display)).map(tidy))].slice(0, 4)
+      out.push({
+        label: `${label} 标题卡（第 ${g.index} 局）`,
+        // 标题卡要读的东西多（标题、对阵、结果、看点、解说），保持原来的速度（D-149：用户让标题卡退回原速）
+        data: { kind: "hlTitle", frames: sec(fps, readSecs(len(commentary) + 0.4 * len(...reasons), 2.5, 4.5, 8)), no, title, sides, result: `第 ${g.index} 局 · ${result} · 第 ${g.tick} tick · ${relabel(g.reason)}`, reasons, commentary },
+      })
+    }
+    const rs = replayScene(replay, no, title, commentary, seats, result, fps, analysis?.weights ?? null)
+    // 竖屏没有标题卡，回放顶上的小字写成「<选手>的高光对局」
+    out.push({ label: `${label} 回放${withCard ? "" : `（第 ${g.index} 局）`}`, ...rs, data: withCard ? rs.data : { ...rs.data, kicker: label } as SceneData })
+    return out
+  }
+  // 片尾名单按脚本里的顺序
   const credits = script.players.map((s) => `${s.displayName || s.name}${s.byline ? ` · ${s.byline}` : ""}`)
-  scenes.push({ label: "总结、片尾署名和选手名单", data: { kind: "brandClose", frames: sec(fps, 6.5 / BRISK), speed: BRISK, outro: script.outro || null, credits: [...credits, "比赛、回放、精彩对局和这段视频都由平台自动生成"] } })
+  const close: Scene = { label: "总结、片尾署名和选手名单", data: { kind: "brandClose", frames: sec(fps, 6.5 / BRISK), speed: BRISK, outro: script.outro || null, credits: [...credits, "比赛、回放、精彩对局和这段视频都由平台自动生成"] } }
+  if (opts.vertical) {
+    // 竖屏（D-183，用户：竖屏改成「选手 A 介绍、A 的高光对局、选手 B 介绍、B 的高光对局」，和横屏做出区别）：
+    // 按名次倒着，每人一页介绍，紧接着整局放这个选手的高光对局（不加标题卡，回放顶上有标题和解说）；最后是排名和片尾
+    const used = new Set<number>()
+    byRank.forEach(({ p }, k) => {
+      scenes.push(playerScene(p))
+      const idx = highlightOf(p, used)
+      if (idx === null) return
+      used.add(idx)
+      scenes.push(...hlScenes(picks.find((x) => x.index === idx) ?? { index: idx }, k + 1, false, tidy(`${p.displayName || p.name} 的高光对局`)))
+    })
+    scenes.push(standingsScene(5))
+    scenes.push(close)
+    return scenes
+  }
+  for (const { p } of byRank) scenes.push(playerScene(p))
+  scenes.push(standingsScene(6))
+  picks.forEach((pick, k) => scenes.push(...hlScenes(pick, k + 1, true, `精彩对局 ${k + 1}`)))
+  scenes.push(close)
   return scenes
 }
 
@@ -292,7 +301,8 @@ function rulesScene(replay: Replay, ruleset: string, lines: string[], mapNote: s
   const chars = lines.reduce((a, l) => a + [...l].length, 0)
   return {
     kind: "rules",
-    frames: sec(fps, readSecs(chars, 4, 6, 12)),
+    // 按字数算，再减半（D-183：用户让规则介绍时长减半、字数不变），最长 6 秒
+    frames: sec(fps, readSecs(chars, 4, 6, 12) / 2),
     ruleset,
     lines,
     mapNote,
@@ -345,19 +355,6 @@ function deathsOf(replay: Replay): { t: number; x: number; y: number; owner: num
     applyFrame(s, f)
   }
   return deaths
-}
-
-/**
- * 一局里最大的一仗（死得最多的那场，一边倒的屠杀排在后面）：从第一个死亡前 BATTLE_LEAD tick 开始到最后一个死亡后 BATTLE_TAIL tick。
- * 冷开场和竖屏短版用；整局没死过人返回 null
- */
-export function biggestBattle(replay: Replay): [number, number] | null {
-  const team = (p: number) => replay.players[p]?.team ?? p
-  const groups = groupBattles(deathsOf(replay))
-  if (!groups.length) return null
-  const best = [...groups].sort((a, b) => Number(isRout(a, team)) - Number(isRout(b, team)) || b.length - a.length)[0]
-  const T = Math.max(1, replay.result.tick)
-  return [Math.max(0, best[0].t - BATTLE_LEAD), Math.min(T, best[best.length - 1].t + BATTLE_TAIL)]
 }
 
 export function fightWindows(replay: Replay): { battles: [number, number][]; skirmishes: [number, number][] } {
@@ -440,12 +437,9 @@ function replayScene(
   result: string,
   fps: number,
   weights: number[] | null = null,
-  /** window：只放这一段 tick（竖屏短版，2 倍速，不定格结果） */
-  clip: { window?: [number, number] } = {},
 ): Omit<Scene, "label"> {
   const T = replay.result.tick
-  const W0 = clip.window
-  const hold = W0 ? 0 : sec(fps, 1.5)
+  const hold = sec(fps, 1.5)
   const typeNames = Object.keys(replay.types)
   // 主基地（每家开局都有、生命最多的建筑）：选手有形象图时画成头像（D-177）
   const baseType = baseTypeOf(replay)
@@ -469,18 +463,11 @@ function replayScene(
         }
       : null
   const eventsAt = replayEvents(replay, seats)
-  const rate = Math.max(1, replay.tickRate || 10)
-  const pace = W0
-    ? {
-        playFrames: Math.max(2, Math.round(((W0[1] - W0[0]) * fps) / (rate * BATTLE_SPEED))),
-        tickOf: (i: number) => Math.min(W0[1], W0[0] + Math.floor((i * rate * BATTLE_SPEED) / fps)),
-        mode: (): PaceMode => "battle",
-      }
-    : pacing(replay, fps)
+  const pace = pacing(replay, fps)
   const playFrames = pace.playFrames
   const model = new ReplayModel(replay)
   let state: State = model.initialState()
-  const tickOf = (i: number) => (i >= playFrames ? (W0 ? W0[1] : T) : pace.tickOf(i))
+  const tickOf = (i: number) => (i >= playFrames ? T : pace.tickOf(i))
   let deaths: { x: number; y: number; frame: number }[] = []
   let lastTick = 0
   let lastFrame = -1
@@ -499,8 +486,7 @@ function replayScene(
       const removed = new Set(f.removed ?? [])
       for (const id of f.die ?? []) {
         const e = state.ents.get(id)
-        // 只放一段时，开头一下推过去的那些死亡不画红圈
-        if (e && !removed.has(id) && replay.types[e.type]?.kind !== "resource" && (!W0 || k > W0[0])) deaths.push({ x: e.x, y: e.y, frame: i })
+        if (e && !removed.has(id) && replay.types[e.type]?.kind !== "resource") deaths.push({ x: e.x, y: e.y, frame: i })
       }
       // 攻击线只画这一帧最后几 tick 的
       if (t - k < 3) {
@@ -689,7 +675,7 @@ function autoPreview(scenes: Scene[], fps: number): number[] {
  * 只核对脚本、不出图（video --lint）：格式错误、提醒、每个字段的字数和上限、时间表。
  * 写脚本时反复用它，字数对了再出预览图
  */
-export function lintScript(seriesFile: string, script: VideoScript, fps = 30, otherRulesets: string[] = [], short = false): { errors: string[]; warnings: string[]; counts: string[]; timeline: TimelineItem[] } {
+export function lintScript(seriesFile: string, script: VideoScript, fps = 30, otherRulesets: string[] = [], vertical = false): { errors: string[]; warnings: string[]; counts: string[]; timeline: TimelineItem[] } {
   const series = readSeries(seriesFile)
   const errors = checkScript(script, series)
   const warnings = [...scriptWarnings(script, otherRulesets), ...highlightPlayerWarnings(script, readSeries(seriesFile)), ...portraitWarnings(script)]
@@ -718,7 +704,7 @@ export function lintScript(seriesFile: string, script: VideoScript, fps = 30, ot
       row(`highlights[${i}]（第 ${h.index} 局）.commentary`, h.commentary, L.commentary)
     })
   row("outro", script.outro, L.outro)
-  const timeline = errors.length ? [] : timelineOf(buildScenes(series, script, seriesFile, fps, undefined, null, { short }), fps)
+  const timeline = errors.length ? [] : timelineOf(buildScenes(series, script, seriesFile, fps, undefined, null, { vertical }), fps)
   return { errors, warnings, counts, timeline }
 }
 
@@ -768,7 +754,7 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
   }
   // 雷达图、胜率模型要读完全部回放（第一次几十秒，之后用缓存）
   const analysis = analyzeLeague(series, o.seriesFile)
-  const scenes = buildScenes(series, o.script, o.seriesFile, fps, specs, analysis, { short: o.short })
+  const scenes = buildScenes(series, o.script, o.seriesFile, fps, specs, analysis, { vertical: o.vertical })
   const total = scenes.reduce((a, s) => a + s.data.frames, 0)
   const timeline = timelineOf(scenes, fps)
   const exe = findBrowser(o.browser)
@@ -780,8 +766,8 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
     const muxerFile = createRequire(import.meta.url).resolve("mp4-muxer")
     await browser.evaluate(readFileSync(muxerFile, "utf8") + ";true")
     await browser.evaluate(`(${installVideoPage.toString()})();true`)
-    const width = o.width ?? (o.short ? 1080 : 1920)
-    const height = o.height ?? (o.short ? 1920 : 1080)
+    const width = o.width ?? (o.vertical ? 1080 : 1920)
+    const height = o.height ?? (o.vertical ? 1920 : 1080)
     await browser.evaluate(`__size(${width}, ${height})`)
     // 选手的形象图（按联赛名字）：选手页的半身像、精彩对局里的头像都从它来
     for (const p of o.script.players) {

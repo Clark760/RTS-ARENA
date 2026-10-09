@@ -55,6 +55,8 @@ export type SceneData =
       kind: "replay"
       frames: number
       no: number
+      /** 标题上面那行小字，不写就是「精彩对局 <no>」；竖屏写成「<选手>的高光对局」（D-183） */
+      kicker?: string
       title: string
       commentary: string | null
       width: number
@@ -480,13 +482,17 @@ export function installVideoPage(): void {
       y += ls.length * 37 + 18
     })
     if (s.tickNote) text(s.tickNote, 80, H - 56, 17, C.muted, { alpha: ease((i - 20) / 15) })
-    // 右边：开局地图
+    // 右边：开局地图和单位图例
+    rulesMap(s, i, 700, 92, 540, 330, 686)
+    watermark()
+  }
+
+  /** 规则页的开局地图、说明小字和单位图例（D-183 抽出来，横竖屏共用）：地图放进 (x0, y0) 起 boxW×boxH 的框，图例排在地图下面、不超过 bottom */
+  function rulesMap(s: Any, i: number, x0: number, y0: number, boxW: number, boxH: number, bottom: number): void {
     const a2 = ease((i - 8) / 18)
-    const boxW = 540
-    const boxH = 330
     const tile = Math.min(boxW / s.width, boxH / s.height)
-    const mx = 700 + (boxW - s.width * tile) / 2
-    const my = 92
+    const mx = x0 + (boxW - s.width * tile) / 2
+    const my = y0
     g.globalAlpha = a2
     for (let yy = 0; yy < s.height; yy++)
       for (let xx = 0; xx < s.width; xx++) {
@@ -518,9 +524,9 @@ export function installVideoPage(): void {
     g.globalAlpha = 1
     text(s.mapNote, mx, my + s.height * tile + 24, 15, C.muted, { alpha: a2 })
     // 地图下面：单位图例（形状、字、名字、造价和数值）
-    // 排一栏放得下（不超出画面底部）就排一栏，否则排两栏；说明超出栏宽就截断
+    // 排一栏放得下（不超过 bottom）就排一栏，否则排两栏；说明超出栏宽就截断
     const ly = my + s.height * tile + 58
-    const cols = ly + (s.legend.length - 1) * 34 <= 686 ? 1 : 2
+    const cols = ly + (s.legend.length - 1) * 34 <= bottom ? 1 : 2
     const colW = (s.width * tile) / cols
     s.legend.forEach((it: Any, k: number) => {
       const col = k % cols
@@ -547,7 +553,90 @@ export function installVideoPage(): void {
       while (detail && 40 + nw + g.measureText(detail).width > colW - 12) detail = detail.slice(0, -1)
       text(detail + (detail.length < it.detail.length ? "…" : ""), lx + 40 + nw, yy - 1, 14, C.muted, { alpha: a })
     })
-    watermark()
+  }
+
+  /**
+   * 竖屏的几句要点（规则、选手介绍）：逐句出现，每句前一个圆点。字号从 px0 往下试，直到放得进 room 高（最小 minPx）；
+   * 返回最后一句下面的 y
+   */
+  function vBullets(lines: string[], x: number, y: number, maxW: number, room: number, px0: number, minPx: number, dot: string, i: number): number {
+    let px = px0
+    const fit = (size: number) => {
+      g.font = font(size)
+      const rows = lines.map((l) => wrapBalanced(l, maxW))
+      return { rows, h: rows.reduce((t, ls) => t + ls.length * Math.round(size * 1.4) + Math.round(size * 0.5), 0) }
+    }
+    let r = fit(px)
+    while (r.h > room && px > minPx) r = fit(--px)
+    const lh = Math.round(px * 1.4)
+    r.rows.forEach((ls, k) => {
+      const a = ease((i - 12 - k * 9) / 12)
+      const base = y + px
+      g.fillStyle = dot
+      g.globalAlpha = a
+      g.beginPath()
+      g.arc(x - 16, base - px * 0.36, Math.max(4, px * 0.18), 0, Math.PI * 2)
+      g.fill()
+      g.globalAlpha = 1
+      ls.forEach((l, j) => text(l, x, base + j * lh, px, C.text, { alpha: a }))
+      y += ls.length * lh + Math.round(px * 0.5)
+    })
+    return y
+  }
+
+  /** 竖屏的规则页（D-183）：上面是标题和规则几句，下面是拉满宽度的开局地图和单位图例 */
+  function vRules(s: Any, i: number): void {
+    const p = ease(i / 15)
+    text("规则", 40, 90, 26, C.accent, { bold: true, alpha: p })
+    fitLines(`${s.ruleset}怎么玩`, 40, 156, 48, 28, VW - 80, 1, C.text, { bold: true })
+    // 规则最多占到 560 高，字多就缩字号
+    const y = vBullets(s.lines, 64, 196, VW - 100, 360, 28, 20, C.accent, i)
+    // 地图在下面拉满宽度；高度给图例（按两栏算）和最下面的 tick 说明留出地方
+    const y0 = Math.max(y + 16, 400)
+    const legendH = 58 + Math.ceil(s.legend.length / 2) * 34
+    rulesMap(s, i, 20, y0, VW - 40, Math.min(520, VH - 80 - y0 - legendH), VH - 70)
+    if (s.tickNote) text(s.tickNote, 40, VH - 30, 18, C.muted, { alpha: ease((i - 20) / 15) })
+  }
+
+  /**
+   * 竖屏的选手页（D-183）：整张立绘当半透明背景；上面是名次、名字、小字和一句话定位，中间是能力雷达图，
+   * 下面是介绍（逐句出现，字多就缩字号）和联赛战绩
+   */
+  function vPlayer(s: Any, i: number): void {
+    const p = ease(i / 18)
+    const im = s.portrait ? images.get(s.portrait) : undefined
+    if (im) {
+      // 按高铺满、左右居中，裁掉两边
+      const h = VH
+      const w = (im.img.width * h) / im.img.height
+      g.globalAlpha = 0.22 * p
+      g.drawImage(im.img, (VW - w) / 2, 0, w, h)
+      g.globalAlpha = 1
+    }
+    g.fillStyle = s.color
+    g.fillRect(0, 0, VW, 10 * p)
+    text(`选手 · 联赛第 ${s.rank} 名`, 44, 80, 24, s.color, { bold: true, alpha: p })
+    fitLines(s.displayName, 44, 148, 60, 30, VW - 88, 1, C.text, { bold: true })
+    let y = 190
+    if (s.byline) {
+      fitLines(s.byline, 46, y, 22, 14, VW - 88, 1, C.muted)
+      y += 10
+    }
+    y = fitLines(s.tagline, 44, y + 42, 32, 22, VW - 88, 2, C.accent, { bold: true }) - 10
+    if (s.radar) {
+      const a2 = ease((i - 14) / 20)
+      g.globalAlpha = a2
+      roundRect(30, y, VW - 60, 400, 14, "rgba(10,15,26,0.6)", C.line)
+      g.globalAlpha = 1
+      g.save()
+      g.translate(VW / 2, y + 200)
+      g.scale(1.2, 1.2)
+      radar(s.radar, 0, 0, 110, s.color, ease((i - 16) / 24))
+      g.restore()
+      y += 414
+    }
+    vBullets(s.intro, 66, y, VW - 100, VH - 96 - y, 26, 18, s.color, i - 8)
+    if (s.record?.length) fitLines(s.record.join(" · "), VW / 2, VH - 40, 24, 16, VW - 60, 1, s.color, { bold: true, align: "center" })
   }
 
   function standings(s: Any, i: number): void {
@@ -793,7 +882,7 @@ export function installVideoPage(): void {
   }
 
   /**
-   * 竖屏短版里排名和片尾的一帧（D-179，可选）：横屏的画面缩到中间，上面是大标题，下面放冠军头像或总结（回放另有 vReplay）。
+   * 竖屏版里排名和片尾的一帧（D-179）：横屏的画面缩到中间，上面是大标题，下面放冠军头像或总结（回放另有 vReplay）。
    * 最上面一直留着平台署名
    */
   function vFrame(s: Any, f: Any, i: number): void {
@@ -978,7 +1067,7 @@ export function installVideoPage(): void {
     g.fillStyle = C.bg1
     g.fillRect(0, 0, W, H)
     // 顶部：精彩对局的标题和解说
-    text(`精彩对局 ${s.no}`, 24, 38, 20, C.accent, { bold: true })
+    text(s.kicker ?? `精彩对局 ${s.no}`, 24, 38, 20, C.accent, { bold: true })
     text(s.title, 140, 38, 22, C.text, { bold: true })
     if (s.commentary) {
       // 解说放一行：放不下就缩小字号，最小 14 号还放不下就折成两行
@@ -1073,7 +1162,7 @@ export function installVideoPage(): void {
     const ox = (VW - mapW) / 2
     // 地图上方：标题、解说、双方（左右两栏）
     text("RTS Arena", VW / 2, 40, 20, C.accent, { bold: true, align: "center" })
-    text(`精彩对局 ${s.no}`, VW / 2, 80, 22, C.accent, { bold: true, align: "center" })
+    text(s.kicker ?? `精彩对局 ${s.no}`, VW / 2, 80, 22, C.accent, { bold: true, align: "center" })
     let y = fitLines(s.title, VW / 2, 124, 36, 22, VW - 60, 2, C.text, { bold: true, align: "center" })
     if (s.commentary) y = fitLines(s.commentary, VW / 2, y, 19, 14, VW - 60, 2, C.muted, { align: "center" })
     const seats = (s.seats as Any[]).slice(0, 2)
@@ -1158,8 +1247,8 @@ export function installVideoPage(): void {
       g.setTransform(1, 0, 0, 1, 0, 0)
       return
     }
-    // 竖屏：开场阵容和回放直接按竖屏画；别的先按横屏画到 landCanvas，再拼到竖屏画布上
-    const direct = s.kind === "lineup" || s.kind === "replay"
+    // 竖屏：开场阵容、规则、选手和回放直接按竖屏画（D-183）；排名和片尾先按横屏画到 landCanvas，再拼到竖屏画布上
+    const direct = s.kind === "lineup" || s.kind === "replay" || s.kind === "rules" || s.kind === "player"
     if (!direct) {
       g = landG!
       g.setTransform(SCALE, 0, 0, SCALE, 0, 0)
@@ -1174,6 +1263,8 @@ export function installVideoPage(): void {
     vBackground()
     if (s.kind === "lineup") lineup(s, a, true)
     else if (s.kind === "replay") vReplay(s, f ?? {}, i)
+    else if (s.kind === "rules") vRules(s, a)
+    else if (s.kind === "player") vPlayer(s, a)
     else vFrame(s, f ?? {}, i)
     g.restore()
     fade(i, s.frames)

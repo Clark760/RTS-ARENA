@@ -155,6 +155,8 @@ export interface VideoScript {
     tagline: string
     /** 介绍，1～5 句（建议 4～5 句），每句最多 65 字 */
     intro: string[]
+    /** 竖屏版里接在这个选手介绍后面放的高光对局（联赛的局号）；不写就从精彩对局里自动挑一局有他的（D-183） */
+    highlight?: number
     /** 选手形象图（PNG / JPG，相对视频目录）：选手页背后放半透明的半身像，精彩对局里主基地换成从它裁的头像（D-177） */
     portrait?: string
     /** 头像从形象图哪里裁：[脸中心 x, 脸中心 y, 边长]，都按图的宽度算比例（y 按高度）；不写是 [0.49, 0.115, 0.32]（图上部居中） */
@@ -168,12 +170,12 @@ export interface VideoScript {
 
 /**
  * 选手页的文字量：4～5 句、180～260 字（D-178，用户：字可以加多一点、字号小一点；原来是 D-152 的 3～4 句、120～170 字）。
- * tagline 加 intro 超过上限、少于下限都提醒
+ * D-183 选手页时长减半，字数不变（用户：观众是读长文本很快的程序员，不怕字多）。tagline 加 intro 超过上限、少于下限都提醒
  */
 export const PLAYER_PAGE_CHARS = 260
 export const PLAYER_PAGE_MIN = 160
 
-/** 规则页最长 12 秒，大约读得完 130 字 */
+/** 规则介绍合计最多 130 字（D-183 规则页时长减半到最长 6 秒，字数不变） */
 export const RULES_PAGE_CHARS = 130
 
 export const SCRIPT_LIMITS = { hook: 30, rulesLine: 45, rulesLines: 4, displayName: 28, byline: 40, tagline: 30, introLine: 65, introLines: 5, hlTitle: 24, commentary: 80, outro: 60, highlights: 10 }
@@ -218,6 +220,11 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
       if (!Array.isArray(p.intro) || p.intro.length < 1 || p.intro.length > L.introLines) errs.push(`${where}.intro 要是 1～${L.introLines} 句的数组`)
       else p.intro.forEach((line, j) => str(line, `${where}.intro[${j}]`, L.introLine, true))
       if (p.portrait !== undefined && (typeof p.portrait !== "string" || !p.portrait.trim())) errs.push(`${where}.portrait 要是图片文件的路径`)
+      if (p.highlight !== undefined) {
+        const g = series.results.find((r) => r.index === p.highlight)
+        if (!g) errs.push(`${where}.highlight 要是联赛里的局号（1～${series.results.length}）`)
+        else if (typeof p.name === "string" && !g.names.includes(p.name)) errs.push(`${where}.highlight 是第 ${g.index} 局，这局没有 ${p.name}（${g.names.join(" 对 ")}）`)
+      }
       if (p.avatar !== undefined && !(Array.isArray(p.avatar) && p.avatar.length === 3 && p.avatar.every((v) => typeof v === "number" && v >= 0 && v <= 1)))
         errs.push(`${where}.avatar 要写成 [脸中心 x, 脸中心 y, 边长] 三个 0～1 的数（按图的宽、高算比例）`)
     }
@@ -296,7 +303,7 @@ export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string
   // 规则页最长 12 秒
   if (Array.isArray(o.rules)) {
     const n = o.rules.reduce((a: number, x) => a + (typeof x === "string" ? [...x].length : 0), 0)
-    if (n > RULES_PAGE_CHARS) out.push(`rules 共 ${n} 字，规则页最长 12 秒，大约只读得完 ${RULES_PAGE_CHARS} 字：删一句或者写短些`)
+    if (n > RULES_PAGE_CHARS) out.push(`rules 共 ${n} 字，规则页最长 6 秒，超过 ${RULES_PAGE_CHARS} 字太挤：删一句或者写短些`)
     o.rules.forEach((x, i) => {
       const hit = typeof x === "string" ? otherRulesets.filter((name) => name && x.includes(name)) : []
       if (hit.length)
@@ -305,11 +312,11 @@ export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string
         )
     })
   }
-  // 选手页：tagline 加 intro 太长读不完，太少页面显得空
+  // 选手页：tagline 加 intro 太长太挤，太少页面显得空
   if (Array.isArray(o.players))
     o.players.forEach((p, i) => {
       const n = [p?.tagline, ...(Array.isArray(p?.intro) ? p.intro : [])].reduce((a: number, x) => a + (typeof x === "string" ? [...x].length : 0), 0)
-      if (n > PLAYER_PAGE_CHARS) out.push(`players[${i}]（${p?.name}）的 tagline 加 intro 共 ${n} 字，选手页最长 13 秒，大约只读得完 ${PLAYER_PAGE_CHARS} 字：删一句或者写短些`)
+      if (n > PLAYER_PAGE_CHARS) out.push(`players[${i}]（${p?.name}）的 tagline 加 intro 共 ${n} 字，选手页最长 6.5 秒，超过 ${PLAYER_PAGE_CHARS} 字太挤：删一句或者写短些`)
       else if (n < PLAYER_PAGE_MIN) out.push(`players[${i}]（${p?.name}）的 tagline 加 intro 只有 ${n} 字，选手页显得空：写到 4～5 句、180～${PLAYER_PAGE_CHARS} 字（对照代码、参赛报告和战绩再写几句）`)
     })
   return out
@@ -404,7 +411,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
   const scriptTemplate: VideoScript = {
     hook: { text: "待填：开场的一句大字（30 字以内，可删）" },
     rules: ["待填：怎么赢（照 RULES.md 写给没玩过的观众）", "待填：最关键的机制或特别的单位"],
-    players: players.map((p) => ({ name: p.name, displayName: "待填", byline: "待填", tagline: "待填", intro: ["待填", "待填"] })),
+    players: players.map((p) => ({ name: p.name, displayName: "待填", byline: "待填", tagline: "待填", intro: ["待填", "待填", "待填", "待填"] })),
     highlights: (sum.highlights ?? []).slice(0, 3).map((h) => ({ index: h.index, title: "待填（可删）", commentary: "待填（可删）" })),
     outro: "待填：一句话总结",
   }
