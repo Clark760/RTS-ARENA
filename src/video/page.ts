@@ -1063,50 +1063,55 @@ export function installVideoPage(): void {
   }
 
   /**
-   * 竖屏的回放（D-181，用户：竖屏对战界面太小，地图拉到 100% 宽度、战场信息放到地图上方）：
-   * 上面是标题和解说、双方头像和兵力、胜率折线、最新的战况，下面是拉满宽度的地图和进度条
+   * 竖屏的回放（D-181、D-182，用户：地图拉到 100% 宽度、放在画面正中）：上面是标题、解说、双方头像和兵力（左右两栏），
+   * 中间是拉满宽度的地图，下面是进度条、胜率折线和最新的战况
    */
   function vReplay(s: Any, f: Any, i: number): void {
     vBackground()
     const mapW = s.width * TILE
     const mapH = s.height * TILE
     const ox = (VW - mapW) / 2
-    const oy = VH - mapH - 64
-    text("RTS Arena", VW / 2, 46, 22, C.accent, { bold: true, align: "center" })
-    text(`精彩对局 ${s.no}`, VW / 2, 92, 24, C.accent, { bold: true, align: "center" })
-    let y = fitLines(s.title, VW / 2, 140, 40, 24, VW - 60, 2, C.text, { bold: true, align: "center" })
-    if (s.commentary) y = fitLines(s.commentary, VW / 2, y + 4, 21, 15, VW - 60, 2, C.muted, { align: "center" })
-    y += 18
-    // 双方：头像、名字、兵力
-    ;(s.seats as Any[]).slice(0, 2).forEach((st, k) => {
+    // 地图上方：标题、解说、双方（左右两栏）
+    text("RTS Arena", VW / 2, 40, 20, C.accent, { bold: true, align: "center" })
+    text(`精彩对局 ${s.no}`, VW / 2, 80, 22, C.accent, { bold: true, align: "center" })
+    let y = fitLines(s.title, VW / 2, 124, 36, 22, VW - 60, 2, C.text, { bold: true, align: "center" })
+    if (s.commentary) y = fitLines(s.commentary, VW / 2, y, 19, 14, VW - 60, 2, C.muted, { align: "center" })
+    const seats = (s.seats as Any[]).slice(0, 2)
+    const colW = (VW - 40) / Math.max(1, seats.length)
+    const sy = y + 6
+    seats.forEach((st, k) => {
       const c = f.counts?.[k] ?? { army: 0, workers: 0, buildings: 0, score: 0, alive: true }
-      avatarCircle(st.avatar, st.name, st.color, 66, y + 30, 32)
-      fitLines(st.name, 116, y + 20, 26, 16, VW - 140, 1, st.color, { bold: true })
-      text(c.alive ? `兵 ${c.army}  工人 ${c.workers}  建筑 ${c.buildings}  分数 ${c.score}` : "已出局", 116, y + 54, 21, C.text)
-      y += 78
+      const cx = 20 + k * colW
+      avatarCircle(st.avatar, st.name, st.color, cx + 32, sy + 36, 28)
+      fitLines(st.name, cx + 70, sy + 22, 24, 14, colW - 80, 1, st.color, { bold: true })
+      text(c.alive ? `兵 ${c.army}  工人 ${c.workers}` : "已出局", cx + 70, sy + 50, 18, C.text)
+      if (c.alive) text(`建筑 ${c.buildings}  分数 ${c.score}`, cx + 70, sy + 74, 18, C.muted)
     })
-    if (s.win) {
-      drawWin(s.win, f.t ?? 0, 40, y + 22, VW - 80, 110, 22)
-      y += 22 + 12 + 110 + 26
-    }
-    // 战况：地图上方放得下几条放几条，留最新的
-    const room = Math.max(0, Math.floor((oy - 14 - y) / 28))
-    for (const ev of (f.events as string[]).slice(-room)) {
-      fitLines(ev, 40, y + 4, 19, 14, VW - 80, 1, C.muted)
-      y += 28
-    }
+    const top = sy + 92
+    // 地图放在画面正中（D-182，用户要求）；上面的字太多放不下时才往下挪
+    const oy = Math.max((VH - mapH) / 2, top)
     drawField(s, f, ox, oy)
-    // 进度条和变速
-    const by = oy + mapH + 34
-    roundRect(20, by, VW - 40, 8, 4, "rgba(255,255,255,0.1)")
-    roundRect(20, by, Math.max(8, (VW - 40) * (f.progress ?? 0)), 8, 4, C.accent)
-    text(`第 ${f.t ?? 0} tick`, VW - 20, by - 8, 18, C.muted, { align: "right" })
-    if (!f.final) text(f.pace === "quiet" ? "▸▸ 快进" : f.pace === "battle" ? "▶ 大战 2 倍速" : "▶ 交火 4 倍速", 20, by - 8, 18, f.pace === "quiet" ? C.accent : C.text, { bold: true })
-    else {
+    if (f.final) {
       g.globalAlpha = 0.85
       roundRect(40, oy + mapH / 2 - 60, VW - 80, 120, 16, "#0b1220", C.accent)
       g.globalAlpha = 1
       fitLines(s.result, VW / 2, oy + mapH / 2 + 14, 36, 20, VW - 120, 1, C.accent, { bold: true, align: "center" })
+    }
+    // 地图下方：进度条和变速、胜率折线、最新的战况
+    const by = oy + mapH + 30
+    roundRect(20, by, VW - 40, 8, 4, "rgba(255,255,255,0.1)")
+    roundRect(20, by, Math.max(8, (VW - 40) * (f.progress ?? 0)), 8, 4, C.accent)
+    text(`第 ${f.t ?? 0} tick`, VW - 20, by - 8, 18, C.muted, { align: "right" })
+    if (!f.final) text(f.pace === "quiet" ? "▸▸ 快进" : f.pace === "battle" ? "▶ 大战 2 倍速" : "▶ 交火 4 倍速", 20, by - 8, 18, f.pace === "quiet" ? C.accent : C.text, { bold: true })
+    let y2 = by + 46
+    if (s.win) {
+      drawWin(s.win, f.t ?? 0, 40, y2, VW - 80, 100, 22)
+      y2 += 12 + 100 + 34
+    }
+    const room = Math.max(0, Math.floor((VH - 16 - y2) / 28) + 1)
+    for (const ev of (f.events as string[]).slice(-room)) {
+      fitLines(ev, 40, y2, 19, 14, VW - 80, 1, C.muted)
+      y2 += 28
     }
     void i
   }

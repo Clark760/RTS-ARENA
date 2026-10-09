@@ -256,7 +256,7 @@ function videoPrompt(
   out.push("rts-arena video --lint                # 只核对脚本：格式、每段字数和上限、时间表（不出图，几秒钟），字数对了再出预览")
   out.push("rts-arena video --preview auto        # 每段各出一张预览图（放在 preview/ 里，另有一张总览拼图），先看排版、字有没有挤出去")
   out.push("rts-arena video --preview 12.5,40     # 只看这几秒（秒数从上一条命令列出的时间表里找）")
-  out.push("rts-arena video --short --check auto  # 可选：竖屏短版（1080×1920，五十秒左右：开场阵容、前三局精彩对局最大的一仗、排名；回放的地图拉满宽度，战场信息在地图上方），文件名后面加「-竖屏」")
+  out.push("rts-arena video --short --check auto  # 可选：竖屏短版（1080×1920，五十秒左右：开场阵容、前三局精彩对局最大的一仗、排名；回放的地图拉满宽度放在画面正中，标题和双方在上、胜率和战况在下），文件名后面加「-竖屏」")
   out.push("rts-arena video --check auto          # 出视频，并从成品里每段截一张图检查（也放在 preview/ 里；也可以写秒数：--check 5,60）")
   out.push("```")
   out.push("")
