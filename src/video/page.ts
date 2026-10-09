@@ -48,7 +48,9 @@ export type SceneData =
       /** 左下角的小字：1 秒 = 多少 tick */
       tickNote: string
     }
-  | { kind: "standings"; frames: number; title: string; rows: { name: string; color: string; rank: number; record: string; rate: number; elo: number }[] }
+  | { kind: "standings"; frames: number; title: string; rows: { name: string; color: string; rank: number; record: string; rate: number; elo: number; portrait?: string | null }[] }
+  /** 开场阵容（D-179）：全体选手的立绘和一句大字 */
+  | { kind: "lineup"; frames: number; title: string; sub: string; players: { name: string; color: string; portrait: string | null }[] }
   | { kind: "hlTitle"; frames: number; speed?: number; no: number; title: string; sides: { name: string; color: string }[]; result: string; reasons: string[]; commentary: string | null }
   | {
       kind: "replay"
@@ -67,6 +69,9 @@ export type SceneData =
       result: string
       /** 实时胜率：curve 是每 step tick 一个点的、sides[0] 那方赢的概率；不是两方对打或没有模型时 null（D-177） */
       win: { step: number; ticks: number; curve: number[]; sides: { name: string; color: string }[] } | null
+      /** 冷开场（D-179）：顶上换成开场的大字和一行小字；普通回放是 null */
+      hook: string | null
+      hookSub: string | null
     }
   | { kind: "brandClose"; frames: number; speed?: number; outro: string | null; credits: string[] }
 
@@ -105,6 +110,15 @@ export function installVideoPage(): void {
   const C = { bg1: "#0b1220", bg2: "#14203a", text: "#e8edf7", muted: "#8fa0bf", accent: "#f5b942", line: "#26344f", panel: "rgba(16,26,46,0.92)" }
   let canvas = new OffscreenCanvas(W * SCALE, H * SCALE)
   let g = canvas.getContext("2d")!
+  /** 输出画布的画笔（横屏时就是 g） */
+  let outG = g
+  /** 竖屏（D-179）：逻辑尺寸 720×1280，场景先按横屏画到 landCanvas 再拼进来 */
+  const VW = 720
+  const VH = 1280
+  let VERT = false
+  let VS = 1.5
+  let landCanvas: OffscreenCanvas | null = null
+  let landG: OffscreenCanvasRenderingContext2D | null = null
   type Any = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
   const w = globalThis as unknown as Any
   let scene: Any | null = null
@@ -241,14 +255,19 @@ export function installVideoPage(): void {
     text("RTS Arena", W - 24, H - 18, 16, "rgba(232,237,247,0.45)", { bold: true, align: "right" })
   }
 
+  /** 场景开头结尾各 12 帧黑场过渡；开场阵容不淡入（第一帧就是完整画面），冷开场直接切进来 */
   function fade(i: number, n: number): void {
     const k = 12
-    const a = i < k ? 1 - i / k : i > n - k ? (i - (n - k)) / k : 0
+    const noIn = scene?.kind === "lineup" || !!scene?.hook
+    const noOut = scene?.kind === "lineup"
+    const a = i < k && !noIn ? 1 - i / k : i > n - k && !noOut ? (i - (n - k)) / k : 0
     if (a > 0) {
+      g.save()
+      g.setTransform(1, 0, 0, 1, 0, 0)
       g.globalAlpha = Math.min(1, a)
       g.fillStyle = "#000"
-      g.fillRect(0, 0, W, H)
-      g.globalAlpha = 1
+      g.fillRect(0, 0, canvas.width, canvas.height)
+      g.restore()
     }
   }
 
@@ -554,24 +573,28 @@ export function installVideoPage(): void {
   function standings(s: Any, i: number): void {
     background()
     text(s.title, 80, 110, 44, C.text, { bold: true, alpha: ease(i / 15) })
+    // 行高按人数缩（7 个人也放得下）
+    const n = s.rows.length
+    const rh = Math.min(96, Math.floor((H - 190) / Math.max(1, n)))
+    const bh = rh - 16
     s.rows.forEach((r: Any, k: number) => {
       const a = ease((i - 10 - k * 10) / 15)
-      const y = 180 + k * 96
+      const y = 168 + k * rh
       g.globalAlpha = a
-      roundRect(80, y, W - 160, 80, 12, C.panel, C.line)
+      roundRect(80, y, W - 160, bh, 12, C.panel, C.line)
       g.fillStyle = r.color
-      g.fillRect(80, y, 8, 80)
+      g.fillRect(80, y, 8, bh)
       g.globalAlpha = 1
-      text(`#${r.rank}`, 112, y + 52, 34, r.color, { bold: true, alpha: a })
-      text(r.name, 190, y + 38, 28, C.text, { bold: true, alpha: a })
-      text(r.record, 190, y + 66, 18, C.muted, { alpha: a })
+      text(`#${r.rank}`, 112, y + bh * 0.66, Math.min(34, bh * 0.43), r.color, { bold: true, alpha: a })
+      text(r.name, 190, y + bh * 0.47, Math.min(28, bh * 0.36), C.text, { bold: true, alpha: a })
+      text(r.record, 190, y + bh * 0.83, Math.min(18, bh * 0.24), C.muted, { alpha: a })
       // 得分率条
       const bw = 220 * r.rate * ease((i - 20 - k * 10) / 30)
       g.globalAlpha = a
-      roundRect(850, y + 30, 220, 20, 10, "rgba(255,255,255,0.08)")
-      if (bw > 1) roundRect(850, y + 30, bw, 20, 10, r.color)
+      roundRect(850, y + bh / 2 - 10, 220, 20, 10, "rgba(255,255,255,0.08)")
+      if (bw > 1) roundRect(850, y + bh / 2 - 10, bw, 20, 10, r.color)
       g.globalAlpha = 1
-      text(`${Math.round(r.rate * 100)}%`, W - 104, y + 48, 22, C.text, { bold: true, align: "right", alpha: a })
+      text(`${Math.round(r.rate * 100)}%`, W - 104, y + bh / 2 + 8, 22, C.text, { bold: true, align: "right", alpha: a })
     })
     watermark()
   }
@@ -622,10 +645,217 @@ export function installVideoPage(): void {
     const t = Math.min(26, (H - MY - 44) / s.height, (W - MX - 20 - 330 - 20) / s.width)
     TILE = Math.floor(t * SCALE) / SCALE
   }
+  /**
+   * 实时胜率折线图（D-177；折线图 D-178）：标题旁写两边的百分比；横轴是这局的时间、纵轴 0～100%，中间虚线是 50%，
+   * 曲线在虚线上方涂 sides[0] 的颜色、下方涂 sides[1] 的颜色，当前点按领先一方上色。px 是标题字号（侧栏 15，竖屏 30）
+   */
+  function drawWin(wv: Any, t: number, bx: number, y: number, bw: number, ch: number, px: number): void {
+    const at = Math.max(0, Math.min(wv.curve.length - 1, t / wv.step))
+    const k = Math.floor(at)
+    const pr = wv.curve[k] + ((wv.curve[Math.min(k + 1, wv.curve.length - 1)] ?? wv.curve[k]) - wv.curve[k]) * (at - k)
+    const pa = Math.round(pr * 100)
+    text("胜率预测", bx, y - 2, px, C.muted, { bold: true })
+    const vp = Math.round(px * 1.07)
+    text(`${100 - pa}%`, bx + bw, y - 2, vp, wv.sides[1].color, { bold: true, align: "right" })
+    g.font = font(vp, true)
+    const wb = g.measureText(`${100 - pa}%`).width
+    text(":", bx + bw - wb - px * 0.4, y - 2, vp, C.muted, { align: "right" })
+    text(`${pa}%`, bx + bw - wb - px * 1.05, y - 2, vp, wv.sides[0].color, { bold: true, align: "right" })
+    const top = y + Math.round(px * 0.55)
+    const mid = top + ch / 2
+    roundRect(bx, top, bw, ch, 6, "rgba(255,255,255,0.04)")
+    const xOf = (tick: number) => bx + bw * Math.min(1, tick / Math.max(1, wv.ticks))
+    const yOf = (v: number) => top + ch * (1 - v)
+    const pts: [number, number][] = []
+    for (let j = 0; j <= k; j++) pts.push([xOf(j * wv.step), yOf(wv.curve[j])])
+    pts.push([xOf(t), yOf(pr)])
+    for (const [clipTop, col] of [
+      [top, wv.sides[0].color],
+      [mid, wv.sides[1].color],
+    ] as [number, string][]) {
+      g.save()
+      g.beginPath()
+      g.rect(bx, clipTop, bw, ch / 2)
+      g.clip()
+      g.beginPath()
+      g.moveTo(pts[0][0], mid)
+      for (const [qx, qy] of pts) g.lineTo(qx, qy)
+      g.lineTo(pts[pts.length - 1][0], mid)
+      g.closePath()
+      g.globalAlpha = 0.4
+      g.fillStyle = col
+      g.fill()
+      g.restore()
+    }
+    g.globalAlpha = 1
+    g.strokeStyle = "rgba(255,255,255,0.25)"
+    g.lineWidth = 1
+    g.setLineDash([3, 3])
+    g.beginPath()
+    g.moveTo(bx, mid)
+    g.lineTo(bx + bw, mid)
+    g.stroke()
+    g.setLineDash([])
+    text("50%", bx + 3, mid - 3, Math.max(10, px * 0.67), C.muted)
+    g.strokeStyle = "#e8edf7"
+    g.lineWidth = px > 20 ? 3 : 1.8
+    g.beginPath()
+    pts.forEach(([qx, qy], j) => (j === 0 ? g.moveTo(qx, qy) : g.lineTo(qx, qy)))
+    g.stroke()
+    const [lx, ly] = pts[pts.length - 1]
+    g.fillStyle = pr >= 0.5 ? wv.sides[0].color : wv.sides[1].color
+    g.beginPath()
+    g.arc(lx, ly, px > 20 ? 7 : 4, 0, Math.PI * 2)
+    g.fill()
+    g.strokeStyle = "#0b1220"
+    g.lineWidth = 1.5
+    g.stroke()
+  }
+
+  /** 头像（圆形，描一圈颜色）；没有形象图时画颜色圆加名字的头一个字 */
+  function avatarCircle(key: string | null | undefined, name: string, color: string, cx: number, cy: number, r: number): void {
+    const im = key ? images.get(key) : undefined
+    g.save()
+    g.beginPath()
+    g.arc(cx, cy, r, 0, Math.PI * 2)
+    g.clip()
+    if (im) g.drawImage(im.avatar, cx - r, cy - r, r * 2, r * 2)
+    else {
+      g.fillStyle = color
+      g.fillRect(cx - r, cy - r, r * 2, r * 2)
+    }
+    g.restore()
+    if (!im) text([...name][0] ?? "?", cx, cy + r * 0.35, r, "#ffffff", { bold: true, align: "center" })
+    g.strokeStyle = color
+    g.lineWidth = Math.max(3, r * 0.08)
+    g.beginPath()
+    g.arc(cx, cy, r, 0, Math.PI * 2)
+    g.stroke()
+  }
+
+  /** 一段文字：放不下就缩字号（最小 minPx），还放不下就折行（最多 maxLines 行）；返回最后一行下面的 y */
+  function fitLines(s: string, x: number, y: number, px: number, minPx: number, maxW: number, maxLines: number, color: string, opts: { bold?: boolean; align?: CanvasTextAlign } = {}): number {
+    let size = px
+    g.font = font(size, opts.bold)
+    while (size > minPx && g.measureText(s).width > maxW) g.font = font(--size, opts.bold)
+    const ls = g.measureText(s).width > maxW ? wrapBalanced(s, maxW).slice(0, maxLines) : [s]
+    ls.forEach((l, k) => text(l, x, y + k * size * 1.3, size, color, opts))
+    return y + ls.length * size * 1.3
+  }
+
+  /**
+   * 开场阵容（D-179，用户：三秒跳出率高）：第一帧就是全体选手的立绘和一句大字，不从黑屏淡入（也适合当封面）。
+   * 横屏排成一排；竖屏每行最多 4 个
+   */
+  function lineup(s: Any, a: number, vert: boolean): void {
+    const VWW = vert ? VW : W
+    if (!vert) background()
+    const n = s.players.length
+    const cols = vert ? Math.min(4, n) : n
+    const rows = Math.ceil(n / cols)
+    const top = vert ? 330 : 150
+    const ch = vert ? Math.min(400, (VH - top - 150) / rows - 50) : H - top - 64
+    const cw = (VWW - 40) / cols
+    // 立绘慢慢推近一点（Ken Burns），第一帧已经是完整画面
+    const z = 1 + 0.04 * Math.min(1, a / Math.max(1, s.frames))
+    s.players.forEach((pl: Any, k: number) => {
+      const row = Math.floor(k / cols)
+      const inRow = Math.min(cols, n - row * cols)
+      const x = (VWW - inRow * cw) / 2 + (k - row * cols) * cw
+      const y = top + row * (ch + 50)
+      const bust = pl.portrait ? bustOf(pl.portrait) : null
+      g.save()
+      g.beginPath()
+      g.rect(x + 2, y, cw - 4, ch)
+      g.clip()
+      if (bust) {
+        const sh = bust.c.height * 0.9
+        const sw = Math.min(bust.c.width, (sh * (cw - 4)) / ch)
+        const zx = (sw * (z - 1)) / 2
+        const zy = (sh * (z - 1)) / 2
+        g.drawImage(bust.c, (bust.c.width - sw) / 2 + zx, zy, sw - 2 * zx, sh - 2 * zy, x + 2, y, cw - 4, ch)
+      } else {
+        g.globalAlpha = 0.5
+        g.fillStyle = pl.color
+        g.fillRect(x + 2, y, cw - 4, ch)
+        g.globalAlpha = 1
+        text([...pl.name][0] ?? "?", x + cw / 2, y + ch * 0.55, Math.min(cw, ch) * 0.5, "#ffffff", { bold: true, align: "center" })
+      }
+      g.restore()
+      // 下面一条选手颜色和名字
+      g.fillStyle = pl.color
+      g.fillRect(x + 2, y + ch, cw - 4, 5)
+      fitLines(pl.name, x + cw / 2, y + ch + 34, vert ? 26 : 22, 12, cw - 8, 1, pl.color, { bold: true, align: "center" })
+    })
+    // 大字压在立绘上面
+    const ty = vert ? 150 : 84
+    fitLines(s.title, VWW / 2, ty, vert ? 50 : 46, 24, VWW - 80, 2, C.text, { bold: true, align: "center" })
+    text(s.sub, VWW / 2, vert ? 270 : 128, vert ? 24 : 20, C.accent, { bold: true, align: "center" })
+  }
+
+  /** 竖屏：渐变背景 */
+  function vBackground(): void {
+    const gr = g.createLinearGradient(0, 0, 0, VH)
+    gr.addColorStop(0, C.bg1)
+    gr.addColorStop(1, C.bg2)
+    g.fillStyle = gr
+    g.fillRect(0, 0, VW, VH)
+  }
+
+  /**
+   * 竖屏短版的一帧（D-179，可选）：横屏的画面缩到中间，上面是大标题，下面按场景放大号的胜率图、双方头像、解说、冠军。
+   * 最上面一直留着平台署名
+   */
+  function vFrame(s: Any, f: Any, i: number): void {
+    const LY = 330
+    const LH = (VW * H) / W
+    text("RTS Arena", VW / 2, 64, 26, C.accent, { bold: true, align: "center" })
+    if (s.kind === "replay") {
+      if (s.hook) {
+        fitLines(s.hook, VW / 2, 160, 46, 28, VW - 60, 2, C.text, { bold: true, align: "center" })
+        if (s.hookSub) fitLines(s.hookSub, VW / 2, 290, 22, 14, VW - 60, 1, C.muted, { align: "center" })
+      } else {
+        text("精彩对局", VW / 2, 130, 26, C.accent, { bold: true, align: "center" })
+        fitLines(s.title, VW / 2, 200, 44, 26, VW - 60, 2, C.text, { bold: true, align: "center" })
+      }
+    } else if (s.kind === "standings") text("最终排名", VW / 2, 220, 60, C.text, { bold: true, align: "center" })
+    else if (s.kind === "brandOpen") text("大模型写 bot 的即时战略竞技平台", VW / 2, 220, 34, C.text, { bold: true, align: "center" })
+    else if (s.kind === "brandClose") fitLines(s.outro ?? "比赛和视频都由平台自动生成", VW / 2, 200, 40, 24, VW - 60, 2, C.text, { bold: true, align: "center" })
+    g.drawImage(landCanvas!, 0, LY, VW, LH)
+    let y = LY + LH + 70
+    if (s.kind === "replay") {
+      if (s.win) {
+        drawWin(s.win, f.t ?? 0, 40, y, VW - 80, 210, 30)
+        y += 210 + 90
+      }
+      // 双方头像
+      const seats = (s.seats as Any[]).slice(0, 2)
+      if (seats.length === 2) {
+        avatarCircle(seats[0].avatar, seats[0].name, seats[0].color, 150, y + 30, 62)
+        avatarCircle(seats[1].avatar, seats[1].name, seats[1].color, VW - 150, y + 30, 62)
+        text("VS", VW / 2, y + 46, 44, C.accent, { bold: true, align: "center" })
+        fitLines(seats[0].name, 150, y + 130, 26, 14, 250, 1, seats[0].color, { bold: true, align: "center" })
+        fitLines(seats[1].name, VW - 150, y + 130, 26, 14, 250, 1, seats[1].color, { bold: true, align: "center" })
+        y += 180
+      }
+      if (s.commentary && !s.hook) fitLines(s.commentary, VW / 2, y, 26, 18, VW - 80, 3, C.muted, { align: "center" })
+    } else if (s.kind === "standings" && s.rows?.length) {
+      const c = s.rows[0]
+      avatarCircle(c.portrait, c.name, c.color, VW / 2, y + 120, 120)
+      text("冠军", VW / 2, y + 300, 30, C.accent, { bold: true, align: "center" })
+      fitLines(c.name, VW / 2, y + 360, 48, 24, VW - 80, 1, c.color, { bold: true, align: "center" })
+      text(c.record, VW / 2, y + 410, 24, C.muted, { align: "center" })
+    } else if (s.kind === "brandClose") text("完整版看横屏长视频", VW / 2, y + 60, 30, C.muted, { align: "center" })
+    void i
+  }
   function replay(s: Any, f: Any, i: number): void {
     g.fillStyle = C.bg1
     g.fillRect(0, 0, W, H)
-    // 顶部
+    // 顶部：冷开场是开场的大字（D-179），普通回放是精彩对局的标题和解说
+    if (s.hook) {
+      fitLines(s.hook, 24, 44, 30, 18, W - 48, 1, C.accent, { bold: true })
+      if (s.hookSub) text(s.hookSub, 24, 76, 17, C.muted)
+    } else {
     text(`精彩对局 ${s.no}`, 24, 38, 20, C.accent, { bold: true })
     text(s.title, 140, 38, 22, C.text, { bold: true })
     if (s.commentary) {
@@ -636,6 +866,7 @@ export function installVideoPage(): void {
       const ls = wrap(s.commentary, W - 60)
       if (ls.length === 1) text(ls[0], 24, 70, px, C.muted)
       else ls.slice(0, 2).forEach((l, k) => text(l, 24, 62 + k * 18, px, C.muted))
+    }
     }
     // 地图
     if (!terrainLayer) {
@@ -809,76 +1040,10 @@ export function installVideoPage(): void {
       text(`分数 ${c.score}`, x0 + 32, y + 48, 17, C.muted)
       y += 88
     })
-    // 实时胜率预测（D-177；折线图 D-178，用户要求）：按全联赛的对局拟合的模型，看当下的兵力、工人、建筑、分数。
-    // 横轴是这局的时间，纵轴 0～100%，中间虚线是 50%；曲线在虚线上方涂 sides[0] 的颜色、下方涂 sides[1] 的颜色
+    // 实时胜率预测（D-177；折线图 D-178）
     if (s.win) {
-      const wv = s.win
-      const at = Math.max(0, Math.min(wv.curve.length - 1, f.t / wv.step))
-      const k = Math.floor(at)
-      const pr = wv.curve[k] + ((wv.curve[Math.min(k + 1, wv.curve.length - 1)] ?? wv.curve[k]) - wv.curve[k]) * (at - k)
-      const bx = x0 + 16
-      const bw = pw - 32
-      const pa = Math.round(pr * 100)
-      text("胜率预测", bx, y - 2, 15, C.muted, { bold: true })
-      text(`${100 - pa}%`, bx + bw, y - 2, 16, wv.sides[1].color, { bold: true, align: "right" })
-      g.font = font(16, true)
-      const wb = g.measureText(`${100 - pa}%`).width
-      text(":", bx + bw - wb - 6, y - 2, 16, C.muted, { align: "right" })
-      text(`${pa}%`, bx + bw - wb - 16, y - 2, 16, wv.sides[0].color, { bold: true, align: "right" })
-      const top = y + 8
-      const ch = 66
-      const mid = top + ch / 2
-      roundRect(bx, top, bw, ch, 6, "rgba(255,255,255,0.04)")
-      const xOf = (tick: number) => bx + bw * Math.min(1, tick / Math.max(1, wv.ticks))
-      const yOf = (v: number) => top + ch * (1 - v)
-      // 到现在为止的点
-      const pts: [number, number][] = []
-      for (let j = 0; j <= k; j++) pts.push([xOf(j * wv.step), yOf(wv.curve[j])])
-      pts.push([xOf(f.t), yOf(pr)])
-      // 面积：虚线上方一种颜色、下方另一种
-      for (const [clipTop, clipH, col] of [
-        [top, ch / 2, wv.sides[0].color],
-        [mid, ch / 2, wv.sides[1].color],
-      ] as [number, number, string][]) {
-        g.save()
-        g.beginPath()
-        g.rect(bx, clipTop, bw, clipH)
-        g.clip()
-        g.beginPath()
-        g.moveTo(pts[0][0], mid)
-        for (const [px, py] of pts) g.lineTo(px, py)
-        g.lineTo(pts[pts.length - 1][0], mid)
-        g.closePath()
-        g.globalAlpha = 0.4
-        g.fillStyle = col
-        g.fill()
-        g.restore()
-      }
-      g.globalAlpha = 1
-      g.strokeStyle = "rgba(255,255,255,0.25)"
-      g.lineWidth = 1
-      g.setLineDash([3, 3])
-      g.beginPath()
-      g.moveTo(bx, mid)
-      g.lineTo(bx + bw, mid)
-      g.stroke()
-      g.setLineDash([])
-      text("50%", bx + 3, mid - 3, 10, C.muted)
-      g.strokeStyle = "#e8edf7"
-      g.lineWidth = 1.8
-      g.beginPath()
-      pts.forEach(([px, py], j) => (j === 0 ? g.moveTo(px, py) : g.lineTo(px, py)))
-      g.stroke()
-      // 当前点：领先一方的颜色
-      const [lx, ly] = pts[pts.length - 1]
-      g.fillStyle = pr >= 0.5 ? wv.sides[0].color : wv.sides[1].color
-      g.beginPath()
-      g.arc(lx, ly, 4, 0, Math.PI * 2)
-      g.fill()
-      g.strokeStyle = "#0b1220"
-      g.lineWidth = 1.5
-      g.stroke()
-      y += ch + 34
+      drawWin(s.win, f.t, x0 + 16, y, pw - 32, 66, 15)
+      y += 66 + 34
     }
     g.strokeStyle = C.line
     g.beginPath()
@@ -949,31 +1114,72 @@ export function installVideoPage(): void {
     s.credits.forEach((c: string, k: number) => text(c, W / 2, y + 258 + k * 30, 20, k === s.credits.length - 1 ? C.muted : C.text, { align: "center", alpha: ease((i - 25 - k * 5) / 20) }))
   }
 
-  function draw(f: Any | null, i: number): void {
-    const s = scene!
-    g.setTransform(SCALE, 0, 0, SCALE, 0, 0)
-    g.save()
-    // 页内动画按 speed 加快（淡入淡出还是按实际帧数）
-    const a = i * (s.speed ?? 1)
+  /** 一个场景的画面（横屏的画法；竖屏时先画到 landCanvas 上再拼） */
+  function drawScene(s: Any, f: Any | null, i: number, a: number): void {
     if (s.kind === "brandOpen") brandOpen(s, a)
+    else if (s.kind === "lineup") lineup(s, a, false)
     else if (s.kind === "rules") rules(s, a)
     else if (s.kind === "player") player(s, a)
     else if (s.kind === "standings") standings(s, a)
     else if (s.kind === "hlTitle") hlTitle(s, a)
     else if (s.kind === "replay") replay(s, f ?? {}, i)
     else if (s.kind === "brandClose") brandClose(s, a)
+  }
+  function draw(f: Any | null, i: number): void {
+    const s = scene!
+    // 页内动画按 speed 加快（淡入淡出还是按实际帧数）
+    const a = i * (s.speed ?? 1)
+    if (!VERT) {
+      g.setTransform(SCALE, 0, 0, SCALE, 0, 0)
+      g.save()
+      drawScene(s, f, i, a)
+      g.restore()
+      fade(i, s.frames)
+      g.setTransform(1, 0, 0, 1, 0, 0)
+      return
+    }
+    // 竖屏：先按横屏画到 landCanvas，再拼到竖屏画布上（开场阵容直接按竖屏画）
+    if (s.kind !== "lineup") {
+      g = landG!
+      g.setTransform(SCALE, 0, 0, SCALE, 0, 0)
+      g.save()
+      drawScene(s, f, i, a)
+      g.restore()
+      g.setTransform(1, 0, 0, 1, 0, 0)
+    }
+    g = outG
+    g.setTransform(VS, 0, 0, VS, 0, 0)
+    g.save()
+    vBackground()
+    if (s.kind === "lineup") lineup(s, a, true)
+    else vFrame(s, f ?? {}, i)
     g.restore()
     fade(i, s.frames)
     g.setTransform(1, 0, 0, 1, 0, 0)
+    g = landG!
   }
 
   // ---------- 和 Node 那边的接口 ----------
   /** 输出尺寸（16:9，宽度 / 1280 就是放大倍数） */
   w.__size = (width: number, height: number) => {
-    SCALE = width / W
     canvas = new OffscreenCanvas(width, height)
-    g = canvas.getContext("2d")!
+    outG = canvas.getContext("2d")!
     terrainLayer = null
+    images.forEach((im) => (im.bust = null))
+    // 竖屏（高比宽大，D-179）：场景按横屏画在 landCanvas 上，再拼进竖屏画布
+    VERT = height > width
+    if (VERT) {
+      VS = width / VW
+      SCALE = width / W
+      landCanvas = new OffscreenCanvas(width, Math.round((width * H) / W))
+      landG = landCanvas.getContext("2d")!
+      g = landG
+    } else {
+      SCALE = width / W
+      landCanvas = null
+      landG = null
+      g = outG
+    }
     return true
   }
   w.__init = (opts: { fps: number; bitrate: number }) => {
@@ -1065,7 +1271,9 @@ export function installVideoPage(): void {
     const sg = sheet!.getContext("2d")!
     const x = (k % sheetCols) * TW
     const y = Math.floor(k / sheetCols) * (TH + LH)
-    sg.drawImage(canvas, x, y + LH, TW, TH)
+    // 竖屏的按比例缩、居中
+    const k2 = Math.min(TW / canvas.width, TH / canvas.height)
+    sg.drawImage(canvas, x + (TW - canvas.width * k2) / 2, y + LH + (TH - canvas.height * k2) / 2, canvas.width * k2, canvas.height * k2)
     sg.fillStyle = "#e8edf7"
     sg.font = `bold 18px ${FONT}`
     sg.textBaseline = "middle"

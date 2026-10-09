@@ -140,6 +140,11 @@ export interface VideoBrief {
 }
 
 export interface VideoScript {
+  /**
+   * 开场（D-179）：text 是开场阵容和冷开场上的一句大字（最多 30 字，不写就是"<双方>，谁能赢？"）；
+   * index 是冷开场用哪一局（放这局最大的一仗，不写就是第一局精彩对局）
+   */
+  hook?: { text?: string; index?: number }
   /** 规则介绍：写给没玩过的观众，1～4 句、每句最多 45 字（不写就用规则包的一句话简介） */
   rules?: string[]
   /** 每个选手：name 要和联赛里的名字一样 */
@@ -174,7 +179,7 @@ export const PLAYER_PAGE_MIN = 160
 /** 规则页最长 12 秒，大约读得完 130 字 */
 export const RULES_PAGE_CHARS = 130
 
-export const SCRIPT_LIMITS = { rulesLine: 45, rulesLines: 4, displayName: 28, byline: 40, tagline: 30, introLine: 65, introLines: 5, hlTitle: 24, commentary: 80, outro: 60, highlights: 10 }
+export const SCRIPT_LIMITS = { hook: 30, rulesLine: 45, rulesLines: 4, displayName: 28, byline: 40, tagline: 30, introLine: 65, introLines: 5, hlTitle: 24, commentary: 80, outro: 60, highlights: 10 }
 
 /** 检查脚本，返回所有问题（空数组是没问题） */
 export function checkScript(s: unknown, series: SeriesFile): string[] {
@@ -189,6 +194,14 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
     else if ([...v].length > max) errs.push(`${name} 最多 ${max} 字（现在 ${[...v].length} 字，标点和空格也算）：${v.slice(0, 20)}…`)
   }
   str(o.outro, "outro", L.outro)
+  if (o.hook !== undefined) {
+    const h = o.hook as Record<string, unknown> | null
+    if (!h || typeof h !== "object" || Array.isArray(h)) errs.push("hook 要写成 { \"text\": \"开场的大字\", \"index\": 局号 }，两项都可以不写")
+    else {
+      str(h.text, "hook.text", L.hook)
+      if (h.index !== undefined && !series.results.some((r) => r.index === h.index)) errs.push(`hook.index 要是联赛里的局号（1～${series.results.length}）`)
+    }
+  }
   if (o.rules !== undefined) {
     if (!Array.isArray(o.rules) || o.rules.length < 1 || o.rules.length > L.rulesLines) errs.push(`rules 要是 1～${L.rulesLines} 句的数组`)
     else o.rules.forEach((line, j) => str(line, `rules[${j}]`, L.rulesLine, true))
@@ -271,7 +284,7 @@ export function highlightPlayerWarnings(s: unknown, series: SeriesFile): string[
 export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string[] {
   if (!s || typeof s !== "object") return []
   const o = s as VideoScript
-  const bold: [string, unknown][] = [["outro", o.outro]]
+  const bold: [string, unknown][] = [["hook.text", o.hook?.text], ["outro", o.outro]]
   if (Array.isArray(o.players)) o.players.forEach((p, i) => bold.push([`players[${i}].tagline`, p?.tagline]))
   if (Array.isArray(o.highlights))
     o.highlights.forEach((h, i) => {
@@ -393,6 +406,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
     }
   })
   const scriptTemplate: VideoScript = {
+    hook: { text: "待填：开场的一句大字（30 字以内，可删）" },
     rules: ["待填：怎么赢（照 RULES.md 写给没玩过的观众）", "待填：最关键的机制或特别的单位"],
     players: players.map((p) => ({ name: p.name, displayName: "待填", byline: "待填", tagline: "待填", intro: ["待填", "待填"] })),
     highlights: (sum.highlights ?? []).slice(0, 3).map((h) => ({ index: h.index, title: "待填（可删）", commentary: "待填（可删）" })),

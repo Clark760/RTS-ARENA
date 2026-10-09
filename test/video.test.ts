@@ -153,20 +153,27 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   assert.deepEqual(checkScript(script, series), [])
   const scenes = buildScenes(series, script, seriesFile, 10)
   const kinds = scenes.map((s) => s.data.kind)
-  assert.equal(kinds[0], "brandOpen")
+  // 开场（D-179）：第一帧是选手阵容，接着冷开场（第一局精彩对局最大的一仗），再是片头署名
+  assert.deepEqual(kinds.slice(0, 3), ["lineup", "replay", "brandOpen"])
+  const lineup = scenes[0].data as { title: string; players: { name: string }[] }
+  assert.equal(lineup.players.length, 2)
+  assert.match(lineup.title, /谁能赢？$/)
+  const cold = scenes[1].data as { hook: string | null; frames: number }
+  assert.equal(cold.hook, lineup.title)
+  assert.equal(cold.frames, 7 * 10)
   // 片头片尾、选手页、标题卡的节奏加快：带 speed，时长按它缩短（片头 3.5 秒 → 2.7 秒）
   for (const s of scenes.filter((x) => ["brandOpen", "player", "brandClose"].includes(x.data.kind))) assert.equal((s.data as { speed?: number }).speed, 1.3)
   // 标题卡保持原速（要读的东西多）
   for (const s of scenes.filter((x) => x.data.kind === "hlTitle")) assert.equal((s.data as { speed?: number }).speed, undefined)
-  assert.equal(scenes[0].data.frames, Math.round((10 * 3.5) / 1.3))
+  assert.equal(scenes[2].data.frames, Math.round((10 * 3.5) / 1.3))
   assert.equal(kinds.at(-1), "brandClose")
   // 片尾名单按脚本里的出场顺序
   const close = scenes.at(-1)!.data as { credits: string[] }
   assert.deepEqual(close.credits.slice(0, 2), ["基准 · 平台自带", "rush"])
   // 片头之后直接是规则介绍（D-177：没有标题页了）
-  assert.deepEqual(kinds.slice(1, 6), ["rules", "player", "player", "standings", "hlTitle"])
+  assert.deepEqual(kinds.slice(3, 8), ["rules", "player", "player", "standings", "hlTitle"])
   // 规则介绍：没写 rules 就用规则包的一句话简介；配第一局精彩对局的开局地图（有控制点标记）和单位图例（带近战 / 射程）
-  const rules = scenes[1].data as { lines: string[]; ents: number[]; markers: { kind: string }[]; legend: { name: string; detail: string }[]; tickNote: string }
+  const rules = scenes[3].data as { lines: string[]; ents: number[]; markers: { kind: string }[]; legend: { name: string; detail: string }[]; tickNote: string }
   assert.match(rules.tickNote, /1 秒 = 10 tick，一局最多 \d+ tick/)
   assert.equal(rules.lines.length, 1)
   assert.ok(rules.ents.length > 0 && rules.markers.some((m) => m.kind === "zone"))
@@ -179,16 +186,26 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   const players = longIntro.filter((s) => s.data.kind === "player")
   assert.ok(players[0].data.frames > players[1].data.frames, players.map((s) => s.data.frames).join(","))
   const withRules = buildScenes(series, { ...script, rules: ["占住正中的控制点，点里只有你的单位时每 tick 得 1 分", "先拿满 600 分的赢"] }, seriesFile, 10)
-  assert.equal((withRules[1].data as { lines: string[] }).lines.length, 2)
+  assert.equal((withRules.find((x) => x.data.kind === "rules")!.data as { lines: string[] }).lines.length, 2)
+  // 脚本写了开场的大字就用它
+  const hooked = buildScenes(series, { ...script, hook: { text: "两个参考 bot 谁更强？" } }, seriesFile, 10)
+  assert.equal((hooked[0].data as { title: string }).title, "两个参考 bot 谁更强？")
+  // 竖屏短版：开场、片头、精彩对局的大战（每段最多 12 秒）、排名、片尾
+  const short = buildScenes(series, script, seriesFile, 10, undefined, null, { short: true })
+  const sk = short.map((x) => x.data.kind)
+  assert.deepEqual(sk.slice(0, 3), ["lineup", "replay", "brandOpen"])
+  assert.deepEqual(sk.slice(-2), ["standings", "brandClose"])
+  assert.ok(!sk.includes("player") && !sk.includes("hlTitle") && !sk.includes("rules"))
+  assert.ok(short.filter((x) => x.data.kind === "replay").every((x) => x.data.frames <= 12 * 10))
   const hl = series.summary!.highlights!.slice(0, 3).length
-  assert.equal(kinds.filter((k) => k === "replay").length, hl)
+  assert.equal(kinds.filter((k) => k === "replay").length, hl + 1)
   // 时间表：每段都有名字，首尾相接
   const tl = timelineOf(scenes, 10)
-  assert.equal(tl[0].label, "片头署名")
+  assert.equal(tl[0].label, "开场阵容")
   assert.ok(tl.every((x, k) => x.label && (k === 0 || x.from === tl[k - 1].to)))
   assert.ok(tl.some((x) => /^选手 基准$/.test(x.label)) && tl.some((x) => /^精彩对局 1 回放$/.test(x.label)))
   // 回放场景每帧都能算出局面，最后一帧定格显示结果；往回要的帧从头重算，结果一样
-  const rs = scenes.find((s) => s.data.kind === "replay")
+  const rs = scenes.find((s) => s.data.kind === "replay" && !(s.data as { hook: string | null }).hook)
   if (rs) {
     const mid = rs.frame!(Math.floor(rs.data.frames / 2))
     let last = rs.frame!(0)
@@ -212,7 +229,7 @@ test("规则页：开局快照里没有标记（规则包第 1 个 tick 才放�
     writeFileSync(join(dir, f), JSON.stringify(r))
   }
   const sf = join(dir, basename(seriesFile))
-  const rules = buildScenes(readSeries(sf), script, sf, 10)[1].data as { markers: { kind: string }[]; legend: { name: string }[] }
+  const rules = buildScenes(readSeries(sf), script, sf, 10).find((x) => x.data.kind === "rules")!.data as { markers: { kind: string }[]; legend: { name: string }[] }
   assert.ok(rules.markers.some((m) => m.kind === "zone"))
   assert.ok(rules.legend.some((l) => l.name === "射手") && rules.legend.some((l) => l.name === "战士"))
 })
@@ -403,8 +420,13 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   assert.match(lint, /格式没问题/)
   const out = sh(["video", "--preview", "1,6"], dir)
   assert.match(out, /预览图/)
-  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～2\.7\s+秒  片头署名/)
+  assert.match(out, /每段的时间（整段 [\d.]+ 秒）：\n\s+0\.0～1\.6\s+秒  开场阵容\n\s+1\.6～8\.6\s+秒  冷开场/)
   assert.ok(statSync(join(dir, "preview", "夺点联赛-6s.png")).size > 10_000)
+  // 竖屏短版（D-179）：开场阵容和冷开场按竖屏画，1080×1920
+  const vert = sh(["video", "--short", "--preview", "1,5", "--out", "短.mp4"], dir)
+  assert.match(vert, /0\.0～1\.6\s+秒  开场阵容/)
+  const vpng = readFileSync(join(dir, "preview", "短-5s.png"))
+  assert.deepEqual([vpng.readUInt32BE(16), vpng.readUInt32BE(20)], [1080, 1920])
   // 两张以上的预览拼一张总览
   assert.match(out, /总览：preview[\\/]夺点联赛-总览\.png/)
   assert.ok(statSync(join(dir, "preview", "夺点联赛-总览.png")).size > 10_000)
@@ -412,7 +434,7 @@ test("渲染：在视频目录里不写参数出预览图；本机有浏览器�
   const auto = sh(["video", "--preview", "auto"], dir)
   const shots = /预览图：(.*)/.exec(auto)![1].split("、")
   const segs = auto.split("\n").filter((l) => /^\s+[\d.]+～/.test(l))
-  assert.equal(shots.length, segs.length + segs.filter((l) => l.endsWith("回放")).length)
+  assert.equal(shots.length, segs.length + segs.filter((l) => l.endsWith("回放") || l.includes("最大的一仗")).length)
   assert.ok(shots.every((f) => existsSync(join(dir, f))))
   const full = sh(["video", "--out", "v.mp4", "--fps", "10", "--check", "2"], dir)
   assert.match(full, /浏览器解码检查：时长 [\d.]+ 秒，1920×1080/)

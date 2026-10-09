@@ -51,8 +51,9 @@ const HELP = `用法：rts-arena <命令> [参数]
                                         建一个联赛视频目录（默认 league-video）：给大模型的说明 PROMPT.md、选手代码、几局战报、
                                         联赛数据、待填的 script.json；--portraits 是选手形象图的目录（按名字对应选手，选手页放半身像、精彩对局里主基地换成头像），--about 写用户补充的背景（外号对应哪个模型、以前的成绩……）。大模型写好脚本后在目录里运行 rts-arena video
   video-brief [联赛汇总] [--out 文件]   联赛视频的素材包（JSON，video-init 也会写一份）
-  video [联赛汇总] [--script 脚本.json] [--out 视频.mp4] [--lint] [--preview 秒,秒|auto] [--check 秒,秒|auto]
-                                        按脚本渲染 1920×1080 的联赛视频（片头片尾平台署名、规则介绍、选手介绍、排行榜、精彩对局），
+  video [联赛汇总] [--script 脚本.json] [--out 视频.mp4] [--lint] [--preview 秒,秒|auto] [--check 秒,秒|auto] [--short]
+                                        按脚本渲染 1920×1080 的联赛视频（开场阵容和冷开场、片头片尾平台署名、规则介绍、选手介绍、排行榜、精彩对局），
+                                        另出一张封面图；--short 出 1080×1920 的竖屏短版（开场、两局精彩对局的大战、排名，四五十秒），
                                         用本机的 Chrome / Edge 渲染；每次都列出每段从第几秒到第几秒。--preview 只出这几秒的预览图
                                         （auto 是每段各一张，放在 preview/ 里），--check 出完视频后从成品里截图检查（auto 每段一张），
                                         --lint 只核对脚本、列出每段字数和时间表（不开浏览器、不出图）
@@ -159,7 +160,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   map: { seed: false },
   "video-brief": { out: false },
   "video-init": { portraits: false, about: false },
-  video: { script: false, out: false, preview: false, check: false, browser: false, fps: false, lint: true },
+  video: { script: false, out: false, preview: false, check: false, browser: false, fps: false, lint: true, short: true },
 }
 
 function parseArgs(command: string | undefined, argv: string[]): { pos: string[]; opt: Record<string, string | true> } {
@@ -1508,14 +1509,16 @@ async function main(): Promise<void> {
       if (!Number.isInteger(fps) || fps < 10 || fps > 60) fail("--fps 要是 10～60 的整数")
       // --lint：只核对脚本、列出字数和时间表，不开浏览器
       if (opt.lint) {
-        const r = lintScript(file, script, fps, others)
+        const r = lintScript(file, script, fps, others, opt.short === true)
         console.log(`字数（现在 / 上限，标点和空格也算）：\n${r.counts.map((c) => `  ${c}`).join("\n")}`)
         if (r.errors.length) fail(`脚本有问题：\n- ${r.errors.join("\n- ")}`)
         console.log(`每段的时间（整段 ${r.timeline.at(-1)?.to.toFixed(1)} 秒）：\n${timelineText(r.timeline)}`)
         console.log(r.warnings.length ? `格式没问题，有 ${r.warnings.length} 条提醒（见上面）` : "格式没问题，也没有提醒")
         return
       }
-      const out = typeof opt.out === "string" ? opt.out : cfg ? cfg.out : file.replace(/\.series\.json$/, ".mp4")
+      // --short：竖屏短版（D-179），默认文件名在横屏版后面加「-竖屏」
+      const full = cfg ? cfg.out : file.replace(/\.series\.json$/, ".mp4")
+      const out = typeof opt.out === "string" ? opt.out : opt.short ? full.replace(/\.mp4$/i, "-竖屏.mp4") : full
       const t0 = performance.now()
       let lastPct = -1
       try {
@@ -1529,6 +1532,7 @@ async function main(): Promise<void> {
           fps,
           preview: opt.preview === "auto" ? "auto" : secs(opt.preview, "--preview"),
           check: secs(opt.check, "--check"),
+          short: opt.short === true,
           onProgress: (done, total) => {
             const pct = Math.floor((done / total) * 10) * 10
             if (pct !== lastPct) {
@@ -1546,6 +1550,7 @@ async function main(): Promise<void> {
           console.log(`已生成 ${r.file}：${r.seconds.toFixed(1)} 秒，${r.frames} 帧，${(r.bytes / 1e6).toFixed(1)} MB，用时 ${((performance.now() - t0) / 1000).toFixed(0)} 秒`)
           if (r.probe) console.log(`浏览器解码检查：时长 ${r.probe.duration.toFixed(1)} 秒，${r.probe.width}×${r.probe.height}`)
           if (r.images.length) console.log(`从成品截的图：${r.images.join("、")}`)
+          if (r.cover) console.log(`封面：${r.cover}（开场阵容那一帧，可以直接当视频封面）`)
         }
       } catch (e) {
         fail((e as Error).message)

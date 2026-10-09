@@ -195,6 +195,7 @@ function videoPrompt(
   out.push("")
   out.push("脚本只管文字，排版、配色、动画、回放都是平台做的。没有配音。按顺序：")
   out.push("")
+  out.push("0. **开场**（抓住前 3 秒）：第一帧就是全体选手的立绘阵容，上面压一句大字（`hook.text`，30 字以内；不写就是\"<开场那局的双方>，谁能赢？\"），不从黑屏淡入，也会另存一张当封面；1.6 秒后直接切进**冷开场**：`hook.index` 那一局（不写就是第一局精彩对局）死人最多的一仗，按 2 倍速放 7 秒，顶上还是那句大字。大字要像短视频标题：一句话点出冲突或悬念（谁对谁、谁是黑马、谁翻车），别写成说明文。")
   out.push("1. **片头**：RTS Arena 平台署名（自动加，脚本里不用写，也去不掉）。")
   out.push(`2. **规则介绍**：左边是你写的 \`rules\`（1～${L.rulesLines} 句，逐句出现），右边自动配上第一局精彩对局的开局地图（控制点这类标记也画出来）和单位图例（形状、字、名字、造价、生命、近战还是射程几格）。\`rules\` 不写就只显示规则包的一句话简介${series.ruleset.summary ? `："${series.ruleset.summary}"` : ""}。`)
   out.push("3. **每个选手一页**，按 `players` 的顺序：左边是 `displayName`、`byline`（小字）、`tagline`（一句话定位，醒目）、`intro`（逐句出现）；背后是这个选手形象图的半透明半身像（`portrait`）；右上是平台算的**能力雷达图**（6 项：经济＝每局采集、生产＝每局造的单位、战斗＝击杀和损失之比、进攻＝每局拆的建筑、克制＝打在被自己克的兵上的伤害占比（没有克制的规则包换成速胜＝赢的局平均多快结束）、代码＝代码行数，每项和全联赛最好的比），右下是代码指标和联赛战绩。雷达图的数字观众看得到，`intro` 里不用逐项复述，挑最突出的一两项讲原因。")
@@ -236,6 +237,7 @@ function videoPrompt(
   out.push(
     JSON.stringify(
       {
+        hook: { text: "开场的一句大字（30 字以内，可以不写）", index: 1 },
         rules: ["规则介绍 1～4 句：怎么赢、关键机制"],
         players: [{ name: "联赛里的名字（必须和下面一样）", displayName: "显示名", byline: "一行小字（也上片尾名单）", tagline: "一句话定位", intro: ["介绍 1～4 句"], portrait: "portraits/形象图.png（可以不写）" }],
         highlights: [{ index: 1, title: "这局的标题", commentary: "一句话解说（别重复自动看点）" }],
@@ -247,7 +249,7 @@ function videoPrompt(
   )
   out.push("```")
   out.push("")
-  out.push("`highlights` 里的 `index` 是联赛的**局号**（「全部对局」表的第一列），不是第几个。所有选手都要写，`players` 的顺序就是出场顺序；`rules`、`displayName`、`byline`、`portrait`、`avatar`、`highlights` 里的 `title` 和 `commentary`、`outro` 都可以不写。视频没有标题页，也不展示用户的话。`highlights` 不写就用联赛挑的前 3 局、不带解说。`script.json` 里已经有一份待填的模板，把\"待填\"都换掉（不要的字段直接删）。")
+  out.push("`highlights` 里的 `index` 是联赛的**局号**（「全部对局」表的第一列），不是第几个。所有选手都要写，`players` 的顺序就是出场顺序（开场阵容也按这个顺序排）；`hook`、`rules`、`displayName`、`byline`、`portrait`、`avatar`、`highlights` 里的 `title` 和 `commentary`、`outro` 都可以不写。视频没有标题页，也不展示用户的话。`highlights` 不写就用联赛挑的前 3 局、不带解说。`script.json` 里已经有一份待填的模板，把\"待填\"都换掉（不要的字段直接删）。")
   out.push("")
   out.push("## 出视频（在这个目录里运行）")
   out.push("")
@@ -255,6 +257,7 @@ function videoPrompt(
   out.push("rts-arena video --lint                # 只核对脚本：格式、每段字数和上限、时间表（不出图，几秒钟），字数对了再出预览")
   out.push("rts-arena video --preview auto        # 每段各出一张预览图（放在 preview/ 里，另有一张总览拼图），先看排版、字有没有挤出去")
   out.push("rts-arena video --preview 12.5,40     # 只看这几秒（秒数从上一条命令列出的时间表里找）")
+  out.push("rts-arena video --short --check auto  # 可选：竖屏短版（1080×1920，四五十秒：开场、两局精彩对局最大的一仗、排名），文件名后面加「-竖屏」")
   out.push("rts-arena video --check auto          # 出视频，并从成品里每段截一张图检查（也放在 preview/ 里；也可以写秒数：--check 5,60）")
   out.push("```")
   out.push("")

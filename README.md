@@ -146,7 +146,8 @@ rts-arena video-init league my-video --portraits 形象图目录   # 导出视�
 cd my-video
 rts-arena video --lint            # 核对字数和每段时长（几秒钟）
 rts-arena video --preview auto    # 每段出一张预览图
-rts-arena video --check auto      # 出视频，并从成品里每段截一张检查
+rts-arena video --check auto      # 出视频，并从成品里每段截一张检查，另存封面
+rts-arena video --short           # 可选：竖屏短版（1080×1920，四五十秒）
 ```
 
 每一步的细节、脚本怎么写好、常见问题见 [联赛视频指南](doc/联赛视频指南.md)。给 Claude Code 等 agent 用的技能在 [skills/league-video/SKILL.md](skills/league-video/SKILL.md)。把它复制到 `~/.claude/skills/` 或项目的 `.claude/skills/` 下，再跟 agent 说「给这场联赛出个视频」，它就会照这个流程做。
