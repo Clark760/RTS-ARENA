@@ -3,11 +3,11 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { basename, join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { after, test } from "node:test"
 import { checkScript, codeFacts, factTags, gameScores, highlightPlayerWarnings, readSeries, resolveBotFile, scriptWarnings, videoBrief, type VideoScript } from "../src/video/brief.ts"
 import { findBrowser } from "../src/video/browser.ts"
-import { buildScenes, fightWindows, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
+import { buildScenes, fightWindows, idleHighlightWarnings, pacing, relabelSeats, tidy, timelineOf } from "../src/video/render.ts"
 import { analyzeLeague, baseTypeOf, fitWinModel, twoSides, winCurve } from "../src/video/analysis.ts"
 import { matchPortraits } from "../src/video/workspace.ts"
 import { crc32, deflateSync } from "node:zlib"
@@ -129,6 +129,25 @@ test("脚本提醒（D-171）：精彩对局的标题、解说提到了不在这
   assert.deepEqual(highlightPlayerWarnings({ ...script, highlights: [{ index: 109, title: "大肥鱼翻盘", commentary: "哈基米先手" }] }, series), [])
 })
 
+test("脚本提醒（D-185）：精彩对局后半局没人打仗（最后一仗打完还剩整局 30% 以上）", () => {
+  const series = readSeries(seriesFile)
+  const g = series.results[0]
+  // 原样：仗打到最后（拆家结束）不提醒
+  assert.deepEqual(idleHighlightWarnings({ players: [], highlights: [{ index: g.index }] }, seriesFile), [])
+  // 把这局拉长到 3 倍、后面什么都没发生：提醒，highlights 和 players[].highlight 都查
+  const dir = join(TMP, "idle")
+  mkdirSync(dir, { recursive: true })
+  const replay = JSON.parse(readFileSync(join(dirname(seriesFile), g.replay), "utf8")) as Replay
+  replay.result.tick *= 3
+  writeFileSync(join(dir, "g.json"), JSON.stringify(replay))
+  const file = join(dir, "x.series.json")
+  writeFileSync(file, JSON.stringify({ ...series, results: [{ ...g, replay: "g.json", tick: replay.result.tick, reason: "时间到，击杀价值 1 : 0" }] }))
+  const w = idleHighlightWarnings({ players: [{ name: g.names[0], tagline: "", intro: [], highlight: g.index }], highlights: [{ index: g.index }] }, file)
+  assert.equal(w.length, 2)
+  assert.match(w[0], new RegExp(`^highlights\\[0\\] 是第 ${g.index} 局：t\\d+ 以后到第 ${replay.result.tick} tick 打满时间比分都没人打仗（占整局 \\d+%）`))
+  assert.match(w[1], /^players\[0\]（.+）\.highlight 是第/)
+})
+
 test("脚本提醒：粗体字段里的「一」像破折号，常规字重的介绍不管", () => {
   const w = scriptWarnings({ players: [{ name: "a", tagline: "只输 1 局", intro: ["一稿流"] }], highlights: [{ index: 1, commentary: "一波带走" }], outro: "唯一一胜" }).filter((x) => x.includes("是粗体"))
   assert.equal(w.length, 2)
@@ -161,8 +180,8 @@ test("场景编排：片头片尾署名、标题、每个选手、排名、精�
   assert.match(lineup.title, /2 位选手的夺点联赛，谁能夺冠？/)
   // 片头片尾、选手页、标题卡的节奏加快：带 speed，时长按它缩短（片头 3.5 秒 → 2.7 秒）
   for (const s of scenes.filter((x) => ["brandOpen", "player", "brandClose"].includes(x.data.kind))) assert.equal((s.data as { speed?: number }).speed, 1.3)
-  // 标题卡保持原速（要读的东西多）
-  for (const s of scenes.filter((x) => x.data.kind === "hlTitle")) assert.equal((s.data as { speed?: number }).speed, undefined)
+  // 标题卡时长减半、动画快一倍（D-184），最长 4 秒
+  for (const s of scenes.filter((x) => x.data.kind === "hlTitle")) assert.ok((s.data as { speed?: number }).speed === 2 && s.data.frames <= 4 * 10)
   // 选手页按名次倒着出场：最后一名先上
   const order = scenes.filter((x) => x.data.kind === "player").map((x) => (x.data as { rank: number }).rank)
   assert.deepEqual(order, [...order].sort((a, b) => b - a))

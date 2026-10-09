@@ -60,11 +60,13 @@ interface Scene {
 }
 
 const sec = (fps: number, s: number) => Math.round(fps * s)
-/** 片头片尾、选手页的节奏：时长和页内动画都比原来快这么多倍（D-146，用户要求快 1.3 倍左右；标题卡 D-149 退回原速） */
+/** 片头片尾、选手页的节奏：时长和页内动画都比原来快这么多倍（D-146，用户要求快 1.3 倍左右；标题卡 D-149 退回原速，D-184 又减半，见 CARD_SPEED） */
 export const BRISK = 1.3
 /** 平台拼出来的文字在名字前后留了空格（给英文名用的）；名字是中文时，汉字之间的空格去掉："98% 的 大肥鱼" → "98% 的大肥鱼" */
 export const tidy = (s: string) => s.replace(/([一-鿿）」』]) (?=[一-鿿（「『])/g, "$1")
 /** 按要读的字数定时长（大约每秒读 11 个字），限制在 min～max 秒 */
+/** 精彩对局标题卡的时长减半、页内动画快一倍（D-184） */
+const CARD_SPEED = 2
 const readSecs = (chars: number, base: number, min: number, max: number) => Math.min(max, Math.max(min, base + chars / 11))
 const len = (...xs: (string | null | undefined)[]) => xs.reduce((a, x) => a + [...(x ?? "")].length, 0)
 /** 代码卡片上不值得占行的：空注释、分隔线 */
@@ -227,8 +229,8 @@ export function buildScenes(
       const reasons = [...(tags.get(g.index) ?? []), ...(hl ? hl.reasons.map(relabel) : gameReasons(replay, g.names.map(display)).map(tidy))].slice(0, 4)
       out.push({
         label: `${label} 标题卡（第 ${g.index} 局）`,
-        // 标题卡要读的东西多（标题、对阵、结果、看点、解说），保持原来的速度（D-149：用户让标题卡退回原速）
-        data: { kind: "hlTitle", frames: sec(fps, readSecs(len(commentary) + 0.4 * len(...reasons), 2.5, 4.5, 8)), no, title, sides, result: `第 ${g.index} 局 · ${result} · 第 ${g.tick} tick · ${relabel(g.reason)}`, reasons, commentary },
+        // 按要读的字数（标题、对阵、结果、看点、解说）算原来的 4.5～8 秒，再减半成 2.3～4 秒，页内动画也快一倍（D-184，用户：标题卡太长；字数不变）
+        data: { kind: "hlTitle", frames: sec(fps, readSecs(len(commentary) + 0.4 * len(...reasons), 2.5, 4.5, 8) / CARD_SPEED), speed: CARD_SPEED, no, title, sides, result: `第 ${g.index} 局 · ${result} · 第 ${g.tick} tick · ${relabel(g.reason)}`, reasons, commentary },
       })
     }
     const rs = replayScene(replay, no, title, commentary, seats, result, fps, analysis?.weights ?? null)
@@ -331,6 +333,48 @@ const BATTLE_SPEED = 2
 const SKIRMISH_SPEED = 4
 /** 两段交火中间只空了这么几 tick 就不快进了，免得快进一闪而过 */
 const SKIRMISH_GAP = 40
+
+/** 最后一仗打完以后，还剩整局的这么多才结束，就算「后半局挂机」 */
+const IDLE_TAIL = 0.3
+
+/**
+ * 精彩对局（含竖屏的 players[].highlight）里后半局没人打仗的局（D-185，用户：精彩对局 2 和 4 一半以上的时间都是挂机等时间结束）：
+ * 最后一仗打完以后还剩整局的 30% 以上才结束（多半是打满时间比分），回放里观众只能看着进度条快进，提醒换一局
+ */
+export function idleHighlightWarnings(script: VideoScript, seriesFile: string): string[] {
+  const series = readSeries(seriesFile)
+  const refs = [
+    ...(Array.isArray(script.highlights) ? script.highlights.map((h, i) => ({ index: h?.index, where: `highlights[${i}]` })) : []),
+    ...(Array.isArray(script.players) ? script.players.map((pl, i) => ({ index: pl?.highlight, where: `players[${i}]（${pl?.name}）.highlight` })) : []),
+  ]
+  const tailOf = new Map<number, { last: number; T: number; reason: string } | null>()
+  const out: string[] = []
+  for (const { index, where } of refs) {
+    if (typeof index !== "number") continue
+    if (!tailOf.has(index)) {
+      const g = series.results.find((r) => r.index === index)
+      let v: { last: number; T: number; reason: string } | null = null
+      try {
+        if (g) {
+          const replay = JSON.parse(readFileSync(join(dirname(resolve(seriesFile)), g.replay), "utf8")) as Replay
+          const { battles, skirmishes } = fightWindows(replay)
+          const ends = [...battles, ...skirmishes].map((w) => w[1])
+          v = { last: ends.length ? Math.max(...ends) : 0, T: Math.max(1, replay.result.tick), reason: g.reason }
+        }
+      } catch {
+        // 回放读不了：不提醒（出视频时会报错）
+      }
+      tailOf.set(index, v)
+    }
+    const v = tailOf.get(index)
+    if (!v || (v.T - v.last) / v.T <= IDLE_TAIL) continue
+    const end = v.reason.startsWith("时间到") ? "打满时间比分" : "结束"
+    out.push(
+      `${where} 是第 ${index} 局：t${v.last} 以后到第 ${v.T} tick ${end}都没人打仗（占整局 ${Math.round(((v.T - v.last) / v.T) * 100)}%），回放里观众只能看着进度条快进：换一局仗打到最后的（拆家结束的最好）`,
+    )
+  }
+  return out
+}
 
 /** 回放这一段怎么放：大战 2 倍速、小冲突 4 倍速、没动静快进 */
 export type PaceMode = "battle" | "skirmish" | "quiet"
@@ -678,7 +722,7 @@ function autoPreview(scenes: Scene[], fps: number): number[] {
 export function lintScript(seriesFile: string, script: VideoScript, fps = 30, otherRulesets: string[] = [], vertical = false): { errors: string[]; warnings: string[]; counts: string[]; timeline: TimelineItem[] } {
   const series = readSeries(seriesFile)
   const errors = checkScript(script, series)
-  const warnings = [...scriptWarnings(script, otherRulesets), ...highlightPlayerWarnings(script, readSeries(seriesFile)), ...portraitWarnings(script)]
+  const warnings = [...scriptWarnings(script, otherRulesets), ...highlightPlayerWarnings(script, readSeries(seriesFile)), ...idleHighlightWarnings(script, seriesFile), ...portraitWarnings(script)]
   const L = SCRIPT_LIMITS
   const n = (s?: string) => [...(s ?? "")].length
   const counts: string[] = []

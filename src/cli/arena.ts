@@ -30,7 +30,7 @@ import { leagueStandings, leagueTables, rateCi, standingsText, teamSplits, type 
 import { LeagueStats, statsText, type LeagueStatsJson } from "./league-stats.ts"
 import { excitement, finalScores, gameFacts, pickHighlights, type GameFacts, type Highlight } from "./highlights.ts"
 import { highlightPlayerWarnings, readSeries, scriptWarnings, videoBrief, type VideoScript } from "../video/brief.ts"
-import { lintScript, renderLeagueVideo, timelineText } from "../video/render.ts"
+import { idleHighlightWarnings, lintScript, renderLeagueVideo, timelineText } from "../video/render.ts"
 import { createVideoWorkspace, readVideoConfig, VIDEO_CONFIG } from "../video/workspace.ts"
 import { BASELINE as TEMPLATE_BASELINE, GREEDY as TEMPLATE_GREEDY, INDEX as TEMPLATE_INDEX, RUSH as TEMPLATE_RUSH, writeRulesTemplate } from "./rules-template.ts"
 
@@ -1505,6 +1505,7 @@ async function main(): Promise<void> {
       }
       for (const w of scriptWarnings(script, others)) console.log(`提醒：${w}`)
       for (const w of highlightPlayerWarnings(script, readSeries(file))) console.log(`提醒：${w}`)
+      for (const w of idleHighlightWarnings(script, file)) console.log(`提醒：${w}`)
       const fps = typeof opt.fps === "string" ? Number(opt.fps) : 30
       if (!Number.isInteger(fps) || fps < 10 || fps > 60) fail("--fps 要是 10～60 的整数")
       // --lint：只核对脚本、列出字数和时间表，不开浏览器
