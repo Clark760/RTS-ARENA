@@ -5,10 +5,10 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { applyFrame, ReplayModel, type State } from "../core/replay-model.ts"
 import type { Replay } from "../core/types.ts"
-import { codeFacts, resolveBotFile, type SeriesFile } from "./brief.ts"
+import type { SeriesFile } from "./brief.ts"
 
 /** 算法改了就加 1，旧缓存作废 */
-const VERSION = 1
+const VERSION = 4
 /** 胜率模型每隔多少 tick 取一次局面 */
 const SAMPLE = 50
 
@@ -165,40 +165,45 @@ function scanReplay(replay: Replay): { samples: { x: number[]; y: number }[]; dm
 }
 
 /** 选手页的能力雷达图：6 项，每项和所有选手里最好的比 */
-function radarOf(series: SeriesFile, seriesFile: string, dmg: number[], bonus: number[], hasCounters: boolean): Record<string, RadarAxis[]> {
+function radarOf(series: SeriesFile, dmg: number[], bonus: number[], hasCounters: boolean): Record<string, RadarAxis[]> {
   const bots = series.summary?.stats?.bots ?? []
   const names = series.participants.map((p) => p.name)
   const raw = names.map((name, i) => {
     const b = bots.find((x) => x.name === name)
     const games = Math.max(1, b?.games ?? 0)
-    const file = resolveBotFile(series.participants[i].file, seriesFile)
-    const code = file ? codeFacts(readFileSync(file, "utf8")).codeLines : 0
     return {
       income: (b?.income ?? 0) / games,
       produced: (b?.produced ?? 0) / games,
       trade: (b?.killedUnits ?? 0) / Math.max(1, b?.lostUnits ?? 0),
+      // 击杀占比：击杀 ÷（击杀 + 损失），0～1；不用杀伤比和最好的比，免得几乎不损失的选手（比值上百）把别人都压成 0
+      killShare: (b?.killedUnits ?? 0) / Math.max(1, (b?.killedUnits ?? 0) + (b?.lostUnits ?? 0)),
       raze: (b?.killedBuildings ?? 0) / games,
       counter: dmg[i] ? bonus[i] / dmg[i] : 0,
       // 赢下的局平均第几 tick 结束（越快越好）；没赢过算无穷
       winTick: b?.winGames ? b.winTicks / b.winGames : Infinity,
-      code,
+      // 防守：每局丢的建筑和工人（工人便宜，5 个算 1 座建筑），越少越好
+      lostB: (b?.lostBuildings ?? 0) / games,
+      lostW: (b?.lostWorkers ?? 0) / games,
     }
   })
   const best = (k: keyof (typeof raw)[number]) => Math.max(...raw.map((r) => r[k] as number))
   const ratio = (v: number, max: number) => (max > 0 ? Math.max(0, Math.min(1, v / max)) : 0)
   const fastest = Math.min(...raw.map((r) => r.winTick))
+  const loss = (r: (typeof raw)[number]) => r.lostB + r.lostW / 5
+  const worst = Math.max(...raw.map(loss))
   const out: Record<string, RadarAxis[]> = {}
   names.forEach((name, i) => {
     const r = raw[i]
     out[name] = [
       { label: "经济", text: `每局采 ${Math.round(r.income)}`, score: ratio(r.income, best("income")) },
       { label: "生产", text: `每局造 ${Math.round(r.produced)} 个`, score: ratio(r.produced, best("produced")) },
-      { label: "战斗", text: `杀伤比 ${r.trade.toFixed(1)}`, score: ratio(r.trade, best("trade")) },
+      { label: "战斗", text: `杀伤比 ${r.trade >= 10 ? Math.round(r.trade) : r.trade.toFixed(1)}`, score: Math.max(0, Math.min(1, r.killShare)) },
       { label: "进攻", text: `每局拆 ${r.raze.toFixed(1)} 座`, score: ratio(r.raze, best("raze")) },
       hasCounters
         ? { label: "克制", text: `克制伤害 ${Math.round(r.counter * 100)}%`, score: ratio(r.counter, best("counter")) }
         : { label: "速胜", text: Number.isFinite(r.winTick) ? `平均 ${Math.round(r.winTick)} tick 赢` : "没赢过", score: Number.isFinite(r.winTick) ? ratio(fastest, r.winTick) : 0 },
-      { label: "代码", text: `${r.code} 行`, score: ratio(r.code, best("code")) },
+      // 防守（D-180，用户：代码不该按长度算）：丢得最多的是 0，一点没丢的是 1
+      { label: "防守", text: `丢 ${r.lostB.toFixed(1)} 座建筑\n${r.lostW.toFixed(1)} 个工人 / 局`, score: worst > 0 ? Math.max(0, 1 - loss(r) / worst) : 1 },
     ]
   })
   return out
@@ -233,7 +238,7 @@ export function analyzeLeague(series: SeriesFile, seriesFile: string): LeagueAna
       bonus[who] += r.bonus[p] ?? 0
     })
   }
-  const out: LeagueAnalysis = { version: VERSION, games: series.results.length, weights: fitWinModel(samples), radar: radarOf(series, seriesFile, dmg, bonus, hasCounters) }
+  const out: LeagueAnalysis = { version: VERSION, games: series.results.length, weights: fitWinModel(samples), radar: radarOf(series, dmg, bonus, hasCounters) }
   try {
     writeFileSync(cacheFile, JSON.stringify(out, null, 1))
   } catch {

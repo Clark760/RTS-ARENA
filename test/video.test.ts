@@ -296,8 +296,14 @@ test("视频分析（D-177）：主基地认得出；胜率模型对称、看得
     assert.equal(axes.length, 6)
     assert.ok(axes.every((x) => x.score >= 0 && x.score <= 1 && x.label && x.text))
   }
-  // 每一项总有人是最好的（1），除非大家都是 0
-  for (let k = 0; k < 6; k++) assert.ok(Object.values(a.radar).some((axes) => axes[k].score === 1 || axes[k].score === 0))
+  // 6 项（夺点没有兵种克制，第 5 项是速胜；D-180：最后一项是防守，不再是代码行数）
+  assert.deepEqual(
+    Object.values(a.radar)[0].map((x) => x.label),
+    ["经济", "生产", "战斗", "进攻", "速胜", "防守"],
+  )
+  // 和最好的比的几项总有人是 1（除非大家都是 0）；防守是丢得最多的那个是 0（除非谁都没丢）；战斗是击杀占比
+  for (const k of [0, 1, 3, 4]) assert.ok(Object.values(a.radar).some((axes) => axes[k].score === 1 || axes[k].score === 0))
+  assert.ok(Object.values(a.radar).some((axes) => axes[5].score === 0) || Object.values(a.radar).every((axes) => axes[5].score === 1))
   assert.ok(existsSync(seriesFile.replace(/\.series\.json$/, ".analysis.json")))
   assert.deepEqual(analyzeLeague(series, seriesFile), a)
   // 胜率曲线：每 20 tick 一个点、在 0～1 之间；终局多数局判对赢家

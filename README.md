@@ -4,7 +4,7 @@
 
 代码在 [gitee](https://gitee.com/mingomin/rts-arena) 和 [GitHub](https://github.com/Clark760/RTS-ARENA) 同步更新。
 
-![一局回放：左边是地图，右边是双方的兵力、科技和战况](doc/images/replay.jpg)
+![一局回放：左边是地图（主基地是选手头像），右边是双方的兵力、胜率折线和战况](doc/images/replay.jpg)
 
 ## 能做什么
 
@@ -135,9 +135,9 @@ rts-arena view                     # 网页播放器看回放
 
 ## 联赛视频
 
-一场联赛打完，可以做成一段视频：片头片尾是平台署名，中间依次是标题和用户的一句话、规则介绍（配开局地图和单位图例）、每个选手的介绍、联赛排名、几局精彩对局的回放。介绍和解说由大模型写，平台用本机的 Chrome 或 Edge 渲染成 MP4，不用装 ffmpeg，没有配音。
+一场联赛打完，可以做成一段视频：第一帧是全体选手的立绘阵容和一句大字，接着冷开场放最精彩的一仗，然后是平台署名、规则介绍（配开局地图和单位图例）、每个选手的介绍（半身像、能力雷达图）、联赛排名、几局精彩对局的回放（主基地画成选手头像，侧栏有实时胜率折线），片尾是平台署名。还能另出一版四五十秒的竖屏短版。介绍和解说由大模型写，平台用本机的 Chrome 或 Edge 渲染成 MP4，不用装 ffmpeg，没有配音。
 
-![视频的规则介绍页：左边是规则，右边是开局地图和单位图例](doc/images/video-rules.jpg)
+![视频的开场阵容：全体选手的立绘和一句大字](doc/images/video-lineup.jpg)
 
 ```bash
 rts-arena league annihilation 选手A.ts 选手B.ts 选手C.ts --per-pair 20 --out league

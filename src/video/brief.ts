@@ -25,7 +25,7 @@ export interface SeriesFile {
   summary: null | {
     standings: { index: number; name: string; rank: number; games: number; wins: number; draws: number; losses: number; rate: number; rateCi?: number; elo: number }[]
     matrix: { w: number; d: number; l: number }[][]
-    stats?: { bots: { name: string; games: number; income: number; produced: number; lostUnits: number; lostWorkers?: number; killedUnits: number; killedBuildings: number; ticks: number; winTicks: number; winGames: number; errors: number; fuelOuts: number; rejected: number; calls: number; fuel: number }[] }
+    stats?: { bots: { name: string; games: number; income: number; produced: number; lostUnits: number; lostWorkers?: number; lostBuildings?: number; killedUnits: number; killedBuildings: number; ticks: number; winTicks: number; winGames: number; errors: number; fuelOuts: number; rejected: number; calls: number; fuel: number }[] }
     highlights?: { index: number; seed: number; replay: string; who: string; winner: string | null; tick: number; score: number; reasons: string[] }[]
   }
 }

@@ -377,7 +377,8 @@ export function installVideoPage(): void {
       const up = Math.sin(ang(k)) < -0.5
       const ly = up ? y - 16 : Math.sin(ang(k)) > 0.5 ? y + 6 : y - 4
       text(ax.label, x, ly, 16, C.text, { bold: true, align, alpha: a })
-      text(ax.text, x, ly + 18, 13, C.muted, { align, alpha: a })
+      // 说明可以有两行（用换行分开），放在轴名下面
+      ax.text.split("\n").forEach((l: string, j: number) => text(l, x, ly + 18 + j * 15, 13, C.muted, { align, alpha: a }))
     })
   }
 
@@ -424,7 +425,7 @@ export function installVideoPage(): void {
     roundRect(x0, 70, 400, 380, 12, bust ? "rgba(10,15,26,0.62)" : "#0a0f1a", C.line)
     g.globalAlpha = 1
     if (s.radar) {
-      text("能力雷达（全联赛数据，和最好的比）", x0 + 18, 98, 15, C.muted, { bold: true, alpha: a2 })
+      text("能力雷达（这场联赛的对局数据）", x0 + 18, 98, 15, C.muted, { bold: true, alpha: a2 })
       radar(s.radar, x0 + 200, 272, 108, s.color, ease((i - 16) / 24))
     } else {
       text(s.name + ".ts", x0 + 18, 100, 16, C.muted, { mono: true, alpha: a2 })
