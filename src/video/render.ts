@@ -1,6 +1,6 @@
-// 联赛视频：把联赛汇总 + 大模型写的脚本排成一串场景（片头署名 → 标题和用户原话 → 选手介绍 → 排行榜 → 精彩对局 → 片尾署名），
+// 联赛视频：把联赛汇总 + 大模型写的脚本排成一串场景（片头署名 → 规则介绍 → 选手介绍 → 排行榜 → 精彩对局 → 片尾署名），
 // 用本机的 Chrome / Edge 无头模式逐帧画出来、编成 MP4。回放场景每帧的局面在这边从回放算好再送进页面
-import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { basename, dirname, join, resolve } from "node:path"
 import { applyFrame, ReplayModel, type State } from "../core/replay-model.ts"
@@ -11,6 +11,7 @@ import { installVideoPage, type ReplayFrame, type SceneData } from "./page.ts"
 import { excitement, gameFacts } from "../cli/highlights.ts"
 import { fighterTest, groupBattles, isRout } from "../cli/battles.ts"
 import { importRuleset, listRulesets } from "../cli/catalog.ts"
+import { analyzeLeague, baseTypeOf, twoSides, winCurve, type LeagueAnalysis } from "./analysis.ts"
 
 /** 联赛没挑中的局：现场从回放算看点（不算爆冷） */
 export function gameReasons(replay: Replay, seatNames: string[]): string[] {
@@ -70,7 +71,14 @@ const BLANKISH = /^\s*(?:\/\/+|\/\*+|\*+\/?)?\s*[-=*#~_/]*\s*$/
 /** 规则包的单位数值（老回放里没记攻击数据时，规则介绍的图例从这里补） */
 type TypeSpecs = Record<string, { attack?: { damage: number; range: number; cooldown: number; vs?: Partial<Record<string, number>> } | null; gather?: unknown; builds?: string[]; look?: { name?: string } }>
 
-export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile: string, fps: number, specs?: TypeSpecs): Scene[] {
+/** 头像默认从形象图哪里裁：[脸中心 x, 脸中心 y, 边长]（按图宽、图高的比例），立绘一般是脸在上部居中 */
+export const DEFAULT_AVATAR = [0.49, 0.115, 0.32]
+
+/**
+ * analysis 是这次联赛的分析（雷达图、胜率模型，见 analysis.ts）；不给（只核对脚本、算时间表时）就不画雷达图和胜率。
+ * 选手有形象图（脚本的 portrait）时，页面里按选手的联赛名字取图（renderLeagueVideo 先把图送进页面）
+ */
+export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile: string, fps: number, specs?: TypeSpecs, analysis?: LeagueAnalysis | null): Scene[] {
   const sum = series.summary!
   const names = series.participants.map((p) => p.name)
   const color = (i: number) => PALETTE[i % PALETTE.length]
@@ -88,22 +96,11 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
     return r
   }
   const scenes: Scene[] = []
+  /** 选手有形象图就用联赛名字当图的名字（页面里按它取），头像按 avatar 裁 */
+  const imageOf = (name: string) => (sp(name)?.portrait ? name : null)
+  const avatarOf = (name: string) => (sp(name)?.avatar?.length === 3 ? sp(name)!.avatar! : DEFAULT_AVATAR)
   scenes.push({ label: "片头署名", data: { kind: "brandOpen", frames: sec(fps, 3.5 / BRISK), speed: BRISK, ruleset: series.ruleset.name } })
-  const date = series.startedAt.slice(0, 10)
-  scenes.push({
-    label: "标题、用户原话和解读",
-    data: {
-      kind: "title",
-      frames: sec(fps, readSecs(len(script.userText, script.theme), 3, 5, 12)),
-      ruleset: series.ruleset.name,
-      // 标题上面那行小字：脚本写了标题就是"<规则包>联赛"，没写（标题就是"<规则包>联赛"）就不重复
-      eyebrow: script.title ? `${series.ruleset.name}联赛` : "RTS Arena 联赛视频",
-      title: script.title || `${series.ruleset.name}联赛`,
-      userText: script.userText || null,
-      theme: script.theme || null,
-      meta: `${names.length} 位选手 · ${series.results.length} 局 · ${date} · 规则包「${series.ruleset.name}」`,
-    },
-  })
+  // 片头之后直接是规则介绍（D-177：不再有标题页、不再展示用户的话）
   // 规则介绍：脚本写的几句（不写就用规则包的一句话简介），右边是第一局精彩对局的开局地图和单位图例
   const rulesLines = script.rules?.length ? script.rules : series.ruleset.summary ? [series.ruleset.summary] : []
   const mapIndex = script.highlights?.[0]?.index ?? sum.highlights?.[0]?.index ?? series.results[0]?.index
@@ -130,8 +127,8 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
       label: `选手 ${p.displayName || p.name}`,
       data: {
         kind: "player",
-        // 按字数算：读字速度按每秒 11 字的 1.3 倍（约 14 字），4.6～6.9 秒（D-148）；正常写 120～170 字时就是 6.9 秒（D-152）
-        frames: sec(fps, Math.min(9 / BRISK, Math.max(6 / BRISK, len(p.tagline, ...p.intro) / (11 * BRISK)))),
+        // 按字数算：读字速度按每秒 11 字的 1.3 倍（约 14 字），4.6～13 秒（D-148；D-178 字数放到 180～260 字，最长从 6.9 秒放到 13 秒）
+        frames: sec(fps, Math.min(13, Math.max(6 / BRISK, len(p.tagline, ...p.intro) / (11 * BRISK)))),
         speed: BRISK,
         color: color(i),
         displayName: p.displayName || p.name,
@@ -145,6 +142,9 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
         record: st ? [`联赛 ${st.wins} 胜 ${st.draws} 平 ${st.losses} 负`, `得分率 ${Math.round(st.rate * 100)}% · 等级分 ${st.elo}`] : [],
         rank: st?.rank ?? names.length,
         total: names.length,
+        // 背后的半透明半身像、右上的能力雷达图（D-177）
+        portrait: imageOf(p.name),
+        radar: analysis?.radar[p.name] ?? null,
       },
     })
   }
@@ -183,7 +183,8 @@ export function buildScenes(series: SeriesFile, script: VideoScript, seriesFile:
       // 标题卡要读的东西多（标题、对阵、结果、看点、解说），保持原来的速度（D-149：用户让标题卡退回原速）
       data: { kind: "hlTitle", frames: sec(fps, readSecs(len(commentary) + 0.4 * len(...reasons), 2.5, 4.5, 8)), no: k + 1, title, sides, result: `第 ${g.index} 局 · ${result} · 第 ${g.tick} tick · ${relabel(g.reason)}`, reasons, commentary },
     })
-    scenes.push({ label: `精彩对局 ${k + 1} 回放`, ...replayScene(replay, k + 1, title, commentary, seatOf.map((i, p) => ({ name: display(g.names[p]), color: color(i) })), result, fps) })
+    const seats = seatOf.map((i, p) => ({ name: display(g.names[p]), color: color(i), avatar: imageOf(g.names[p]), crop: avatarOf(g.names[p]) }))
+    scenes.push({ label: `精彩对局 ${k + 1} 回放`, ...replayScene(replay, k + 1, title, commentary, seats, result, fps, analysis?.weights ?? null) })
   })
   // 片尾名单按脚本里的出场顺序
   const credits = script.players.map((s) => `${s.displayName || s.name}${s.byline ? ` · ${s.byline}` : ""}`)
@@ -351,14 +352,40 @@ export function pacing(replay: Replay, fps: number): { playFrames: number; tickO
 }
 
 /** 回放场景：大战按 2 倍速放、小冲突 4 倍速、没动静快进（D-172、D-174），最后定格 1.5 秒显示结果 */
-function replayScene(replay: Replay, no: number, title: string, commentary: string | null, seats: { name: string; color: string }[], result: string, fps: number): Omit<Scene, "label"> {
+function replayScene(
+  replay: Replay,
+  no: number,
+  title: string,
+  commentary: string | null,
+  seats: { name: string; color: string; avatar?: string | null; crop?: number[] }[],
+  result: string,
+  fps: number,
+  weights: number[] | null = null,
+): Omit<Scene, "label"> {
   const T = replay.result.tick
   const hold = sec(fps, 1.5)
   const typeNames = Object.keys(replay.types)
+  // 主基地（每家开局都有、生命最多的建筑）：选手有形象图时画成头像（D-177）
+  const baseType = baseTypeOf(replay)
   const types = typeNames.map((name) => {
     const t = replay.types[name]
-    return { name, kind: t.kind, shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, worker: t.worker === true }
+    return { name, kind: t.kind, shape: t.look?.shape ?? "circle", label: t.look?.label ?? "", color: t.look?.color ?? null, worker: t.worker === true, base: name === baseType }
   })
+  // 实时胜率（D-177）：两方对打、有胜率模型时，每 WIN_STEP tick 一个点；两方各取第一个座位的名字和颜色
+  const sides = twoSides(replay)
+  const curve = weights && sides ? winCurve(replay, weights, WIN_STEP) : null
+  const win =
+    curve && sides
+      ? {
+          step: WIN_STEP,
+          ticks: T,
+          curve,
+          sides: sides.map((t) => {
+            const p = replay.players.findIndex((pl, i) => (pl.team ?? i) === t)
+            return { name: seats[p]?.name ?? `P${p}`, color: seats[p]?.color ?? "#ccc" }
+          }),
+        }
+      : null
   const eventsAt = replayEvents(replay, seats)
   const pace = pacing(replay, fps)
   const playFrames = pace.playFrames
@@ -433,7 +460,7 @@ function replayScene(replay: Replay, no: number, title: string, commentary: stri
     }
   }
   return {
-    data: { kind: "replay", frames: playFrames + hold, no, title, commentary, width: replay.map.width, height: replay.map.height, terrain: replay.map.terrain, colors: replay.map.colors, types, seats, result },
+    data: { kind: "replay", frames: playFrames + hold, no, title, commentary, width: replay.map.width, height: replay.map.height, terrain: replay.map.terrain, colors: replay.map.colors, types, seats, result, win },
     frame,
   }
 }
@@ -447,6 +474,9 @@ export function relabelSeats(s: string, seats: { name: string }[], sentence = tr
   const out = s.replace(/(?<![A-Za-z])P(\d+)/g, (m, d) => seats[Number(d)]?.name ?? m)
   return sentence ? tidy(out) : out
 }
+
+/** 胜率曲线每隔几 tick 一个点 */
+const WIN_STEP = 20
 
 /** 侧栏里算"大战"的门槛：一场死 6 个以上 */
 const BIG_BATTLE = 6
@@ -558,16 +588,13 @@ function autoPreview(scenes: Scene[], fps: number): number[] {
 export function lintScript(seriesFile: string, script: VideoScript, fps = 30, otherRulesets: string[] = []): { errors: string[]; warnings: string[]; counts: string[]; timeline: TimelineItem[] } {
   const series = readSeries(seriesFile)
   const errors = checkScript(script, series)
-  const warnings = [...scriptWarnings(script, otherRulesets), ...highlightPlayerWarnings(script, readSeries(seriesFile))]
+  const warnings = [...scriptWarnings(script, otherRulesets), ...highlightPlayerWarnings(script, readSeries(seriesFile)), ...portraitWarnings(script)]
   const L = SCRIPT_LIMITS
   const n = (s?: string) => [...(s ?? "")].length
   const counts: string[] = []
   const row = (k: string, v: unknown, max: number) => {
     if (typeof v === "string") counts.push(`${k}：${n(v)} / ${max}${n(v) > max ? "  ← 超了" : ""}`)
   }
-  row("title", script.title, L.title)
-  row("userText", script.userText, L.userText)
-  row("theme", script.theme, L.theme)
   if (Array.isArray(script.rules)) {
     script.rules.forEach((l, i) => row(`rules[${i}]`, l, L.rulesLine))
     const total = script.rules.reduce((a, l) => a + n(l), 0)
@@ -578,7 +605,7 @@ export function lintScript(seriesFile: string, script: VideoScript, fps = 30, ot
       row(`players[${i}]（${p.name}）.tagline`, p.tagline, L.tagline)
       if (Array.isArray(p.intro)) p.intro.forEach((l, j) => row(`players[${i}].intro[${j}]`, l, L.introLine))
       const total = n(p.tagline) + (Array.isArray(p.intro) ? p.intro.reduce((a, l) => a + n(l), 0) : 0)
-      counts.push(`players[${i}]（${p.name}）tagline 加 intro：${total} / ${PLAYER_PAGE_CHARS}${total > PLAYER_PAGE_CHARS ? "  ← 超了" : total < PLAYER_PAGE_MIN ? `  ← 偏少（写到 120 字以上）` : ""}`)
+      counts.push(`players[${i}]（${p.name}）tagline 加 intro：${total} / ${PLAYER_PAGE_CHARS}${total > PLAYER_PAGE_CHARS ? "  ← 超了" : total < PLAYER_PAGE_MIN ? `  ← 偏少（写到 180 字以上）` : ""}`)
     })
   if (Array.isArray(script.highlights))
     script.highlights.forEach((h, i) => {
@@ -588,6 +615,14 @@ export function lintScript(seriesFile: string, script: VideoScript, fps = 30, ot
   row("outro", script.outro, L.outro)
   const timeline = errors.length ? [] : timelineOf(buildScenes(series, script, seriesFile, fps), fps)
   return { errors, warnings, counts, timeline }
+}
+
+/** 写了形象图、文件却找不到的选手（路径相对视频目录） */
+function portraitWarnings(script: VideoScript): string[] {
+  if (!Array.isArray(script.players)) return []
+  return script.players
+    .filter((p) => typeof p?.portrait === "string" && !existsSync(resolve(p.portrait)))
+    .map((p) => `${p.name} 的形象图 ${p.portrait} 找不到（路径相对视频目录）：这个选手的页面不放半身像、精彩对局里的主基地照常画`)
 }
 
 export interface RenderResult {
@@ -626,7 +661,9 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
   } catch {
     specs = undefined
   }
-  const scenes = buildScenes(series, o.script, o.seriesFile, fps, specs)
+  // 雷达图、胜率模型要读完全部回放（第一次几十秒，之后用缓存）
+  const analysis = analyzeLeague(series, o.seriesFile)
+  const scenes = buildScenes(series, o.script, o.seriesFile, fps, specs, analysis)
   const total = scenes.reduce((a, s) => a + s.data.frames, 0)
   const timeline = timelineOf(scenes, fps)
   const exe = findBrowser(o.browser)
@@ -641,6 +678,12 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
     const width = o.width ?? 1920
     const height = o.height ?? 1080
     await browser.evaluate(`__size(${width}, ${height})`)
+    // 选手的形象图（按联赛名字）：选手页的半身像、精彩对局里的头像都从它来
+    for (const p of o.script.players) {
+      if (!p.portrait || !existsSync(resolve(p.portrait))) continue
+      const b64 = readFileSync(resolve(p.portrait)).toString("base64")
+      await browser.evaluate(`__image(${JSON.stringify(p.name)}, ${JSON.stringify(b64)}, ${JSON.stringify(p.avatar?.length === 3 ? p.avatar : DEFAULT_AVATAR)})`)
+    }
     const ok = await browser.evaluate<boolean>(`typeof VideoEncoder === "function"`)
     if (!ok) throw new Error("这个浏览器不支持 WebCodecs（VideoEncoder），换一个新一点的 Chrome / Edge")
     // 场景的起始帧

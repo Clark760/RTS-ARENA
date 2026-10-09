@@ -5,7 +5,6 @@
 /** 一个场景的固定内容 */
 export type SceneData =
   | { kind: "brandOpen"; frames: number; speed?: number; ruleset: string }
-  | { kind: "title"; frames: number; ruleset: string; eyebrow: string; title: string; userText: string | null; theme: string | null; meta: string }
   | {
       kind: "player"
       frames: number
@@ -23,6 +22,10 @@ export type SceneData =
       record: string[]
       rank: number
       total: number
+      /** 形象图的名字（__image 送进来的），背后放半透明的半身像；没有就 null（D-177） */
+      portrait: string | null
+      /** 能力雷达图（analysis.ts 算的），没有就画代码开头 */
+      radar: { label: string; text: string; score: number }[] | null
     }
   | {
       kind: "rules"
@@ -57,10 +60,13 @@ export type SceneData =
       height: number
       terrain: string[]
       colors: Record<string, string>
-      types: { name: string; kind: string; shape: string; label: string; color: string | null; worker: boolean }[]
-      /** 每个座位的名字和颜色 */
-      seats: { name: string; color: string }[]
+      /** base：主基地（选手有形象图时画成头像） */
+      types: { name: string; kind: string; shape: string; label: string; color: string | null; worker: boolean; base: boolean }[]
+      /** 每个座位的名字和颜色；avatar 是形象图的名字（没有就 null） */
+      seats: { name: string; color: string; avatar?: string | null }[]
       result: string
+      /** 实时胜率：curve 是每 step tick 一个点的、sides[0] 那方赢的概率；不是两方对打或没有模型时 null（D-177） */
+      win: { step: number; ticks: number; curve: number[]; sides: { name: string; color: string }[] } | null
     }
   | { kind: "brandClose"; frames: number; speed?: number; outro: string | null; credits: string[] }
 
@@ -108,6 +114,7 @@ export function installVideoPage(): void {
   let frameNo = 0
   let fps = 30
   let output: Uint8Array | null = null
+  const images = new Map<string, { img: ImageBitmap; avatar: OffscreenCanvas; bust: { c: OffscreenCanvas; w: number; h: number } | null }>()
 
   const ease = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 - Math.pow(1 - x, 3))
   const font = (px: number, bold = false, mono = false) => `${bold ? "bold " : ""}${px}px ${mono ? MONO : FONT}`
@@ -263,67 +270,108 @@ export function installVideoPage(): void {
     text(REPO, W / 2, H - 64, 24, C.accent, { align: "center", alpha: ease((i - 30) / 25) })
   }
 
-  function title(s: Any, i: number): void {
-    background()
-    text(s.eyebrow, 80, 110, 26, C.accent, { bold: true, alpha: ease(i / 20) })
-    text(s.title, 80, 190, 64, C.text, { bold: true, alpha: ease((i - 5) / 20) })
-    let y = 260
-    if (s.userText) {
-      const a = ease((i - 20) / 25)
-      // 字号 38；只比一行多一点时缩小字号放进一行，否则均衡折行
-      const maxW = W - 300
-      let px = 38
-      g.font = font(px, true)
-      const full = g.measureText(s.userText).width
-      if (full > maxW && full <= maxW * 1.2) px = Math.floor((38 * maxW) / full)
-      else if (full > maxW) {
-        // 多行：字号缩一点（最多到 34）就能每行都停在标点上的话，就缩
-        const n0 = wrapBalanced(s.userText, maxW).length
-        for (let p = 38; p >= 34; p--) {
-          g.font = font(p, true)
-          const ls = wrapBalanced(s.userText, maxW)
-          if (ls.length <= n0 && endsAtPunct(ls)) {
-            px = p
-            break
-          }
-        }
+  /** 选手页背后的半身像：形象图上面 56%、去掉两边，四周淡出；按输出像素画一次缓存起来 */
+  function bustOf(key: string): { c: OffscreenCanvas; w: number; h: number } | null {
+    const im = images.get(key)
+    if (!im) return null
+    if (im.bust) return im.bust
+    const sx = im.img.width * 0.12
+    const sw = im.img.width * 0.76
+    const sh = im.img.height * 0.56
+    const bh = H
+    const bw = (bh * sw) / sh
+    const c = new OffscreenCanvas(Math.ceil(bw * SCALE), Math.ceil(bh * SCALE))
+    const b = c.getContext("2d")!
+    b.drawImage(im.img, sx, 0, sw, sh, 0, 0, c.width, c.height)
+    // 两边、下面淡出（destination-in：只留下和渐变重叠的部分）
+    b.globalCompositeOperation = "destination-in"
+    const gx = b.createLinearGradient(0, 0, c.width, 0)
+    gx.addColorStop(0, "rgba(0,0,0,0)")
+    gx.addColorStop(0.28, "rgba(0,0,0,1)")
+    gx.addColorStop(0.82, "rgba(0,0,0,1)")
+    gx.addColorStop(1, "rgba(0,0,0,0)")
+    b.fillStyle = gx
+    b.fillRect(0, 0, c.width, c.height)
+    const gy = b.createLinearGradient(0, 0, 0, c.height)
+    gy.addColorStop(0, "rgba(0,0,0,1)")
+    gy.addColorStop(0.72, "rgba(0,0,0,1)")
+    gy.addColorStop(1, "rgba(0,0,0,0)")
+    b.fillStyle = gy
+    b.fillRect(0, 0, c.width, c.height)
+    im.bust = { c, w: bw, h: bh }
+    return im.bust
+  }
+
+  /** 能力雷达图：6 项各一条轴，和全联赛最好的比（1 就是最好），轴旁标名字和数据 */
+  function radar(axes: { label: string; text: string; score: number }[], cx: number, cy: number, R: number, color: string, a: number): void {
+    const n = axes.length
+    const ang = (k: number) => -Math.PI / 2 + (2 * Math.PI * k) / n
+    const pt = (k: number, r: number) => [cx + r * Math.cos(ang(k)), cy + r * Math.sin(ang(k))]
+    g.globalAlpha = a
+    g.strokeStyle = "rgba(255,255,255,0.13)"
+    g.lineWidth = 1
+    for (const f of [0.25, 0.5, 0.75, 1]) {
+      g.beginPath()
+      for (let k = 0; k < n; k++) {
+        const [x, y] = pt(k, R * f)
+        if (k === 0) g.moveTo(x, y)
+        else g.lineTo(x, y)
       }
-      g.font = font(px, true)
-      const lines = wrapBalanced(s.userText, maxW)
-      const lh = Math.round(px * 1.42)
-      const pad = 30
-      // 按字形的实际高度排：上下留白一样
-      const m = g.measureText(lines[0])
-      const asc = m.fontBoundingBoxAscent * 0.86
-      const boxH = pad * 2 + asc + (lines.length - 1) * lh + px * 0.14
-      const top = y
-      g.globalAlpha = a
-      roundRect(64, top, W - 128, boxH, 14, "rgba(245,185,66,0.08)", "rgba(245,185,66,0.35)")
-      g.globalAlpha = 1
-      const base0 = top + pad + asc
-      lines.forEach((l, k) => text(l, 150, base0 + k * lh, px, C.text, { bold: true, alpha: a }))
-      // 前后引号：开引号顶住第一行的字顶，收引号跟在最后一行后面
-      g.font = font(72, true)
-      const qo = g.measureText("“")
-      text("“", 140, base0 - asc + qo.actualBoundingBoxAscent - 4, 72, C.accent, { bold: true, align: "right", alpha: a }) // 全角引号的字形在右半边，右对齐才不贴字
-      g.font = font(px, true)
-      const lastW = g.measureText(lines[lines.length - 1]).width
-      g.font = font(72, true)
-      const qc = g.measureText("”")
-      text("”", 150 + lastW + 10, base0 + (lines.length - 1) * lh - asc + qc.actualBoundingBoxAscent - 4, 72, C.accent, { bold: true, alpha: a })
-      y = top + boxH + 50
+      g.closePath()
+      g.stroke()
     }
-    if (s.theme) {
-      g.font = font(28)
-      wrapBalanced(s.theme, W - 180).forEach((l, k) => text(l, 84, y + 30 + k * 40, 28, C.accent, { alpha: ease((i - 50) / 25) }))
+    for (let k = 0; k < n; k++) {
+      const [x, y] = pt(k, R)
+      g.beginPath()
+      g.moveTo(cx, cy)
+      g.lineTo(x, y)
+      g.stroke()
     }
-    text(s.meta, 80, H - 60, 22, C.muted, { alpha: ease((i - 30) / 25) })
-    watermark()
+    // 数据：从中心长出来
+    const grow = ease(a)
+    g.beginPath()
+    axes.forEach((ax, k) => {
+      const [x, y] = pt(k, R * (0.08 + 0.92 * ax.score) * grow)
+      if (k === 0) g.moveTo(x, y)
+      else g.lineTo(x, y)
+    })
+    g.closePath()
+    g.fillStyle = color
+    g.globalAlpha = 0.32 * a
+    g.fill()
+    g.globalAlpha = a
+    g.strokeStyle = color
+    g.lineWidth = 2.2
+    g.stroke()
+    axes.forEach((ax, k) => {
+      const [x, y] = pt(k, R * (0.08 + 0.92 * ax.score) * grow)
+      g.fillStyle = color
+      g.beginPath()
+      g.arc(x, y, 3.2, 0, Math.PI * 2)
+      g.fill()
+    })
+    g.globalAlpha = 1
+    axes.forEach((ax, k) => {
+      const [x, y] = pt(k, R + 18)
+      const c = Math.cos(ang(k))
+      const align: CanvasTextAlign = c > 0.3 ? "left" : c < -0.3 ? "right" : "center"
+      const up = Math.sin(ang(k)) < -0.5
+      const ly = up ? y - 16 : Math.sin(ang(k)) > 0.5 ? y + 6 : y - 4
+      text(ax.label, x, ly, 16, C.text, { bold: true, align, alpha: a })
+      text(ax.text, x, ly + 18, 13, C.muted, { align, alpha: a })
+    })
   }
 
   function player(s: Any, i: number): void {
     background()
     const p = ease(i / 18)
+    // 背后半透明的半身像（D-177）
+    const bust = s.portrait ? bustOf(s.portrait) : null
+    if (bust) {
+      g.globalAlpha = 0.34 * p
+      g.drawImage(bust.c, 905 - bust.w / 2, 0, bust.w, bust.h)
+      g.globalAlpha = 1
+    }
     // 左边一条选手颜色
     g.fillStyle = s.color
     g.fillRect(0, 0, 14 * p, H)
@@ -334,38 +382,44 @@ export function installVideoPage(): void {
       text(s.byline, 72, y, 24, C.muted, { alpha: p })
       y += 8
     }
-    text(s.tagline, 72, y + 46, 32, C.accent, { bold: true, alpha: ease((i - 10) / 18) })
-    y += 106
-    g.font = font(27)
+    text(s.tagline, 72, y + 44, 30, C.accent, { bold: true, alpha: ease((i - 10) / 18) })
+    y += 96
+    // 介绍：22 号字、4～5 句（D-178，用户：字可以多一点、字号小一点）
+    g.font = font(22)
     s.intro.forEach((line: string, k: number) => {
       const a = ease((i - 20 - k * 9) / 12)
-      const ls = wrapBalanced(line, 660)
+      const ls = wrapBalanced(line, 680)
       g.fillStyle = s.color
       g.globalAlpha = a
       g.beginPath()
-      g.arc(80, y - 9, 5, 0, Math.PI * 2)
+      g.arc(80, y - 7, 4, 0, Math.PI * 2)
       g.fill()
       g.globalAlpha = 1
-      ls.forEach((l, j) => text(l, 100, y + j * 38, 27, C.text, { alpha: a }))
-      y += ls.length * 38 + 16
+      ls.forEach((l, j) => text(l, 98, y + j * 31, 22, C.text, { alpha: a }))
+      y += ls.length * 31 + 11
     })
-    // 右边：代码卡片和战绩
+    // 右边：能力雷达图（没有就是代码开头）和战绩；有半身像时卡片半透明，透出后面的人
     const x0 = 820
     const a2 = ease((i - 14) / 20)
     g.globalAlpha = a2
-    roundRect(x0, 70, 400, 380, 12, "#0a0f1a", C.line)
+    roundRect(x0, 70, 400, 380, 12, bust ? "rgba(10,15,26,0.62)" : "#0a0f1a", C.line)
     g.globalAlpha = 1
-    text(s.name + ".ts", x0 + 18, 100, 16, C.muted, { mono: true, alpha: a2 })
-    // 文件开头的 12 行：注释绿色、代码灰色
-    s.codeHeader.slice(0, 12).forEach((l: string, k: number) => {
-      g.font = font(15, false, true)
-      let shown = l
-      while (shown && g.measureText(shown).width > 364) shown = shown.slice(0, -1)
-      const isComment = /^\s*(\/\/|\/\*|\*)/.test(l)
-      text(shown + (shown.length < l.length ? "…" : ""), x0 + 18, 132 + k * 24, 15, isComment ? "#7fb37a" : "#c9d3e6", { mono: true, alpha: a2 })
-    })
+    if (s.radar) {
+      text("能力雷达（全联赛数据，和最好的比）", x0 + 18, 98, 15, C.muted, { bold: true, alpha: a2 })
+      radar(s.radar, x0 + 200, 272, 108, s.color, ease((i - 16) / 24))
+    } else {
+      text(s.name + ".ts", x0 + 18, 100, 16, C.muted, { mono: true, alpha: a2 })
+      // 文件开头的 12 行：注释绿色、代码灰色
+      s.codeHeader.slice(0, 12).forEach((l: string, k: number) => {
+        g.font = font(15, false, true)
+        let shown = l
+        while (shown && g.measureText(shown).width > 364) shown = shown.slice(0, -1)
+        const isComment = /^\s*(\/\/|\/\*|\*)/.test(l)
+        text(shown + (shown.length < l.length ? "…" : ""), x0 + 18, 132 + k * 24, 15, isComment ? "#7fb37a" : "#c9d3e6", { mono: true, alpha: a2 })
+      })
+    }
     g.globalAlpha = a2
-    roundRect(x0, 470, 400, 200, 12, C.panel, C.line)
+    roundRect(x0, 470, 400, 200, 12, bust ? "rgba(16,26,46,0.78)" : C.panel, C.line)
     g.globalAlpha = 1
     text("代码", x0 + 20, 504, 18, C.muted, { bold: true, alpha: a2 })
     s.facts.forEach((f: string, k: number) => text(f, x0 + 20, 532 + k * 26, 18, C.text, { alpha: a2 }))
@@ -636,6 +690,28 @@ export function installVideoPage(): void {
       const pw = ew * TILE
       const ph = eh * TILE
       const col = ty.color ?? colorOf(seat)
+      // 主基地换成选手头像（D-177），描一圈座位颜色
+      const av = ty.base && seat >= 0 ? images.get(s.seats[seat]?.avatar ?? "") : undefined
+      if (av) {
+        g.save()
+        g.beginPath()
+        g.roundRect(px + 1.5, py + 1.5, pw - 3, ph - 3, 4)
+        g.clip()
+        g.drawImage(av.avatar, px + 1.5, py + 1.5, pw - 3, ph - 3)
+        g.restore()
+        g.strokeStyle = col
+        g.lineWidth = 2.5
+        g.beginPath()
+        g.roundRect(px + 1.5, py + 1.5, pw - 3, ph - 3, 4)
+        g.stroke()
+        if (hp < 100) {
+          g.fillStyle = "rgba(0,0,0,0.6)"
+          g.fillRect(px + 1, py - 4, pw - 2, 3)
+          g.fillStyle = hp > 50 ? "#5ee08a" : hp > 25 ? "#f5c542" : "#ff5d5d"
+          g.fillRect(px + 1, py - 4, ((pw - 2) * hp) / 100, 3)
+        }
+        continue
+      }
       g.globalAlpha = ty.kind === "building" ? (bp < 100 ? 0.45 : 0.85) : 1
       g.fillStyle = col
       g.strokeStyle = "rgba(0,0,0,0.6)"
@@ -733,6 +809,77 @@ export function installVideoPage(): void {
       text(`分数 ${c.score}`, x0 + 32, y + 48, 17, C.muted)
       y += 88
     })
+    // 实时胜率预测（D-177；折线图 D-178，用户要求）：按全联赛的对局拟合的模型，看当下的兵力、工人、建筑、分数。
+    // 横轴是这局的时间，纵轴 0～100%，中间虚线是 50%；曲线在虚线上方涂 sides[0] 的颜色、下方涂 sides[1] 的颜色
+    if (s.win) {
+      const wv = s.win
+      const at = Math.max(0, Math.min(wv.curve.length - 1, f.t / wv.step))
+      const k = Math.floor(at)
+      const pr = wv.curve[k] + ((wv.curve[Math.min(k + 1, wv.curve.length - 1)] ?? wv.curve[k]) - wv.curve[k]) * (at - k)
+      const bx = x0 + 16
+      const bw = pw - 32
+      const pa = Math.round(pr * 100)
+      text("胜率预测", bx, y - 2, 15, C.muted, { bold: true })
+      text(`${100 - pa}%`, bx + bw, y - 2, 16, wv.sides[1].color, { bold: true, align: "right" })
+      g.font = font(16, true)
+      const wb = g.measureText(`${100 - pa}%`).width
+      text(":", bx + bw - wb - 6, y - 2, 16, C.muted, { align: "right" })
+      text(`${pa}%`, bx + bw - wb - 16, y - 2, 16, wv.sides[0].color, { bold: true, align: "right" })
+      const top = y + 8
+      const ch = 66
+      const mid = top + ch / 2
+      roundRect(bx, top, bw, ch, 6, "rgba(255,255,255,0.04)")
+      const xOf = (tick: number) => bx + bw * Math.min(1, tick / Math.max(1, wv.ticks))
+      const yOf = (v: number) => top + ch * (1 - v)
+      // 到现在为止的点
+      const pts: [number, number][] = []
+      for (let j = 0; j <= k; j++) pts.push([xOf(j * wv.step), yOf(wv.curve[j])])
+      pts.push([xOf(f.t), yOf(pr)])
+      // 面积：虚线上方一种颜色、下方另一种
+      for (const [clipTop, clipH, col] of [
+        [top, ch / 2, wv.sides[0].color],
+        [mid, ch / 2, wv.sides[1].color],
+      ] as [number, number, string][]) {
+        g.save()
+        g.beginPath()
+        g.rect(bx, clipTop, bw, clipH)
+        g.clip()
+        g.beginPath()
+        g.moveTo(pts[0][0], mid)
+        for (const [px, py] of pts) g.lineTo(px, py)
+        g.lineTo(pts[pts.length - 1][0], mid)
+        g.closePath()
+        g.globalAlpha = 0.4
+        g.fillStyle = col
+        g.fill()
+        g.restore()
+      }
+      g.globalAlpha = 1
+      g.strokeStyle = "rgba(255,255,255,0.25)"
+      g.lineWidth = 1
+      g.setLineDash([3, 3])
+      g.beginPath()
+      g.moveTo(bx, mid)
+      g.lineTo(bx + bw, mid)
+      g.stroke()
+      g.setLineDash([])
+      text("50%", bx + 3, mid - 3, 10, C.muted)
+      g.strokeStyle = "#e8edf7"
+      g.lineWidth = 1.8
+      g.beginPath()
+      pts.forEach(([px, py], j) => (j === 0 ? g.moveTo(px, py) : g.lineTo(px, py)))
+      g.stroke()
+      // 当前点：领先一方的颜色
+      const [lx, ly] = pts[pts.length - 1]
+      g.fillStyle = pr >= 0.5 ? wv.sides[0].color : wv.sides[1].color
+      g.beginPath()
+      g.arc(lx, ly, 4, 0, Math.PI * 2)
+      g.fill()
+      g.strokeStyle = "#0b1220"
+      g.lineWidth = 1.5
+      g.stroke()
+      y += ch + 34
+    }
     g.strokeStyle = C.line
     g.beginPath()
     g.moveTo(x0 + 14, y - 14)
@@ -809,7 +956,6 @@ export function installVideoPage(): void {
     // 页内动画按 speed 加快（淡入淡出还是按实际帧数）
     const a = i * (s.speed ?? 1)
     if (s.kind === "brandOpen") brandOpen(s, a)
-    else if (s.kind === "title") title(s, a)
     else if (s.kind === "rules") rules(s, a)
     else if (s.kind === "player") player(s, a)
     else if (s.kind === "standings") standings(s, a)
@@ -843,6 +989,18 @@ export function installVideoPage(): void {
     // High 4.2：1080p 到 60 帧都够
     encoder.configure({ codec: "avc1.64002a", width: canvas.width, height: canvas.height, bitrate: opts.bitrate, framerate: fps })
     frameNo = 0
+    return true
+  }
+  /** 选手形象图：原图、裁好的头像（正方形）、选手页的半身像（第一次用时做） */
+  w.__image = async (key: string, b64: string, crop: number[]) => {
+    const bin = atob(b64)
+    const buf = new Uint8Array(bin.length)
+    for (let k = 0; k < bin.length; k++) buf[k] = bin.charCodeAt(k)
+    const img = await createImageBitmap(new Blob([buf]))
+    const side = crop[2] * img.width
+    const avatar = new OffscreenCanvas(256, 256)
+    avatar.getContext("2d")!.drawImage(img, crop[0] * img.width - side / 2, crop[1] * img.height - side / 2, side, side, 0, 0, 256, 256)
+    images.set(key, { img, avatar, bust: null })
     return true
   }
   w.__scene = (s: Any) => {

@@ -140,12 +140,6 @@ export interface VideoBrief {
 }
 
 export interface VideoScript {
-  /** 视频标题（最多 24 字），不写就是 "<规则包> 联赛" */
-  title?: string
-  /** 用户的原话（开场原样展示，最多 120 字） */
-  userText?: string
-  /** 对用户原话的解读、整场联赛的一句话导语（最多 60 字） */
-  theme?: string
   /** 规则介绍：写给没玩过的观众，1～4 句、每句最多 45 字（不写就用规则包的一句话简介） */
   rules?: string[]
   /** 每个选手：name 要和联赛里的名字一样 */
@@ -157,8 +151,12 @@ export interface VideoScript {
     byline?: string
     /** 一句话定位（最多 30 字） */
     tagline: string
-    /** 介绍，1～4 句（建议 3～4 句），每句最多 50 字 */
+    /** 介绍，1～5 句（建议 4～5 句），每句最多 65 字 */
     intro: string[]
+    /** 选手形象图（PNG / JPG，相对视频目录）：选手页背后放半透明的半身像，精彩对局里主基地换成从它裁的头像（D-177） */
+    portrait?: string
+    /** 头像从形象图哪里裁：[脸中心 x, 脸中心 y, 边长]，都按图的宽度算比例（y 按高度）；不写是 [0.49, 0.115, 0.32]（图上部居中） */
+    avatar?: number[]
   }[]
   /** 精彩对局的解说；不写就用联赛挑的精彩对局、不加解说 */
   highlights?: { index: number; title?: string; commentary?: string }[]
@@ -167,16 +165,16 @@ export interface VideoScript {
 }
 
 /**
- * 选手页的文字量：和最初的视频一样 3～4 句、120～170 字（D-152，用户：介绍页文字太少，保持和原来一样多，
- * 原来的文字密度在现在的时长下刚刚好）。tagline 加 intro 超过上限、少于下限都提醒
+ * 选手页的文字量：4～5 句、180～260 字（D-178，用户：字可以加多一点、字号小一点；原来是 D-152 的 3～4 句、120～170 字）。
+ * tagline 加 intro 超过上限、少于下限都提醒
  */
-export const PLAYER_PAGE_CHARS = 170
-export const PLAYER_PAGE_MIN = 100
+export const PLAYER_PAGE_CHARS = 260
+export const PLAYER_PAGE_MIN = 160
 
 /** 规则页最长 12 秒，大约读得完 130 字 */
 export const RULES_PAGE_CHARS = 130
 
-export const SCRIPT_LIMITS = { rulesLine: 45, rulesLines: 4, title: 24, userText: 120, theme: 60, displayName: 28, byline: 40, tagline: 30, introLine: 50, introLines: 4, hlTitle: 24, commentary: 80, outro: 60, highlights: 10 }
+export const SCRIPT_LIMITS = { rulesLine: 45, rulesLines: 4, displayName: 28, byline: 40, tagline: 30, introLine: 65, introLines: 5, hlTitle: 24, commentary: 80, outro: 60, highlights: 10 }
 
 /** 检查脚本，返回所有问题（空数组是没问题） */
 export function checkScript(s: unknown, series: SeriesFile): string[] {
@@ -190,9 +188,6 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
     else if (v.includes("待填")) errs.push(`${name} 还是"待填"${required ? "" : "（不要的话整个字段删掉）"}`)
     else if ([...v].length > max) errs.push(`${name} 最多 ${max} 字（现在 ${[...v].length} 字，标点和空格也算）：${v.slice(0, 20)}…`)
   }
-  str(o.title, "title", L.title)
-  str(o.userText, "userText", L.userText)
-  str(o.theme, "theme", L.theme)
   str(o.outro, "outro", L.outro)
   if (o.rules !== undefined) {
     if (!Array.isArray(o.rules) || o.rules.length < 1 || o.rules.length > L.rulesLines) errs.push(`rules 要是 1～${L.rulesLines} 句的数组`)
@@ -215,6 +210,9 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
       str(p.tagline, `${where}.tagline`, L.tagline, true)
       if (!Array.isArray(p.intro) || p.intro.length < 1 || p.intro.length > L.introLines) errs.push(`${where}.intro 要是 1～${L.introLines} 句的数组`)
       else p.intro.forEach((line, j) => str(line, `${where}.intro[${j}]`, L.introLine, true))
+      if (p.portrait !== undefined && (typeof p.portrait !== "string" || !p.portrait.trim())) errs.push(`${where}.portrait 要是图片文件的路径`)
+      if (p.avatar !== undefined && !(Array.isArray(p.avatar) && p.avatar.length === 3 && p.avatar.every((v) => typeof v === "number" && v >= 0 && v <= 1)))
+        errs.push(`${where}.avatar 要写成 [脸中心 x, 脸中心 y, 边长] 三个 0～1 的数（按图的宽、高算比例）`)
     }
     for (const n of names) if (!seen.has(n)) errs.push(`players 里少了选手 ${n}`)
   }
@@ -273,7 +271,7 @@ export function highlightPlayerWarnings(s: unknown, series: SeriesFile): string[
 export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string[] {
   if (!s || typeof s !== "object") return []
   const o = s as VideoScript
-  const bold: [string, unknown][] = [["title", o.title], ["outro", o.outro]]
+  const bold: [string, unknown][] = [["outro", o.outro]]
   if (Array.isArray(o.players)) o.players.forEach((p, i) => bold.push([`players[${i}].tagline`, p?.tagline]))
   if (Array.isArray(o.highlights))
     o.highlights.forEach((h, i) => {
@@ -283,6 +281,9 @@ export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string
   const out = bold
     .filter((x): x is [string, string] => typeof x[1] === "string" && x[1].includes("一"))
     .map(([where, v]) => `${where} 是粗体，里面的"一"看起来像破折号："${v}"——数量写成阿拉伯数字，或者换个说法`)
+  // 不再有标题页、不再展示用户的话（D-177）：老脚本里的这几个字段用不上了
+  const gone = (["title", "userText", "theme"] as const).filter((k) => (o as unknown as Record<string, unknown>)[k] !== undefined)
+  if (gone.length) out.push(`${gone.join("、")} 不再使用（视频没有标题页了，片头之后直接是规则介绍），删掉就行`)
   // 规则页最长 12 秒
   if (Array.isArray(o.rules)) {
     const n = o.rules.reduce((a: number, x) => a + (typeof x === "string" ? [...x].length : 0), 0)
@@ -299,8 +300,8 @@ export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string
   if (Array.isArray(o.players))
     o.players.forEach((p, i) => {
       const n = [p?.tagline, ...(Array.isArray(p?.intro) ? p.intro : [])].reduce((a: number, x) => a + (typeof x === "string" ? [...x].length : 0), 0)
-      if (n > PLAYER_PAGE_CHARS) out.push(`players[${i}]（${p?.name}）的 tagline 加 intro 共 ${n} 字，选手页最长 7 秒左右，大约只读得完 ${PLAYER_PAGE_CHARS} 字：删一句或者写短些`)
-      else if (n < PLAYER_PAGE_MIN) out.push(`players[${i}]（${p?.name}）的 tagline 加 intro 只有 ${n} 字，选手页显得空：写到 3～4 句、120～${PLAYER_PAGE_CHARS} 字（对照代码和战绩再写几句）`)
+      if (n > PLAYER_PAGE_CHARS) out.push(`players[${i}]（${p?.name}）的 tagline 加 intro 共 ${n} 字，选手页最长 13 秒，大约只读得完 ${PLAYER_PAGE_CHARS} 字：删一句或者写短些`)
+      else if (n < PLAYER_PAGE_MIN) out.push(`players[${i}]（${p?.name}）的 tagline 加 intro 只有 ${n} 字，选手页显得空：写到 4～5 句、180～${PLAYER_PAGE_CHARS} 字（对照代码、参赛报告和战绩再写几句）`)
     })
   return out
 }
@@ -392,10 +393,7 @@ export function videoBrief(seriesFile: string): VideoBrief {
     }
   })
   const scriptTemplate: VideoScript = {
-    title: `待填：视频标题（上面已经有一行「${s.ruleset.name}联赛」，不用重复）`,
-    userText: "待填：用户的原话",
     rules: ["待填：怎么赢（照 RULES.md 写给没玩过的观众）", "待填：最关键的机制或特别的单位"],
-    theme: "待填：对原话的解读、整场联赛的一句话导语",
     players: players.map((p) => ({ name: p.name, displayName: "待填", byline: "待填", tagline: "待填", intro: ["待填", "待填"] })),
     highlights: (sum.highlights ?? []).slice(0, 3).map((h) => ({ index: h.index, title: "待填（可删）", commentary: "待填（可删）" })),
     outro: "待填：一句话总结",
@@ -407,10 +405,10 @@ export function videoBrief(seriesFile: string): VideoBrief {
     highlights: sum.highlights ?? [],
     scriptTemplate,
     rules: [
-      "介绍要有依据：用户的原话、文件名、代码（开头的注释、写法特征、参数）和联赛成绩里看得到的才写，不编造没发生的事",
+      "介绍要有依据：文件名、代码（开头的注释、写法特征、参数）和联赛成绩里看得到的才写，不编造没发生的事",
       "文件名常见的写法是 \"模型名-编程工具\"，比如 \"ModelX2.0-ToolY\" 是 ToolY 里的 ModelX 2.0（只是格式的例子）；拆不开、只是外号时就照原样用，不要猜是哪家模型；不知道作者就不写 byline",
-      "语气跟着用户的原话走（调侃就调侃，正式就正式），但不贬低任何一方；成绩差的写它的特点和输在哪",
-      "每个选手 1～4 句介绍（建议 3～4 句，tagline 加 intro 一共 120～170 字），每句不超过 50 字；tagline 不超过 30 字；byline 会出现在片尾的选手名单里",
+      "语气轻松、像赛事解说，但不贬低任何一方；成绩差的写它的特点和输在哪",
+      "每个选手 1～5 句介绍（建议 4～5 句，tagline 加 intro 一共 180～260 字），每句不超过 65 字；tagline 不超过 30 字；byline 会出现在片尾的选手名单里",
       "精彩对局最多 10 局（用户说了要几局就挑几局），每局的标题和解说照这一局写，解说一句话（不超过 80 字），别重复标题卡上自动列出的看点（highlights 里的 reasons）；index 用联赛的局号",
       "平台署名（片头、片尾的 RTS Arena）由渲染器固定加上，不用写进脚本，也去不掉",
     ],

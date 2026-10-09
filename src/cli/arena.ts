@@ -47,12 +47,12 @@ const HELP = `用法：rts-arena <命令> [参数]
   compare <另一个版本> [对手...] [选项]  两个版本比强弱：你现在的 bot 和另一个版本（比如 versions/v3.ts）对每个对手用同一批种子、
                                         坐同一个位置各打一局，按组配对比，告诉你分不分得出高下（不写对手就和所有现成的 bot 打）
   view [回放目录] [--port N] [--open]   网页播放器（默认看 ./replays，端口 5180；--open 起来后打开浏览器）
-  video-init [联赛汇总] [目录] [--text 用户的话] [--about 背景]
+  video-init [联赛汇总] [目录] [--portraits 形象图目录] [--about 背景]
                                         建一个联赛视频目录（默认 league-video）：给大模型的说明 PROMPT.md、选手代码、几局战报、
-                                        联赛数据、待填的 script.json；--about 写用户补充的背景（外号对应哪个模型、以前的成绩……）。大模型写好脚本后在目录里运行 rts-arena video
+                                        联赛数据、待填的 script.json；--portraits 是选手形象图的目录（按名字对应选手，选手页放半身像、精彩对局里主基地换成头像），--about 写用户补充的背景（外号对应哪个模型、以前的成绩……）。大模型写好脚本后在目录里运行 rts-arena video
   video-brief [联赛汇总] [--out 文件]   联赛视频的素材包（JSON，video-init 也会写一份）
   video [联赛汇总] [--script 脚本.json] [--out 视频.mp4] [--lint] [--preview 秒,秒|auto] [--check 秒,秒|auto]
-                                        按脚本渲染 1920×1080 的联赛视频（片头片尾平台署名、标题和用户原话、选手介绍、排行榜、精彩对局），
+                                        按脚本渲染 1920×1080 的联赛视频（片头片尾平台署名、规则介绍、选手介绍、排行榜、精彩对局），
                                         用本机的 Chrome / Edge 渲染；每次都列出每段从第几秒到第几秒。--preview 只出这几秒的预览图
                                         （auto 是每段各一张，放在 preview/ 里），--check 出完视频后从成品里截图检查（auto 每段一张），
                                         --lint 只核对脚本、列出每段字数和时间表（不开浏览器、不出图）
@@ -158,7 +158,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   report: { player: false, every: false, full: true, at: false },
   map: { seed: false },
   "video-brief": { out: false },
-  "video-init": { text: false, about: false },
+  "video-init": { portraits: false, about: false },
   video: { script: false, out: false, preview: false, check: false, browser: false, fps: false, lint: true },
 }
 
@@ -1353,6 +1353,8 @@ async function cmdInit(pos: string[]): Promise<void> {
   const created = !existsSync(join(dir, bot))
   if (created) writeFileSync(join(dir, bot), BOT_TEMPLATE)
   if (!existsSync(join(dir, ".gitignore"))) writeFileSync(join(dir, ".gitignore"), "replays/\n")
+  // 每一版存一份的地方（说明书「版本、能看什么、交付」一节）
+  mkdirSync(join(dir, "versions"), { recursive: true })
   const where = dir === "." ? "当前目录" : ` ${dir} `
   if (created) {
     const at = dir === "." ? "" : `在 ${dir} 里`
@@ -1459,7 +1461,7 @@ async function main(): Promise<void> {
       const dir = (onlyDir ? pos[0] : pos[1]) ?? "league-video"
       if (existsSync(join(dir, "script.json"))) fail(`${dir} 里已经有 script.json 了：换个目录名，或者删掉它再建（别把写好的脚本覆盖了）`)
       const r = createVideoWorkspace(file, dir, {
-        userText: typeof opt.text === "string" ? opt.text : undefined,
+        portraits: typeof opt.portraits === "string" ? opt.portraits : undefined,
         about: typeof opt.about === "string" ? opt.about : undefined,
       })
       console.log(`已建好联赛视频目录 ${dir}（联赛 ${file}）：${r.files.length} 个文件`)

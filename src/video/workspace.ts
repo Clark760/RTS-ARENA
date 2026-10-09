@@ -1,8 +1,8 @@
 // rts-arena video-init：把一场联赛做视频要用的东西导出到一个目录（像 init 建 bot 目录那样）——
 // 给大模型的说明 PROMPT.md、联赛数据、选手 bot 文件的副本、几局的战报、待填的脚本。
 // 大模型只读这个目录里的文件、写好 script.json，在目录里运行 rts-arena video 就能出预览和视频
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { dirname, join, relative, resolve } from "node:path"
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { basename, dirname, extname, join, relative, resolve } from "node:path"
 import { findRuleset } from "../cli/catalog.ts"
 import { gameFacts } from "../cli/highlights.ts"
 import { gameSeatStats, type SeatGameStats } from "../cli/league-stats.ts"
@@ -48,15 +48,39 @@ interface GameExtra {
   biggest: number
 }
 
+/**
+ * 形象图按名字对应选手（D-177）：文件名按空格、横线、下划线、点拆成词（3 个字母以上），
+ * 某个词只出现在一个选手的名字里（不分大小写），这张图就是这个选手的（"claude fable.png" 里的 fable 对上 Fable5.1）。
+ * 一个选手对上好几张图时取对上的词最长的；对不上的选手没有形象图
+ */
+export function matchPortraits(names: string[], files: string[]): Map<string, string> {
+  const low = names.map((n) => n.toLowerCase())
+  const best = new Map<string, { file: string; len: number }>()
+  for (const f of files) {
+    const words = basename(f, extname(f))
+      .toLowerCase()
+      .split(/[\s\-_.]+/)
+      .filter((w) => w.length >= 3)
+    for (const w of words) {
+      const hit = low.map((n, i) => (n.includes(w) ? i : -1)).filter((i) => i >= 0)
+      if (hit.length !== 1) continue
+      const name = names[hit[0]]
+      const old = best.get(name)
+      if (!old || w.length > old.len) best.set(name, { file: f, len: w.length })
+    }
+  }
+  return new Map([...best].map(([n, x]) => [n, x.file]))
+}
+
 export interface WorkspaceOptions {
-  /** 用户的原话（预先填进 script.json） */
-  userText?: string
+  /** 选手形象图所在的目录（按名字对应选手，复制到视频目录的 portraits/ 里，填进 script.json） */
+  portraits?: string
   /** 用户补充的背景：外号对应哪个模型、以前的成绩……（联赛数据里没有的） */
   about?: string
 }
 
 export function createVideoWorkspace(seriesFile: string, dir: string, opts: WorkspaceOptions = {}): { dir: string; files: string[] } {
-  const { userText, about } = opts
+  const { portraits, about } = opts
   const series = readSeries(seriesFile)
   const brief = videoBrief(seriesFile)
   mkdirSync(join(dir, "bots"), { recursive: true })
@@ -68,12 +92,23 @@ export function createVideoWorkspace(seriesFile: string, dir: string, opts: Work
   }
   // 选手 bot 的副本（文件名不变）
   const botFile = new Map<string, string>()
+  // 选手自己写的参赛报告（D-178）：和代码放在一起的 <名字>.REPORT.md；代码叫 bot.ts（bot 目录）时是同目录或上一层的 REPORT.md
+  const reportFile = new Map<string, string>()
   for (const p of brief.players) {
     if (!existsSync(p.file)) continue
     const rel = join("bots", p.fileName).split("\\").join("/")
     copyFileSync(p.file, join(dir, rel))
     botFile.set(p.name, rel)
     files.push(rel)
+    const stem = p.fileName.replace(/\.ts$/, "")
+    const near = [join(dirname(p.file), `${stem}.REPORT.md`), ...(stem === "bot" ? [join(dirname(p.file), "REPORT.md"), join(dirname(dirname(p.file)), "REPORT.md")] : [])]
+    const found = near.find((f) => existsSync(f))
+    if (found) {
+      const r = `bots/${stem}.REPORT.md`
+      copyFileSync(found, join(dir, r))
+      files.push(r)
+      reportFile.set(p.name, r)
+    }
   }
   // 每局的数据（全部对局表用）和几局的战报
   const toReport = new Set(reportGames(brief, series))
@@ -108,13 +143,29 @@ export function createVideoWorkspace(seriesFile: string, dir: string, opts: Work
     copyFileSync(join(rulesDir!, "RULES.md"), join(dir, "RULES.md"))
     files.push("RULES.md")
   }
-  const script: VideoScript = { ...brief.scriptTemplate, ...(userText ? { userText } : {}) }
+  // 形象图：按名字对应好，复制进 portraits/，填进脚本
+  const portraitOf = new Map<string, string>()
+  if (portraits) {
+    const imgs = existsSync(portraits) ? readdirSync(portraits).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)) : []
+    const matched = matchPortraits(
+      brief.players.map((p) => p.name),
+      imgs,
+    )
+    if (matched.size) mkdirSync(join(dir, "portraits"), { recursive: true })
+    for (const [name, f] of matched) {
+      const rel = `portraits/${f}`
+      copyFileSync(join(portraits, f), join(dir, rel))
+      files.push(rel)
+      portraitOf.set(name, rel)
+    }
+  }
+  const script: VideoScript = { ...brief.scriptTemplate, players: brief.scriptTemplate.players.map((p) => (portraitOf.has(p.name) ? { ...p, portrait: portraitOf.get(p.name) } : p)) }
   write("script.json", JSON.stringify(script, null, 2) + "\n")
   write("brief.json", JSON.stringify(brief, null, 2) + "\n")
   const config: VideoConfig = { series: relative(resolve(dir), resolve(seriesFile)).split("\\").join("/"), out: `${series.ruleset.name}联赛.mp4` }
   write(VIDEO_CONFIG, JSON.stringify(config, null, 2) + "\n")
   const replayPath = (replay: string) => relative(resolve(dir), join(dirname(resolve(seriesFile)), replay)).split("\\").join("/")
-  write("PROMPT.md", videoPrompt(brief, series, botFile, reported, stats, extra, replayPath, userText, about, hasRules))
+  write("PROMPT.md", videoPrompt(brief, series, botFile, reported, stats, extra, replayPath, portraitOf, about, hasRules, reportFile))
   return { dir, files }
 }
 
@@ -128,9 +179,10 @@ function videoPrompt(
   stats: Map<number, SeatGameStats[]>,
   extra: Map<number, GameExtra>,
   replayPath: (replay: string) => string,
-  userText?: string,
+  portraitOf: Map<string, string> = new Map(),
   about?: string,
   hasRules = false,
+  reportFile: Map<string, string> = new Map(),
 ): string {
   const L = SCRIPT_LIMITS
   const rs = brief.ruleset.name
@@ -144,30 +196,38 @@ function videoPrompt(
   out.push("脚本只管文字，排版、配色、动画、回放都是平台做的。没有配音。按顺序：")
   out.push("")
   out.push("1. **片头**：RTS Arena 平台署名（自动加，脚本里不用写，也去不掉）。")
-  out.push(`2. **标题页**：最上面一行小字「${rs}联赛」，下面是你的 \`title\`（所以标题里不用再写规则包和"联赛"），然后是框起来的用户原话 \`userText\`，最后是你的解读 \`theme\`。`)
-  out.push(`3. **规则介绍**：左边是你写的 \`rules\`（1～${L.rulesLines} 句，逐句出现），右边自动配上第一局精彩对局的开局地图（控制点这类标记也画出来）和单位图例（形状、字、名字、造价、生命、近战还是射程几格）。\`rules\` 不写就只显示规则包的一句话简介${series.ruleset.summary ? `："${series.ruleset.summary}"` : ""}。`)
-  out.push("4. **每个选手一页**，按 `players` 的顺序：左边是 `displayName`、`byline`（小字）、`tagline`（一句话定位，醒目）、`intro`（逐句出现）；右边自动配上代码文件的开头 12 行（跳过空行和空注释）、代码指标、联赛战绩。")
-  out.push("5. **联赛排名**（自动）。")
-  out.push("6. **精彩对局**，按 `highlights` 的顺序，每局两段：")
+  out.push(`2. **规则介绍**：左边是你写的 \`rules\`（1～${L.rulesLines} 句，逐句出现），右边自动配上第一局精彩对局的开局地图（控制点这类标记也画出来）和单位图例（形状、字、名字、造价、生命、近战还是射程几格）。\`rules\` 不写就只显示规则包的一句话简介${series.ruleset.summary ? `："${series.ruleset.summary}"` : ""}。`)
+  out.push("3. **每个选手一页**，按 `players` 的顺序：左边是 `displayName`、`byline`（小字）、`tagline`（一句话定位，醒目）、`intro`（逐句出现）；背后是这个选手形象图的半透明半身像（`portrait`）；右上是平台算的**能力雷达图**（6 项：经济＝每局采集、生产＝每局造的单位、战斗＝击杀和损失之比、进攻＝每局拆的建筑、克制＝打在被自己克的兵上的伤害占比（没有克制的规则包换成速胜＝赢的局平均多快结束）、代码＝代码行数，每项和全联赛最好的比），右下是代码指标和联赛战绩。雷达图的数字观众看得到，`intro` 里不用逐项复述，挑最突出的一两项讲原因。")
+  out.push("4. **联赛排名**（自动）。")
+  out.push("5. **精彩对局**，按 `highlights` 的顺序，每局两段：")
   out.push("   - 标题卡：你的 `title`、对阵双方、结果（谁赢、第几 tick、怎么结束的）、**自动列出的看点**（就是下面「全部对局」表里这局的「标题卡看点」，最多 4 条：全联赛最快 / 最久 / 比分最接近这类标签排在前面，联赛挑的精彩对局接着是「精彩对局」一节冒号后面那几条，别的局是平台从回放算的），最后是你的 `commentary`。**`commentary` 别重复看点里已经有的话**，讲看点没讲的：这局的来龙去脉、关键的一下、和选手风格的关系。")
-  out.push("   - 回放：**大战按 2 倍速放**（侧栏标「大战」的那几场：死 6 个以上、不是一边倒的，1 秒 = 2 × 规则包的 tickRate 个 tick，进度条旁显示「大战 2 倍速」），**其余有单位倒下的小冲突按 4 倍速放**（哪怕只死一个、一边倒的也算，进度条旁显示「交火 4 倍速」），**没动静的地方快进**（加起来最多 10 秒），所以一局回放多长主要看打了多少仗，每段的秒数看命令列出的时间表。顶上一行是你的 `title` 和 `commentary`；地图上画着规则包的标记（控制点、台址这类区域，按归属上色）；右边侧栏是双方实时的兵数、工人数、建筑数、分数（分数的意思看规则包：歼灭是击杀价值、夺点是控制分），规则包的状态栏（比分、目标），和\"战况\"：第一次交火、规则包写的事件（比如\"哈基米夺下控制点\"，战报的关键事件里带\"（规则包）\"的那些）、失去建筑、大战、出局，放不下时只留最新的几条。大战和战报\"战斗\"一节是同一套切分，侧栏只列死 6 个以上的（这局最大的一仗都不到 6 个时，列死 3 个以上的、叫「交战」，和战报一样），开打就显示\"交战中\"、损失随时间往上加，打完显示起止时间；只有一方在死人、有一方没死兵（兵冲进矿区杀工人、撞上箭塔）或者死得少的一方不到对方 1/4 的，打完标「一边倒」，不算大战。")
-  out.push("7. **片尾**：最上面是你的 `outro`（可以不写），然后是平台署名，最后是选手名单（按 `players` 的顺序），每人一行 \"`displayName` · `byline`\"。**`byline` 会出现在片尾的正式名单里**，写编程工具、出品方这类正经信息，玩笑放在 `tagline` 和介绍里。")
+  out.push("   - 回放：**大战按 2 倍速放**（侧栏标「大战」的那几场：死 6 个以上、不是一边倒的，1 秒 = 2 × 规则包的 tickRate 个 tick，进度条旁显示「大战 2 倍速」），**其余有单位倒下的小冲突按 4 倍速放**（哪怕只死一个、一边倒的也算，进度条旁显示「交火 4 倍速」），**没动静的地方快进**（加起来最多 10 秒），所以一局回放多长主要看打了多少仗，每段的秒数看命令列出的时间表。顶上一行是你的 `title` 和 `commentary`；地图上各家的主基地画成选手的头像（从 `portrait` 裁的）；侧栏选手下面是**实时胜率预测**（按全联赛对局拟合的模型，看当时的兵力、工人、建筑、分数，带一条到当前为止的曲线），胜率大起大落的地方就是解说值得点的地方；地图上画着规则包的标记（控制点、台址这类区域，按归属上色）；右边侧栏是双方实时的兵数、工人数、建筑数、分数（分数的意思看规则包：歼灭是击杀价值、夺点是控制分），规则包的状态栏（比分、目标），和\"战况\"：第一次交火、规则包写的事件（比如\"哈基米夺下控制点\"，战报的关键事件里带\"（规则包）\"的那些）、失去建筑、大战、出局，放不下时只留最新的几条。大战和战报\"战斗\"一节是同一套切分，侧栏只列死 6 个以上的（这局最大的一仗都不到 6 个时，列死 3 个以上的、叫「交战」，和战报一样），开打就显示\"交战中\"、损失随时间往上加，打完显示起止时间；只有一方在死人、有一方没死兵（兵冲进矿区杀工人、撞上箭塔）或者死得少的一方不到对方 1/4 的，打完标「一边倒」，不算大战。")
+  out.push("6. **片尾**：最上面是你的 `outro`（可以不写），然后是平台署名，最后是选手名单（按 `players` 的顺序），每人一行 \"`displayName` · `byline`\"。**`byline` 会出现在片尾的正式名单里**，写编程工具、出品方这类正经信息，玩笑放在 `tagline` 和介绍里。")
   out.push("")
-  out.push(`每段多长是按字数算的：选手页 4.6～7 秒（字多的长些）；标题页、规则页、标题卡按每秒约 11 字算，标题卡 4.5～8 秒、规则页最长 12 秒。每个选手的 \`tagline\` 加 \`intro\` 一共写 120～${PLAYER_PAGE_CHARS} 字正好（3～4 句、每句 30～40 字）：选手页的字比别的页密，少于 ${PLAYER_PAGE_MIN} 字页面显得空、超过 ${PLAYER_PAGE_CHARS} 字读不完，命令都会提醒。每次运行 \`rts-arena video\` 都会列出每段从第几秒到第几秒。`)
+  out.push(`每段多长是按字数算的：选手页 4.6～13 秒（字多的长些）；规则页、标题卡按每秒约 11 字算，标题卡 4.5～8 秒、规则页最长 12 秒。每个选手的 \`tagline\` 加 \`intro\` 一共写 180～${PLAYER_PAGE_CHARS} 字正好（4～5 句、每句 40～60 字，选手页的字号比别的页小）：选手页的字比别的页密，少于 ${PLAYER_PAGE_MIN} 字页面显得空、超过 ${PLAYER_PAGE_CHARS} 字读不完，命令都会提醒。每次运行 \`rts-arena video\` 都会列出每段从第几秒到第几秒。`)
   out.push("")
   out.push("## 怎么写")
   out.push("")
-  out.push(`- **用户的原话**：${userText ? `是"${userText}"，已经填进 \`script.json\` 的 \`userText\`，要展示的话不要改字。` : "用户会告诉你，原样填进 `userText`。"}原话里夹着给你的要求（比如"请把某某称作某某"）时，照要求做，但这句要求从 \`userText\` 里删掉，开场只展示要说给观众听的那几句。弄懂它在说什么（调侃谁、有什么梗、站在哪边），在 \`theme\` 里用一句话点出来；整个视频的语气跟着它走。外号也可以当 \`displayName\`，本名和编程工具写进 \`byline\`（比如"<模型名> · <编程工具>"，尖括号里换成用户说的）。`)
+  out.push(
+    portraitOf.size
+      ? `- **选手形象图**：已经按名字对应好、复制到 \`portraits/\`，填进了 \`script.json\` 的 \`portrait\`：${[...portraitOf].map(([n, f]) => `${n} → ${f}`).join("，")}。${portraitOf.size < brief.players.length ? "没对上的选手没有形象图（页面照常，只是没有半身像和头像）。" : ""}头像默认从图上部居中裁（立绘一般脸在那里）；出预览后看精彩对局里的头像，脸没在框里就给这个选手写 \`avatar\`：[脸中心 x, 脸中心 y, 边长]，按图的宽、高算比例，默认 [0.49, 0.115, 0.32]。`
+      : "- **选手形象图**：这次没有（`video-init --portraits <目录>` 可以按名字对应好）。也可以自己给选手写 `portrait`（图片路径，相对这个目录）。",
+  )
   if (about) out.push(`- **用户补充的背景**：${about}\n  这是用户告诉你的、联赛数据以外的事（比如外号对应哪个模型、用的什么编程工具、上一届的成绩），可以照用；和下面的数据对不上时以数据为准。`)
   out.push("- **选手的文件名**：常见写法是 `模型名-编程工具.ts`，比如 `ModelX2.0-ToolY.ts` 是在 ToolY 里用 ModelX 2.0 写的（这只是格式的例子）。据此写 `displayName`（模型名，加空格好读）和 `byline`（编程工具之类）。文件名只是外号、看不出是哪个模型时，看上面「用户补充的背景」；也没有就照原样用，不要瞎猜——说明里的例子只是格式，不代表这场的选手。不知道作者、编程工具时就删掉 `byline`（片尾只列名字），别拿文件名、代码里的自称凑。")
   out.push(`- **规则介绍**（\`rules\`）：写给没玩过这个规则包的观众，${hasRules ? "照这个目录里的 \`RULES.md\` 写（它是写给 bot 作者的：\`view.objectives\` 这类接口和命令不用管）。**别写\"和某某规则包一样\"\"在某某的基础上\"**：观众不一定玩过那个规则包，RULES.md 里这么说的地方，把要用到的规则（开局有什么、怎么赢、关键机制）直接简要讲出来，再讲这个规则包特别的地方" : "（这次没找到规则说明，照下面的数据和战报写）"}：怎么赢、最关键的机制、特别的单位或建筑，数字照抄、不编。图例已经列出各单位的造价和数值，规则页最下面会自动注明"1 秒 = 多少 tick"，这些不用重复。左栏一行大约 20 个字，每句 30 字以内断行好看。1～${L.rulesLines} 句，每句 ${L.rulesLine} 字以内，加起来 ${RULES_PAGE_CHARS} 字以内（规则页最长 12 秒）。`)
   out.push("- **代码风格**：打开 `bots/` 里每个选手的代码读一遍（至少开头的注释和主要的决策逻辑），结合下面的代码指标，写出这个选手是什么样的作者：精打细算还是大开大合、工程化还是文案化、靠调参还是靠架构、它自称的绝招和联赛里的实际表现对不对得上。")
   out.push("- **注释可能和代码对不上**：文件开头的注释是作者写的，可能是旧版本的、也可能是自吹（比如注释说「一个工人都不补」，参数却是补到 5 个）。写打法时以代码里的参数和战报为准，注释里的只能说「自称」「注释里写着」。")
-  out.push("- **介绍要有依据**：用户原话、文件名、代码、下面的成绩和 `reports/` 的战报里看得到的才写，数字照抄，不编造没发生的事。成绩差的写它的特点和输在哪，可以跟着原话调侃，但别贬低。")
+  out.push(
+    reportFile.size
+      ? `- **选手的参赛报告**：${[...reportFile].map(([n, f]) => `${n} → \`${f}\``).join("，")}${reportFile.size < brief.players.length ? `（${brief.players.filter((p) => !reportFile.has(p.name)).map((p) => p.name).join("、")} 没有报告）` : ""}。是选手自己写的：打法、每一版改了什么、为什么选最终这版、自测成绩。**选手介绍从三处来：代码、参赛报告、这场联赛的对战数据**（下面的成绩、速查、每局数据和 \`reports/\` 的战报）。报告里的自测成绩是它对参考 bot 打的，不是这场联赛，别混着写；报告里自夸的地方拿代码和这场的数据核对，对不上就写实际情况。`
+      : "- **选手的参赛报告**：这次没有（选手的代码旁边有 `<名字>.REPORT.md`，或者 bot 目录里有 `REPORT.md` 时，`video-init` 会复制到 `bots/`）。",
+  )
+  out.push("- **介绍要有依据**：文件名、代码、参赛报告、下面的成绩和 `reports/` 的战报里看得到的才写，数字照抄，不编造没发生的事。成绩差的写它的特点和输在哪，可以调侃，但别贬低。")
   out.push("- **不知道的事别写成事实**：平台不知道每个 bot 是怎么写出来的、改了几轮。代码里的版本号（v3、v6 之类）和自称的绝招都是作者自己写的，只能说\"自称\"\"注释里写着\"。")
   out.push(`- **精彩对局**：挑 3～${L.highlights} 局（最多 ${L.highlights} 局；用户说了要几局就挑几局），按想讲的故事排顺序。**每局的 \`title\` 和 \`commentary\` 都要照这一局写**：对阵双方是谁、谁赢了，查「全部对局」表和战报，别从别的视频的脚本里抄（命令会提醒标题、解说里提到了不在这局的选手）。下面"精彩对局"里是联赛自动挑的，也可以从"全部对局"里挑别的（表里有每局双方的采集、损失、击杀，找"最快""最险""最惨烈"的局用得上）。解说里说的事要在战报里查得到：\`reports/\` 里有这几局：${reported.map((i) => `第 ${i} 局`).join("、")}；其他局在这个目录里运行 \`rts-arena report <回放文件>\` 看，回放文件名在"全部对局"表里。战报里的 P0、P1 是座位，顺序和对阵里的名字一样。`)
-  out.push(`- **字数上限**（按字符算：汉字、字母、数字、空格、标点都算 1 个）：title ${L.title}、userText ${L.userText}、theme ${L.theme}、displayName ${L.displayName}、byline ${L.byline}、tagline ${L.tagline}、intro 1～${L.introLines} 句（建议 3～4 句）每句 ${L.introLine}、精彩对局 title ${L.hlTitle}、commentary ${L.commentary}、outro ${L.outro}。超了命令会报出来。`)
-  out.push("- **粗体字段别写\"一\"**：`title`、`tagline`、精彩对局的 `title` 和 `commentary`、`outro` 是粗体，\"一\"在粗体下就是一道横线，像破折号（\"唯一一胜\"看成\"唯——胜\"，\"只输一局\"看成\"只输—局\"）。数量写阿拉伯数字（\"只输 1 局\"），别的换个说法（\"一波\"→\"突袭\"，\"一边倒\"→\"倒向对面\"）；`intro`、`theme` 是常规字重，不受影响。")
+  out.push(`- **字数上限**（按字符算：汉字、字母、数字、空格、标点都算 1 个）：displayName ${L.displayName}、byline ${L.byline}、tagline ${L.tagline}、intro 1～${L.introLines} 句（建议 3～4 句）每句 ${L.introLine}、精彩对局 title ${L.hlTitle}、commentary ${L.commentary}、outro ${L.outro}。超了命令会报出来。`)
+  out.push("- **粗体字段别写\"一\"**：`tagline`、精彩对局的 `title` 和 `commentary`、`outro` 是粗体，\"一\"在粗体下就是一道横线，像破折号（\"唯一一胜\"看成\"唯——胜\"，\"只输一局\"看成\"只输—局\"）。数量写阿拉伯数字（\"只输 1 局\"），别的换个说法（\"一波\"→\"突袭\"，\"一边倒\"→\"倒向对面\"）；`intro` 是常规字重，不受影响。")
   out.push("- 平台署名（片头片尾）是自动加的；介绍和解说里不要冒充平台的口吻。")
   out.push("")
   out.push("## 脚本格式（script.json）")
@@ -176,11 +236,8 @@ function videoPrompt(
   out.push(
     JSON.stringify(
       {
-        title: "视频标题",
-        userText: "用户的原话",
-        theme: "对原话的解读、一句话导语",
         rules: ["规则介绍 1～4 句：怎么赢、关键机制"],
-        players: [{ name: "联赛里的名字（必须和下面一样）", displayName: "显示名", byline: "一行小字（也上片尾名单）", tagline: "一句话定位", intro: ["介绍 1～4 句"] }],
+        players: [{ name: "联赛里的名字（必须和下面一样）", displayName: "显示名", byline: "一行小字（也上片尾名单）", tagline: "一句话定位", intro: ["介绍 1～4 句"], portrait: "portraits/形象图.png（可以不写）" }],
         highlights: [{ index: 1, title: "这局的标题", commentary: "一句话解说（别重复自动看点）" }],
         outro: "一句总结（可以不写）",
       },
@@ -190,7 +247,7 @@ function videoPrompt(
   )
   out.push("```")
   out.push("")
-  out.push("`highlights` 里的 `index` 是联赛的**局号**（「全部对局」表的第一列），不是第几个。所有选手都要写，`players` 的顺序就是出场顺序；`title`、`rules`、`displayName`、`byline`、`highlights` 里的 `title` 和 `commentary`、`outro` 都可以不写。`highlights` 不写就用联赛挑的前 3 局、不带解说。`script.json` 里已经有一份待填的模板，把\"待填\"都换掉（不要的字段直接删）。")
+  out.push("`highlights` 里的 `index` 是联赛的**局号**（「全部对局」表的第一列），不是第几个。所有选手都要写，`players` 的顺序就是出场顺序；`rules`、`displayName`、`byline`、`portrait`、`avatar`、`highlights` 里的 `title` 和 `commentary`、`outro` 都可以不写。视频没有标题页，也不展示用户的话。`highlights` 不写就用联赛挑的前 3 局、不带解说。`script.json` 里已经有一份待填的模板，把\"待填\"都换掉（不要的字段直接删）。")
   out.push("")
   out.push("## 出视频（在这个目录里运行）")
   out.push("")

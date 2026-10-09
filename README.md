@@ -141,7 +141,7 @@ rts-arena view                     # 网页播放器看回放
 
 ```bash
 rts-arena league annihilation 选手A.ts 选手B.ts 选手C.ts --per-pair 20 --out league
-rts-arena video-init league my-video --text "要展示给观众的一句话"   # 导出视频目录：说明书、选手代码、战报、待填的脚本
+rts-arena video-init league my-video --portraits 形象图目录   # 导出视频目录：说明书、选手代码、战报、形象图、待填的脚本
 # 让大模型读 my-video/PROMPT.md、写好 my-video/script.json，然后在目录里：
 cd my-video
 rts-arena video --lint            # 核对字数和每段时长（几秒钟）
