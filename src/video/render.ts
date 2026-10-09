@@ -1,4 +1,4 @@
-// 联赛视频：把联赛汇总 + 大模型写的脚本排成一串场景（片头署名 → 规则介绍 → 选手介绍 → 排行榜 → 精彩对局 → 片尾署名），
+// 联赛视频：把联赛汇总 + 大模型写的脚本排成一串场景（开场阵容（带平台署名）→ 规则介绍 → 选手介绍 → 排行榜 → 精彩对局 → 片尾署名），
 // 用本机的 Chrome / Edge 无头模式逐帧画出来、编成 MP4。回放场景每帧的局面在这边从回放算好再送进页面
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -47,7 +47,7 @@ export interface RenderOptions {
   /** 预览图和检查截图放在哪个目录（默认视频旁边的 preview/）；--out 指到别处时截图也不跟过去 */
   imagesDir?: string
   onProgress?: (done: number, total: number) => void
-  /** 竖屏短版（1080×1920，D-179）：开场、两局精彩对局的大战、排名、片尾 */
+  /** 竖屏短版（1080×1920，D-179）：开场、三局精彩对局的大战、排名、片尾 */
   short?: boolean
 }
 
@@ -80,8 +80,6 @@ export const DEFAULT_AVATAR = [0.49, 0.115, 0.32]
  * analysis 是这次联赛的分析（雷达图、胜率模型，见 analysis.ts）；不给（只核对脚本、算时间表时）就不画雷达图和胜率。
  * 选手有形象图（脚本的 portrait）时，页面里按选手的联赛名字取图（renderLeagueVideo 先把图送进页面）
  */
-/** 冷开场放几秒（大战 2 倍速） */
-const COLD_SECONDS = 7
 /** 竖屏短版里每局精彩对局的大战最多放几秒 */
 const SHORT_BATTLE_SECONDS = 12
 
@@ -135,41 +133,32 @@ export function buildScenes(
     const seats = seatOf.map((i, p) => ({ name: display(g.names[p]), color: color(i), avatar: imageOf(g.names[p]), crop: avatarOf(g.names[p]) }))
     return { g, replay, seatOf, sides, result, title, commentary, seats }
   }
-  /** 一局里最大的那一仗按 2 倍速放 seconds 秒（冷开场、竖屏短版用）；没打过仗返回 null */
-  const battleClip = (h: ReturnType<typeof hlData>, seconds: number, hook: { text: string; sub: string } | null, no: number) => {
+  /** 一局里最大的那一仗按 2 倍速放 seconds 秒（竖屏短版用）；没打过仗返回 null */
+  const battleClip = (h: ReturnType<typeof hlData>, seconds: number, no: number) => {
     const w = biggestBattle(h.replay)
     if (!w) return null
     const rate = Math.max(1, h.replay.tickRate || 10)
     const t1 = Math.min(h.replay.result.tick, w[0] + Math.round(seconds * rate * BATTLE_SPEED))
-    return replayScene(h.replay, no, h.title, h.commentary, h.seats, h.result, fps, analysis?.weights ?? null, { window: [w[0], t1], hook })
+    return replayScene(h.replay, no, h.title, h.commentary, h.seats, h.result, fps, analysis?.weights ?? null, { window: [w[0], t1] })
   }
-  // 开场（D-179，用户：视频三秒跳出率高）：第一帧就是全体选手的立绘阵容和一句大字（不从黑屏淡入，也适合当封面），
-  // 接着冷开场——开场那局最大的一仗按 2 倍速放 7 秒，然后才是片头署名
-  const hookPick = script.hook?.index !== undefined ? { index: script.hook.index } : picks[0]
-  const hook = hookPick ? hlData({ ...picks.find((x) => x.index === hookPick.index), index: hookPick.index }) : null
-  const hookText = script.hook?.text || (hook ? `${hook.sides.map((x) => x.name).join(" 对 ")}，谁能赢？` : `${series.ruleset.name}联赛`)
+  // 开场（D-179，用户：视频三秒跳出率高）：第一帧就是全体选手的立绘阵容和一句大字（不从黑屏淡入，也当封面）；
+  // 平台署名和仓库地址用小字放在它最下面（D-181：冷开场效果不好删掉，片头署名页也不单独出现）
+  const hookText = script.hook?.text || `${names.length} 位选手的${series.ruleset.name}联赛，谁能夺冠？`
   scenes.push({
     label: "开场阵容",
     data: {
       kind: "lineup",
-      frames: sec(fps, 1.6),
+      frames: sec(fps, 2.5),
       title: hookText,
       sub: `${series.ruleset.name}联赛 · ${names.length} 位选手 · ${series.results.length} 局`,
       players: script.players.map((p) => ({ name: display(p.name), color: color(names.indexOf(p.name)), portrait: imageOf(p.name) })),
     },
   })
-  if (hook) {
-    const at = biggestBattle(hook.replay)
-    const clip = battleClip(hook, COLD_SECONDS, { text: hookText, sub: `第 ${hook.g.index} 局 · ${hook.sides.map((x) => x.name).join(" 对 ")} · 第 ${at?.[0] ?? 0} tick 起的大战` }, 0)
-    if (clip) scenes.push({ label: `冷开场（第 ${hook.g.index} 局最大的一仗）`, ...clip })
-  }
-  scenes.push({ label: "片头署名", data: { kind: "brandOpen", frames: sec(fps, (opts.short ? 2 : 3.5) / BRISK), speed: BRISK, ruleset: series.ruleset.name } })
-  // 竖屏短版（D-179，可选）：开场、片头之后，两局精彩对局各放最大的一仗，再是排名和片尾
+  // 竖屏短版（D-179，可选）：开场之后，前三局精彩对局各放最大的一仗，再是排名和片尾
   if (opts.short) {
-    const rest = picks.filter((x) => x.index !== hook?.g.index).slice(0, 2)
-    rest.forEach((pick, k) => {
+    picks.slice(0, 3).forEach((pick, k) => {
       const h = hlData(pick)
-      const clip = battleClip(h, SHORT_BATTLE_SECONDS, null, k + 1)
+      const clip = battleClip(h, SHORT_BATTLE_SECONDS, k + 1)
       if (clip) scenes.push({ label: `精彩对局 ${k + 1}（第 ${h.g.index} 局最大的一仗）`, ...clip })
     })
     scenes.push({
@@ -195,8 +184,10 @@ export function buildScenes(
     const seatOf = mapGame.names.map((n) => names.indexOf(n))
     scenes.push({ label: "规则介绍", data: rulesScene(replay, series.ruleset.name, rulesLines, `第 ${mapGame.index} 局的开局地图`, seatOf.map((i) => color(i)), fps, specs) })
   }
-  // 选手介绍：按脚本里的顺序
-  for (const p of script.players) {
+  // 选手介绍：按联赛名次倒着出场，最后一名先上、冠军压轴（D-181，用户要求）；名次一样的按脚本里的顺序
+  const rankOf = (name: string) => sum.standings.find((x) => x.index === names.indexOf(name))?.rank ?? names.length
+  const byRank = script.players.map((p, k) => ({ p, k })).sort((a, b) => rankOf(b.p.name) - rankOf(a.p.name) || a.k - b.k)
+  for (const { p } of byRank) {
     const i = names.indexOf(p.name)
     const st = sum.standings.find((s) => s.index === i)
     const file = resolveBotFile(series.participants[i].file, seriesFile)
@@ -449,8 +440,8 @@ function replayScene(
   result: string,
   fps: number,
   weights: number[] | null = null,
-  /** window：只放这一段 tick（冷开场、竖屏短版，2 倍速，不定格结果）；hook：顶上换成开场的大字（D-179） */
-  clip: { window?: [number, number]; hook?: { text: string; sub: string } | null } = {},
+  /** window：只放这一段 tick（竖屏短版，2 倍速，不定格结果） */
+  clip: { window?: [number, number] } = {},
 ): Omit<Scene, "label"> {
   const T = replay.result.tick
   const W0 = clip.window
@@ -573,8 +564,6 @@ function replayScene(
       seats,
       result,
       win,
-      hook: clip.hook?.text ?? null,
-      hookSub: clip.hook?.sub ?? null,
     },
     frame,
   }
@@ -751,8 +740,6 @@ export interface RenderResult {
   timeline: TimelineItem[]
   /** 预览总览图（几张以上的预览才有） */
   sheet?: string
-  /** 封面（开场阵容那一帧） */
-  cover?: string
 }
 
 /** 删掉上一次出的预览图（或成品截图），免得越堆越多；只删这个命令自己起的文件名 */
@@ -866,15 +853,7 @@ export async function renderLeagueVideo(o: RenderOptions): Promise<RenderResult>
       writeFileSync(file, Buffer.from(b64, "base64"))
       images.push(file)
     })
-    // 封面（D-179）：开场阵容那一帧（立绘、大字），直接拿去当视频封面
-    let cover: string | undefined
-    const lineupScene = scenes.find((x) => x.data.kind === "lineup")
-    if (lineupScene) {
-      await browser.evaluate(`__scene(${JSON.stringify(lineupScene.data)})`)
-      cover = `${stem}-封面.png`
-      writeFileSync(cover, Buffer.from(await browser.evaluate<string>(`__png(${lineupScene.data.frames - 1}, null)`), "base64"))
-    }
-    return { file: o.out, seconds: total / fps, frames: total, bytes: bytes.length, images, probe: { duration: probe.duration, width: probe.width, height: probe.height }, timeline, cover }
+    return { file: o.out, seconds: total / fps, frames: total, bytes: bytes.length, images, probe: { duration: probe.duration, width: probe.width, height: probe.height }, timeline }
   } finally {
     await browser.close()
   }

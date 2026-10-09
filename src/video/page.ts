@@ -4,7 +4,6 @@
 
 /** 一个场景的固定内容 */
 export type SceneData =
-  | { kind: "brandOpen"; frames: number; speed?: number; ruleset: string }
   | {
       kind: "player"
       frames: number
@@ -69,9 +68,6 @@ export type SceneData =
       result: string
       /** 实时胜率：curve 是每 step tick 一个点的、sides[0] 那方赢的概率；不是两方对打或没有模型时 null（D-177） */
       win: { step: number; ticks: number; curve: number[]; sides: { name: string; color: string }[] } | null
-      /** 冷开场（D-179）：顶上换成开场的大字和一行小字；普通回放是 null */
-      hook: string | null
-      hookSub: string | null
     }
   | { kind: "brandClose"; frames: number; speed?: number; outro: string | null; credits: string[] }
 
@@ -255,10 +251,10 @@ export function installVideoPage(): void {
     text("RTS Arena", W - 24, H - 18, 16, "rgba(232,237,247,0.45)", { bold: true, align: "right" })
   }
 
-  /** 场景开头结尾各 12 帧黑场过渡；开场阵容不淡入（第一帧就是完整画面），冷开场直接切进来 */
+  /** 场景开头结尾各 12 帧黑场过渡；开场阵容不淡入（第一帧就是完整画面，也当封面） */
   function fade(i: number, n: number): void {
     const k = 12
-    const noIn = scene?.kind === "lineup" || !!scene?.hook
+    const noIn = scene?.kind === "lineup"
     const noOut = scene?.kind === "lineup"
     const a = i < k && !noIn ? 1 - i / k : i > n - k && !noOut ? (i - (n - k)) / k : 0
     if (a > 0) {
@@ -272,23 +268,6 @@ export function installVideoPage(): void {
   }
 
   // ---------- 各个场景 ----------
-  function brandOpen(s: Any, i: number): void {
-    background()
-    const p = ease(i / 30)
-    g.save()
-    g.translate(0, (1 - p) * 30)
-    text("RTS Arena", W / 2, 320, 104, C.text, { bold: true, align: "center", alpha: p })
-    g.fillStyle = C.accent
-    g.globalAlpha = p
-    g.fillRect(W / 2 - 220 * p, 352, 440 * p, 4)
-    g.globalAlpha = 1
-    text("大模型写 bot 的即时战略竞技平台", W / 2, 410, 34, C.text, { align: "center", alpha: ease((i - 12) / 25) })
-    text(`联赛视频 · ${s.ruleset} · 由 RTS Arena 平台生成`, W / 2, 470, 24, C.muted, { align: "center", alpha: ease((i - 24) / 25) })
-    g.restore()
-    // 下方：远程仓库地址
-    text(REPO, W / 2, H - 64, 24, C.accent, { align: "center", alpha: ease((i - 30) / 25) })
-  }
-
   /** 选手页背后的半身像：形象图上面 56%、去掉两边，四周淡出；按输出像素画一次缓存起来 */
   function bustOf(key: string): { c: OffscreenCanvas; w: number; h: number } | null {
     const im = images.get(key)
@@ -643,6 +622,11 @@ export function installVideoPage(): void {
   const MX = 24
   const MY = 92
   function fitTile(s: Any): void {
+    // 竖屏：地图拉满宽度（D-181）
+    if (VERT) {
+      TILE = Math.floor((VW / s.width) * VS) / VS
+      return
+    }
     const t = Math.min(26, (H - MY - 44) / s.height, (W - MX - 20 - 330 - 20) / s.width)
     TILE = Math.floor(t * SCALE) / SCALE
   }
@@ -755,7 +739,7 @@ export function installVideoPage(): void {
     const cols = vert ? Math.min(4, n) : n
     const rows = Math.ceil(n / cols)
     const top = vert ? 330 : 150
-    const ch = vert ? Math.min(400, (VH - top - 150) / rows - 50) : H - top - 64
+    const ch = vert ? Math.min(400, (VH - top - 190) / rows - 50) : H - top - 92
     const cw = (VWW - 40) / cols
     // 立绘慢慢推近一点（Ken Burns），第一帧已经是完整画面
     const z = 1 + 0.04 * Math.min(1, a / Math.max(1, s.frames))
@@ -792,6 +776,11 @@ export function installVideoPage(): void {
     const ty = vert ? 150 : 84
     fitLines(s.title, VWW / 2, ty, vert ? 50 : 46, 24, VWW - 80, 2, C.text, { bold: true, align: "center" })
     text(s.sub, VWW / 2, vert ? 270 : 128, vert ? 24 : 20, C.accent, { bold: true, align: "center" })
+    // 平台署名（D-181：不再单独放片头页，用小字放在开场阵容最下面）
+    if (vert) {
+      text("RTS Arena · 大模型写 bot 的即时战略竞技平台", VWW / 2, VH - 70, 20, C.muted, { align: "center" })
+      fitLines(REPO, VWW / 2, VH - 38, 18, 12, VWW - 40, 1, C.accent, { align: "center" })
+    } else fitLines(`RTS Arena · 大模型写 bot 的即时战略竞技平台 · ${REPO}`, VWW / 2, H - 16, 15, 11, VWW - 40, 1, C.muted, { align: "center" })
   }
 
   /** 竖屏：渐变背景 */
@@ -804,43 +793,18 @@ export function installVideoPage(): void {
   }
 
   /**
-   * 竖屏短版的一帧（D-179，可选）：横屏的画面缩到中间，上面是大标题，下面按场景放大号的胜率图、双方头像、解说、冠军。
+   * 竖屏短版里排名和片尾的一帧（D-179，可选）：横屏的画面缩到中间，上面是大标题，下面放冠军头像或总结（回放另有 vReplay）。
    * 最上面一直留着平台署名
    */
   function vFrame(s: Any, f: Any, i: number): void {
     const LY = 330
     const LH = (VW * H) / W
     text("RTS Arena", VW / 2, 64, 26, C.accent, { bold: true, align: "center" })
-    if (s.kind === "replay") {
-      if (s.hook) {
-        fitLines(s.hook, VW / 2, 160, 46, 28, VW - 60, 2, C.text, { bold: true, align: "center" })
-        if (s.hookSub) fitLines(s.hookSub, VW / 2, 290, 22, 14, VW - 60, 1, C.muted, { align: "center" })
-      } else {
-        text("精彩对局", VW / 2, 130, 26, C.accent, { bold: true, align: "center" })
-        fitLines(s.title, VW / 2, 200, 44, 26, VW - 60, 2, C.text, { bold: true, align: "center" })
-      }
-    } else if (s.kind === "standings") text("最终排名", VW / 2, 220, 60, C.text, { bold: true, align: "center" })
-    else if (s.kind === "brandOpen") text("大模型写 bot 的即时战略竞技平台", VW / 2, 220, 34, C.text, { bold: true, align: "center" })
+    if (s.kind === "standings") text("最终排名", VW / 2, 220, 60, C.text, { bold: true, align: "center" })
     else if (s.kind === "brandClose") fitLines(s.outro ?? "比赛和视频都由平台自动生成", VW / 2, 200, 40, 24, VW - 60, 2, C.text, { bold: true, align: "center" })
     g.drawImage(landCanvas!, 0, LY, VW, LH)
-    let y = LY + LH + 70
-    if (s.kind === "replay") {
-      if (s.win) {
-        drawWin(s.win, f.t ?? 0, 40, y, VW - 80, 210, 30)
-        y += 210 + 90
-      }
-      // 双方头像
-      const seats = (s.seats as Any[]).slice(0, 2)
-      if (seats.length === 2) {
-        avatarCircle(seats[0].avatar, seats[0].name, seats[0].color, 150, y + 30, 62)
-        avatarCircle(seats[1].avatar, seats[1].name, seats[1].color, VW - 150, y + 30, 62)
-        text("VS", VW / 2, y + 46, 44, C.accent, { bold: true, align: "center" })
-        fitLines(seats[0].name, 150, y + 130, 26, 14, 250, 1, seats[0].color, { bold: true, align: "center" })
-        fitLines(seats[1].name, VW - 150, y + 130, 26, 14, 250, 1, seats[1].color, { bold: true, align: "center" })
-        y += 180
-      }
-      if (s.commentary && !s.hook) fitLines(s.commentary, VW / 2, y, 26, 18, VW - 80, 3, C.muted, { align: "center" })
-    } else if (s.kind === "standings" && s.rows?.length) {
+    const y = LY + LH + 70
+    if (s.kind === "standings" && s.rows?.length) {
       const c = s.rows[0]
       avatarCircle(c.portrait, c.name, c.color, VW / 2, y + 120, 120)
       text("冠军", VW / 2, y + 300, 30, C.accent, { bold: true, align: "center" })
@@ -849,32 +813,16 @@ export function installVideoPage(): void {
     } else if (s.kind === "brandClose") text("完整版看横屏长视频", VW / 2, y + 60, 30, C.muted, { align: "center" })
     void i
   }
-  function replay(s: Any, f: Any, i: number): void {
-    g.fillStyle = C.bg1
-    g.fillRect(0, 0, W, H)
-    // 顶部：冷开场是开场的大字（D-179），普通回放是精彩对局的标题和解说
-    if (s.hook) {
-      fitLines(s.hook, 24, 44, 30, 18, W - 48, 1, C.accent, { bold: true })
-      if (s.hookSub) text(s.hookSub, 24, 76, 17, C.muted)
-    } else {
-    text(`精彩对局 ${s.no}`, 24, 38, 20, C.accent, { bold: true })
-    text(s.title, 140, 38, 22, C.text, { bold: true })
-    if (s.commentary) {
-      // 解说放一行：放不下就缩小字号，最小 14 号还放不下就折成两行
-      let px = 18
-      g.font = font(px)
-      while (px > 14 && g.measureText(s.commentary).width > W - 60) g.font = font(--px)
-      const ls = wrap(s.commentary, W - 60)
-      if (ls.length === 1) text(ls[0], 24, 70, px, C.muted)
-      else ls.slice(0, 2).forEach((l, k) => text(l, 24, 62 + k * 18, px, C.muted))
-    }
-    }
+  /** 地图（D-181 抽出来，横屏回放和竖屏回放共用）：地形（按输出像素画一次缓存）、规则包标记、单位和建筑（主基地画成头像）、攻击线、刚死的红圈；(ox, oy) 是左上角 */
+  function drawField(s: Any, f: Any, ox: number, oy: number): void {
+    // 地形按现在画布的实际放大倍数画（竖屏回放直接画在竖屏画布上）
+    const rs = VERT ? VS : SCALE
     // 地图
     if (!terrainLayer) {
       // 按输出的实际像素画一次地形，之后每帧贴上去
-      terrainLayer = new OffscreenCanvas(Math.ceil(s.width * TILE * SCALE), Math.ceil(s.height * TILE * SCALE))
+      terrainLayer = new OffscreenCanvas(Math.ceil(s.width * TILE * rs), Math.ceil(s.height * TILE * rs))
       const t = terrainLayer.getContext("2d")!
-      t.scale(SCALE, SCALE)
+      t.scale(rs, rs)
       for (let y = 0; y < s.height; y++)
         for (let x = 0; x < s.width; x++) {
           t.fillStyle = s.colors[s.terrain[y][x]] ?? "#333"
@@ -894,7 +842,7 @@ export function installVideoPage(): void {
         t.stroke()
       }
     }
-    g.drawImage(terrainLayer, MX, MY, s.width * TILE, s.height * TILE)
+    g.drawImage(terrainLayer, ox, oy, s.width * TILE, s.height * TILE)
     const colorOf = (seat: number) => (seat >= 0 ? (s.seats[seat]?.color ?? "#ccc") : "#9aa0a6")
     // 规则包的标记：区域按归属上色（没人的灰色），文字标在格子上
     for (const m of (f.markers ?? []) as Any[]) {
@@ -902,23 +850,23 @@ export function installVideoPage(): void {
       if (m.kind === "zone") {
         g.globalAlpha = 0.22
         g.fillStyle = col
-        g.fillRect(MX + m.x * TILE, MY + m.y * TILE, m.w * TILE, m.h * TILE)
+        g.fillRect(ox + m.x * TILE, oy + m.y * TILE, m.w * TILE, m.h * TILE)
         g.globalAlpha = 0.9
         g.strokeStyle = col
         g.lineWidth = 2
         g.setLineDash([6, 4])
-        g.strokeRect(MX + m.x * TILE + 1, MY + m.y * TILE + 1, m.w * TILE - 2, m.h * TILE - 2)
+        g.strokeRect(ox + m.x * TILE + 1, oy + m.y * TILE + 1, m.w * TILE - 2, m.h * TILE - 2)
         g.setLineDash([])
         g.globalAlpha = 1
-        if (m.label) text(m.label, MX + m.x * TILE + 3, MY + m.y * TILE - 4, 13, col, { bold: true })
-      } else text(m.text, MX + (m.x + 0.5) * TILE, MY + (m.y + 0.5) * TILE, 13, col, { bold: true, align: "center" })
+        if (m.label) text(m.label, ox + m.x * TILE + 3, oy + m.y * TILE - 4, 13, col, { bold: true })
+      } else text(m.text, ox + (m.x + 0.5) * TILE, oy + (m.y + 0.5) * TILE, 13, col, { bold: true, align: "center" })
     }
     const e = f.ents as number[]
     for (let k = 0; k < e.length; k += 8) {
       const [x, y, ew, eh, seat, ti, hp, bp] = e.slice(k, k + 8)
       const ty = s.types[ti]
-      const px = MX + x * TILE
-      const py = MY + y * TILE
+      const px = ox + x * TILE
+      const py = oy + y * TILE
       const pw = ew * TILE
       const ph = eh * TILE
       const col = ty.color ?? colorOf(seat)
@@ -1009,8 +957,8 @@ export function installVideoPage(): void {
       g.strokeStyle = colorOf(sh[k + 4])
       g.globalAlpha = 0.8
       g.beginPath()
-      g.moveTo(MX + (sh[k] + 0.5) * TILE, MY + (sh[k + 1] + 0.5) * TILE)
-      g.lineTo(MX + (sh[k + 2] + 0.5) * TILE, MY + (sh[k + 3] + 0.5) * TILE)
+      g.moveTo(ox + (sh[k] + 0.5) * TILE, oy + (sh[k + 1] + 0.5) * TILE)
+      g.lineTo(ox + (sh[k + 2] + 0.5) * TILE, oy + (sh[k + 3] + 0.5) * TILE)
       g.stroke()
       g.globalAlpha = 1
     }
@@ -1021,9 +969,27 @@ export function installVideoPage(): void {
       g.strokeStyle = `rgba(255,120,90,${Math.max(0, 0.9 - age * 0.12)})`
       g.lineWidth = 2
       g.beginPath()
-      g.arc(MX + (d[k] + 0.5) * TILE, MY + (d[k + 1] + 0.5) * TILE, ((6 + age * 2.5) * TILE) / 18, 0, Math.PI * 2)
+      g.arc(ox + (d[k] + 0.5) * TILE, oy + (d[k + 1] + 0.5) * TILE, ((6 + age * 2.5) * TILE) / 18, 0, Math.PI * 2)
       g.stroke()
     }
+  }
+
+  function replay(s: Any, f: Any, i: number): void {
+    g.fillStyle = C.bg1
+    g.fillRect(0, 0, W, H)
+    // 顶部：精彩对局的标题和解说
+    text(`精彩对局 ${s.no}`, 24, 38, 20, C.accent, { bold: true })
+    text(s.title, 140, 38, 22, C.text, { bold: true })
+    if (s.commentary) {
+      // 解说放一行：放不下就缩小字号，最小 14 号还放不下就折成两行
+      let px = 18
+      g.font = font(px)
+      while (px > 14 && g.measureText(s.commentary).width > W - 60) g.font = font(--px)
+      const ls = wrap(s.commentary, W - 60)
+      if (ls.length === 1) text(ls[0], 24, 70, px, C.muted)
+      else ls.slice(0, 2).forEach((l, k) => text(l, 24, 62 + k * 18, px, C.muted))
+    }
+    drawField(s, f, MX, MY)
     // 右边面板
     const x0 = MX + s.width * TILE + 20
     const pw = W - x0 - 20
@@ -1096,6 +1062,55 @@ export function installVideoPage(): void {
     void i
   }
 
+  /**
+   * 竖屏的回放（D-181，用户：竖屏对战界面太小，地图拉到 100% 宽度、战场信息放到地图上方）：
+   * 上面是标题和解说、双方头像和兵力、胜率折线、最新的战况，下面是拉满宽度的地图和进度条
+   */
+  function vReplay(s: Any, f: Any, i: number): void {
+    vBackground()
+    const mapW = s.width * TILE
+    const mapH = s.height * TILE
+    const ox = (VW - mapW) / 2
+    const oy = VH - mapH - 64
+    text("RTS Arena", VW / 2, 46, 22, C.accent, { bold: true, align: "center" })
+    text(`精彩对局 ${s.no}`, VW / 2, 92, 24, C.accent, { bold: true, align: "center" })
+    let y = fitLines(s.title, VW / 2, 140, 40, 24, VW - 60, 2, C.text, { bold: true, align: "center" })
+    if (s.commentary) y = fitLines(s.commentary, VW / 2, y + 4, 21, 15, VW - 60, 2, C.muted, { align: "center" })
+    y += 18
+    // 双方：头像、名字、兵力
+    ;(s.seats as Any[]).slice(0, 2).forEach((st, k) => {
+      const c = f.counts?.[k] ?? { army: 0, workers: 0, buildings: 0, score: 0, alive: true }
+      avatarCircle(st.avatar, st.name, st.color, 66, y + 30, 32)
+      fitLines(st.name, 116, y + 20, 26, 16, VW - 140, 1, st.color, { bold: true })
+      text(c.alive ? `兵 ${c.army}  工人 ${c.workers}  建筑 ${c.buildings}  分数 ${c.score}` : "已出局", 116, y + 54, 21, C.text)
+      y += 78
+    })
+    if (s.win) {
+      drawWin(s.win, f.t ?? 0, 40, y + 22, VW - 80, 110, 22)
+      y += 22 + 12 + 110 + 26
+    }
+    // 战况：地图上方放得下几条放几条，留最新的
+    const room = Math.max(0, Math.floor((oy - 14 - y) / 28))
+    for (const ev of (f.events as string[]).slice(-room)) {
+      fitLines(ev, 40, y + 4, 19, 14, VW - 80, 1, C.muted)
+      y += 28
+    }
+    drawField(s, f, ox, oy)
+    // 进度条和变速
+    const by = oy + mapH + 34
+    roundRect(20, by, VW - 40, 8, 4, "rgba(255,255,255,0.1)")
+    roundRect(20, by, Math.max(8, (VW - 40) * (f.progress ?? 0)), 8, 4, C.accent)
+    text(`第 ${f.t ?? 0} tick`, VW - 20, by - 8, 18, C.muted, { align: "right" })
+    if (!f.final) text(f.pace === "quiet" ? "▸▸ 快进" : f.pace === "battle" ? "▶ 大战 2 倍速" : "▶ 交火 4 倍速", 20, by - 8, 18, f.pace === "quiet" ? C.accent : C.text, { bold: true })
+    else {
+      g.globalAlpha = 0.85
+      roundRect(40, oy + mapH / 2 - 60, VW - 80, 120, 16, "#0b1220", C.accent)
+      g.globalAlpha = 1
+      fitLines(s.result, VW / 2, oy + mapH / 2 + 14, 36, 20, VW - 120, 1, C.accent, { bold: true, align: "center" })
+    }
+    void i
+  }
+
   function brandClose(s: Any, i: number): void {
     background()
     const p = ease(i / 20)
@@ -1117,8 +1132,7 @@ export function installVideoPage(): void {
 
   /** 一个场景的画面（横屏的画法；竖屏时先画到 landCanvas 上再拼） */
   function drawScene(s: Any, f: Any | null, i: number, a: number): void {
-    if (s.kind === "brandOpen") brandOpen(s, a)
-    else if (s.kind === "lineup") lineup(s, a, false)
+    if (s.kind === "lineup") lineup(s, a, false)
     else if (s.kind === "rules") rules(s, a)
     else if (s.kind === "player") player(s, a)
     else if (s.kind === "standings") standings(s, a)
@@ -1139,8 +1153,9 @@ export function installVideoPage(): void {
       g.setTransform(1, 0, 0, 1, 0, 0)
       return
     }
-    // 竖屏：先按横屏画到 landCanvas，再拼到竖屏画布上（开场阵容直接按竖屏画）
-    if (s.kind !== "lineup") {
+    // 竖屏：开场阵容和回放直接按竖屏画；别的先按横屏画到 landCanvas，再拼到竖屏画布上
+    const direct = s.kind === "lineup" || s.kind === "replay"
+    if (!direct) {
       g = landG!
       g.setTransform(SCALE, 0, 0, SCALE, 0, 0)
       g.save()
@@ -1153,6 +1168,7 @@ export function installVideoPage(): void {
     g.save()
     vBackground()
     if (s.kind === "lineup") lineup(s, a, true)
+    else if (s.kind === "replay") vReplay(s, f ?? {}, i)
     else vFrame(s, f ?? {}, i)
     g.restore()
     fade(i, s.frames)

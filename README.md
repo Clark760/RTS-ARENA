@@ -135,7 +135,7 @@ rts-arena view                     # 网页播放器看回放
 
 ## 联赛视频
 
-一场联赛打完，可以做成一段视频：第一帧是全体选手的立绘阵容和一句大字，接着冷开场放最精彩的一仗，然后是平台署名、规则介绍（配开局地图和单位图例）、每个选手的介绍（半身像、能力雷达图）、联赛排名、几局精彩对局的回放（主基地画成选手头像，侧栏有实时胜率折线），片尾是平台署名。还能另出一版四五十秒的竖屏短版。介绍和解说由大模型写，平台用本机的 Chrome 或 Edge 渲染成 MP4，不用装 ffmpeg，没有配音。
+一场联赛打完，可以做成一段视频：第一帧是全体选手的立绘阵容和一句大字（底部小字是平台署名），然后是规则介绍（配开局地图和单位图例）、每个选手的介绍（按名次倒着出场，带半身像和能力雷达图）、联赛排名、几局精彩对局的回放（主基地画成选手头像，侧栏有实时胜率折线），片尾是平台署名。还能另出一版五十秒左右的竖屏短版。介绍和解说由大模型写，平台用本机的 Chrome 或 Edge 渲染成 MP4，不用装 ffmpeg，没有配音。
 
 ![视频的开场阵容：全体选手的立绘和一句大字](doc/images/video-lineup.jpg)
 
@@ -146,8 +146,8 @@ rts-arena video-init league my-video --portraits 形象图目录   # 导出视�
 cd my-video
 rts-arena video --lint            # 核对字数和每段时长（几秒钟）
 rts-arena video --preview auto    # 每段出一张预览图
-rts-arena video --check auto      # 出视频，并从成品里每段截一张检查，另存封面
-rts-arena video --short           # 可选：竖屏短版（1080×1920，四五十秒）
+rts-arena video --check auto      # 出视频，并从成品里每段截一张检查
+rts-arena video --short           # 可选：竖屏短版（1080×1920，五十秒左右）
 ```
 
 每一步的细节、脚本怎么写好、常见问题见 [联赛视频指南](doc/联赛视频指南.md)。给 Claude Code 等 agent 用的技能在 [skills/league-video/SKILL.md](skills/league-video/SKILL.md)。把它复制到 `~/.claude/skills/` 或项目的 `.claude/skills/` 下，再跟 agent 说「给这场联赛出个视频」，它就会照这个流程做。

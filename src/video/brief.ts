@@ -140,11 +140,8 @@ export interface VideoBrief {
 }
 
 export interface VideoScript {
-  /**
-   * 开场（D-179）：text 是开场阵容和冷开场上的一句大字（最多 30 字，不写就是"<双方>，谁能赢？"）；
-   * index 是冷开场用哪一局（放这局最大的一仗，不写就是第一局精彩对局）
-   */
-  hook?: { text?: string; index?: number }
+  /** 开场（D-179）：text 是开场阵容（封面）上的一句大字（最多 30 字，不写就是"<人数> 位选手的<规则包>联赛，谁能夺冠？"） */
+  hook?: { text?: string }
   /** 规则介绍：写给没玩过的观众，1～4 句、每句最多 45 字（不写就用规则包的一句话简介） */
   rules?: string[]
   /** 每个选手：name 要和联赛里的名字一样 */
@@ -196,11 +193,8 @@ export function checkScript(s: unknown, series: SeriesFile): string[] {
   str(o.outro, "outro", L.outro)
   if (o.hook !== undefined) {
     const h = o.hook as Record<string, unknown> | null
-    if (!h || typeof h !== "object" || Array.isArray(h)) errs.push("hook 要写成 { \"text\": \"开场的大字\", \"index\": 局号 }，两项都可以不写")
-    else {
-      str(h.text, "hook.text", L.hook)
-      if (h.index !== undefined && !series.results.some((r) => r.index === h.index)) errs.push(`hook.index 要是联赛里的局号（1～${series.results.length}）`)
-    }
+    if (!h || typeof h !== "object" || Array.isArray(h)) errs.push("hook 要写成 { \"text\": \"开场的大字\" }")
+    else str(h.text, "hook.text", L.hook)
   }
   if (o.rules !== undefined) {
     if (!Array.isArray(o.rules) || o.rules.length < 1 || o.rules.length > L.rulesLines) errs.push(`rules 要是 1～${L.rulesLines} 句的数组`)
@@ -296,7 +290,9 @@ export function scriptWarnings(s: unknown, otherRulesets: string[] = []): string
     .map(([where, v]) => `${where} 是粗体，里面的"一"看起来像破折号："${v}"——数量写成阿拉伯数字，或者换个说法`)
   // 不再有标题页、不再展示用户的话（D-177）：老脚本里的这几个字段用不上了
   const gone = (["title", "userText", "theme"] as const).filter((k) => (o as unknown as Record<string, unknown>)[k] !== undefined)
-  if (gone.length) out.push(`${gone.join("、")} 不再使用（视频没有标题页了，片头之后直接是规则介绍），删掉就行`)
+  if (gone.length) out.push(`${gone.join("、")} 不再使用（视频没有标题页了，开场阵容之后直接是规则介绍），删掉就行`)
+  // 冷开场删掉了（D-181）
+  if ((o.hook as Record<string, unknown> | undefined)?.index !== undefined) out.push("hook.index 不再使用（没有冷开场了），删掉就行")
   // 规则页最长 12 秒
   if (Array.isArray(o.rules)) {
     const n = o.rules.reduce((a: number, x) => a + (typeof x === "string" ? [...x].length : 0), 0)
