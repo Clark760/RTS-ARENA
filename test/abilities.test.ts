@@ -1,0 +1,266 @@
+// 技能、光环、被动（D-186）：内核的冷却、目标检查、onCast、光环加成、脱战回血、增益，以及格式检查
+import assert from "node:assert/strict"
+import { test } from "node:test"
+import type { Commands, Entity, GameEvent, View } from "../src/api/bot-api.ts"
+import { runMatch } from "../src/core/match.ts"
+import type { RuleEvent, Ruleset, TypeSpec } from "../src/core/types.ts"
+import { buffedDamage } from "../src/core/world.ts"
+import { checkRulesetData } from "../src/sandbox/rules-check.ts"
+import { STANDARD_TERRAIN } from "../rulesets/common/standard.ts"
+import { fnBot } from "./helpers.ts"
+
+const look = { shape: "circle" as const }
+const TYPES: Record<string, TypeSpec> = {
+  grunt: { kind: "unit", maxHp: 100, moveTicks: 1, sight: 4, attack: { damage: 10, range: 1, cooldown: 2 }, look },
+  chief: {
+    kind: "unit",
+    maxHp: 100,
+    moveTicks: 1,
+    sight: 6,
+    attack: { damage: 1, range: 1, cooldown: 10 },
+    auras: [{ name: "战旗", radius: 3, types: ["grunt"], damagePct: 50, defensePct: 50 }],
+    passives: [{ kind: "regen", name: "养伤", delay: 5, every: 2, amount: 3 }],
+    skills: [
+      { id: "drop", name: "放矿", cooldown: 5, target: "point", range: 3, desc: "在目标格附近放一个矿" },
+      { id: "rage", name: "狂暴", cooldown: 20, desc: "自己伤害翻倍 3 tick" },
+      { id: "nope", name: "不行", cooldown: 5, desc: "规则包总是拒绝" },
+      { id: "smite", name: "惩戒", cooldown: 5, target: "unit", range: 2, desc: "目标掉 7 血" },
+    ],
+    look,
+  },
+  ore: { kind: "resource", resource: "gold", amount: 30, look },
+}
+
+type Spawn = [type: string, owner: number, x: number, y: number]
+
+function mini(spawns: Spawn[], extra: Partial<Ruleset> = {}): Ruleset {
+  return {
+    id: "mini",
+    name: "测试",
+    players: { min: 2, max: 2 },
+    maxTicks: 30,
+    tickRate: 10,
+    decisionInterval: 1,
+    fuel: 100,
+    unitCap: 0,
+    fog: false,
+    resources: ["gold"],
+    terrain: STANDARD_TERRAIN,
+    types: TYPES,
+    setup(ctx) {
+      ctx.setTerrain(Array(6).fill(".".repeat(12)))
+      for (const [type, owner, x, y] of spawns) ctx.spawn(type, owner, x, y)
+    },
+    objectives: () => ({}),
+    result: () => null,
+    timeUp: () => ({ winner: null, reason: "到时间" }),
+    onCast(ctx, c) {
+      if (c.skill === "nope") return "就是不让放"
+      if (c.skill === "drop") return ctx.spawnNear("ore", -1, c.x!, c.y!) === null ? "放不下" : null
+      if (c.skill === "rage") ctx.addBuff(c.unit, { name: "狂暴", damagePct: 100, ticks: 3 })
+      if (c.skill === "smite") ctx.setHp(c.target!, ctx.get(c.target!)!.hp - 7)
+      return null
+    },
+    ...extra,
+  }
+}
+
+function play(rules: Ruleset, p0: (view: View, cmd: Commands) => void, p1: (view: View, cmd: Commands) => void = () => {}) {
+  return runMatch({ ruleset: rules, seed: 1, bots: [{ name: "a", file: "", runner: fnBot(p0) }, { name: "b", file: "", runner: fnBot(p1) }] })
+}
+
+const mine = (v: View, type: string) => v.entities.filter((e) => e.owner === v.me && e.type === type)
+
+test("伤害公式：原伤害 ×（1 + 加成）×（1 − 减伤），四舍五入，原伤害大于 0 时至少 1", () => {
+  assert.equal(buffedDamage(10, 0, 0), 10)
+  assert.equal(buffedDamage(10, 25, 0), 13)
+  assert.equal(buffedDamage(10, 0, 25), 8)
+  assert.equal(buffedDamage(10, 25, 25), 9)
+  assert.equal(buffedDamage(1, 0, 90), 1)
+  assert.equal(buffedDamage(0, 50, 0), 0)
+})
+
+test("光环：范围内自己的兵伤害 +50%、受伤 −50%，bot 两边都看得到 buffs；范围外没有", () => {
+  // P0 的首领在 (0, 0)，战士在 (2, 0)（3 格内）；P1 的战士贴着它在 (3, 0)。P0 还有一个战士在 (8, 5)，离首领太远
+  const replay = play(
+    mini([["chief", 0, 0, 0], ["grunt", 0, 2, 0], ["grunt", 1, 3, 0], ["grunt", 0, 8, 5]], { maxTicks: 1 }),
+    () => {},
+  )
+  const hp = replay.frames[0].hp ?? []
+  const after = new Map<number, number>()
+  for (let i = 0; i < hp.length; i += 2) after.set(hp[i], hp[i + 1])
+  const init = replay.initial.entities
+  const p0near = init.find((e) => e.owner === 0 && e.type === "grunt" && e.x === 2)!
+  const p1 = init.find((e) => e.owner === 1 && e.type === "grunt")!
+  // 同一 tick 互相打：P0 的战士打出 15，P1 的战士只打出 5
+  assert.equal(after.get(p1.id), 85)
+  assert.equal(after.get(p0near.id), 95)
+  // 回放记下增益的名字
+  assert.deepEqual(
+    (replay.frames[0].bf ?? []).find(([id]) => id === p0near.id),
+    [p0near.id, ["战旗"]],
+  )
+
+  // 再打一局看 bot 的视图：自己和对手都看得到 P0 战士身上的 buffs，远处那个没有
+  let ownView: View | null = null
+  let enemyView: View | null = null
+  play(
+    mini([["chief", 0, 0, 0], ["grunt", 0, 2, 0], ["grunt", 1, 3, 0], ["grunt", 0, 8, 5]], { maxTicks: 3 }),
+    (v) => {
+      if (v.tick === 1) ownView = v
+    },
+    (v) => {
+      if (v.tick === 1) enemyView = v
+    },
+  )
+  const near = (v: View) => v.entities.find((e) => e.owner === 0 && e.type === "grunt" && e.x === 2)!
+  assert.deepEqual(near(ownView!).buffs, [{ name: "战旗", damagePct: 50, defensePct: 50 }])
+  assert.deepEqual(near(enemyView!).buffs, [{ name: "战旗", damagePct: 50, defensePct: 50 }])
+  assert.equal(ownView!.entities.find((e) => e.x === 8)!.buffs, undefined)
+  // 首领自己不吃（self 默认 false）
+  assert.equal(mine(ownView!, "chief")[0].buffs, undefined)
+})
+
+test("脱战回血：最后一次挨打 5 tick 以后，每 2 tick 回 3", () => {
+  // P1 的战士贴着首领打两下（第 1、3 tick），第 4 tick 规则包把它移走
+  const replay = play(
+    mini([["chief", 0, 5, 2], ["grunt", 1, 6, 2]], {
+      maxTicks: 12,
+      onTick(ctx) {
+        if (ctx.tick === 4) for (const e of ctx.entities({ owner: 1 })) ctx.remove(e.id)
+      },
+    }),
+    () => {},
+  )
+  const chief = replay.initial.entities.find((e) => e.type === "chief")!
+  const hpAt: number[] = []
+  let hp = chief.hp
+  for (const f of replay.frames) {
+    const h = f.hp ?? []
+    for (let i = 0; i < h.length; i += 2) if (h[i] === chief.id) hp = h[i + 1]
+    hpAt[f.t] = hp
+  }
+  assert.deepEqual(hpAt.slice(1, 12), [90, 90, 80, 80, 80, 80, 80, 83, 83, 86, 86])
+})
+
+test("技能：放成功开始冷却、冷却中被拒、目标超出射程被拒、规则包能拒绝、事件和回放都有记录", () => {
+  const events: GameEvent[] = []
+  const ruleEvents: RuleEvent[] = []
+  let cdAfter: Record<string, number> | undefined
+  const replay = play(
+    mini([["chief", 0, 1, 1], ["grunt", 1, 10, 4]], {
+      maxTicks: 4,
+      onTick(ctx) {
+        ruleEvents.push(...ctx.events.filter((e) => e.kind === "cast"))
+      },
+    }),
+    (v, cmd) => {
+      events.push(...v.events)
+      const c = mine(v, "chief")[0]
+      if (v.tick === 0) {
+        cmd.cast(c, "drop", { x: 3, y: 2 })
+        cmd.cast(c, "drop", { x: 3, y: 2 }) // 同一次调用里第二次：已经在冷却
+        cmd.cast(c, "nope")
+        cmd.cast(c, "fly")
+      }
+      if (v.tick === 1) {
+        cdAfter = c.skillCooldowns
+        cmd.cast(c, "smite", 99999) // 不存在的目标
+        cmd.cast(c, "rage")
+      }
+      if (v.tick === 2) cmd.cast(c, "drop", { x: 9, y: 5 }) // 冷却中，同时也超出射程：先报冷却
+    },
+  )
+  const rejected = events.filter((e) => e.kind === "rejected").map((e) => (e as { reason: string }).reason)
+  assert.ok(rejected.some((r) => /放矿（drop）还在冷却，还要 5 tick/.test(r)), rejected.join("\n"))
+  assert.ok(rejected.includes("就是不让放"))
+  assert.ok(rejected.some((r) => /没有技能 "fly"，有：drop、rage、nope、smite/.test(r)))
+  assert.ok(rejected.some((r) => /看不到目标 #99999/.test(r)))
+  assert.ok(rejected.some((r) => /放矿（drop）还在冷却，还要 3 tick/.test(r)))
+  // 第 1 tick 放成功的放矿冷却 5，结算时减 1；nope 被拒不进冷却
+  assert.deepEqual(cdAfter, { drop: 4, rage: 0, nope: 0, smite: 0 })
+  // 矿放在 (3, 2)
+  assert.ok(replay.frames[0].spawn?.some((e) => e.type === "ore" && e.x === 3 && e.y === 2))
+  // 回放和规则包事件
+  assert.deepEqual(replay.frames[0].casts, [{ u: replay.initial.entities.find((e) => e.type === "chief")!.id, s: "drop", x: 3, y: 2 }])
+  assert.deepEqual(
+    ruleEvents.map((e) => (e as { skill: string }).skill),
+    ["drop", "rage"],
+  )
+})
+
+test("技能：目标超出 range 被拒；增益 addBuff 限时，到期自动去掉", () => {
+  const events: GameEvent[] = []
+  const seen: (Entity["buffs"] | undefined)[] = []
+  play(
+    mini([["chief", 0, 1, 1], ["grunt", 1, 10, 4]], { maxTicks: 6 }),
+    (v, cmd) => {
+      events.push(...v.events)
+      const c = mine(v, "chief")[0]
+      if (v.tick === 0) {
+        cmd.cast(c, "drop", { x: 9, y: 5 })
+        cmd.cast(c, "rage")
+      }
+      seen[v.tick] = c.buffs
+    },
+  )
+  const rejected = events.filter((e) => e.kind === "rejected").map((e) => (e as { reason: string }).reason)
+  assert.ok(rejected.some((r) => /\(9, 5\) 离 #\d+ 12 格，放矿 最远 3 格/.test(r)), rejected.join("\n"))
+  assert.deepEqual(seen[1], [{ name: "狂暴", damagePct: 100, defensePct: 0, ticksLeft: 3 }])
+  assert.deepEqual(seen[3], [{ name: "狂暴", damagePct: 100, defensePct: 0, ticksLeft: 1 }])
+  assert.equal(seen[4], undefined)
+})
+
+test("技能：规则包没导出 onCast 时都被拒", () => {
+  const events: GameEvent[] = []
+  play(
+    mini([["chief", 0, 1, 1], ["grunt", 1, 10, 4]], { maxTicks: 2, onCast: undefined }),
+    (v, cmd) => {
+      events.push(...v.events)
+      if (v.tick === 0) cmd.cast(mine(v, "chief")[0], "rage")
+    },
+  )
+  assert.ok(events.some((e) => e.kind === "rejected" && /规则包没有实现技能的效果（onCast）/.test(e.reason)))
+})
+
+test("格式检查：技能、光环、被动写错会报出来；有技能没导出 onCast 也报", () => {
+  const base = {
+    id: "t",
+    name: "测试",
+    players: { min: 2, max: 2 },
+    maxTicks: 100,
+    tickRate: 10,
+    decisionInterval: 1,
+    fuel: 100,
+    unitCap: 0,
+    fog: false,
+    resources: ["gold"],
+    terrain: { ".": { walkable: true, color: "#000000" } },
+  }
+  const fns = ["setup", "objectives", "result", "timeUp"]
+  const types = {
+    a: {
+      kind: "unit",
+      maxHp: 10,
+      look,
+      skills: [{ id: "X", name: "名字太长太长太长", cooldown: 0, desc: "" }, { id: "go", name: "去", cooldown: 5, desc: "走", target: "point" }],
+      auras: [{ name: "环", affects: "everyone", types: ["nobody"] }],
+      passives: [{ kind: "heal", name: "回" }],
+    },
+  }
+  const errs = checkRulesetData({ ...base, types }, fns).join("\n")
+  for (const want of [
+    /skills\[0\]\.id 要是小写字母开头/,
+    /skills\[0\]\.name 要写 1～6 个字/,
+    /skills\[0\]\.desc 要写 1～80 字/,
+    /skills\[0\]\.cooldown 要是 1～100000/,
+    /skills\[1\]：target 是 point 时要写 range/,
+    /auras\[0\]\.affects 要是 own、allies、enemies/,
+    /auras\[0\]\.types 要是已定义的类型名数组/,
+    /auras\[0\]：damagePct、defensePct 至少写一项/,
+    /passives\[0\] 现在只支持 \{ kind: "regen"/,
+    /a 有技能（skills），要导出 onCast/,
+  ])
+    assert.match(errs, want)
+  assert.doesNotMatch(checkRulesetData({ ...base, types }, [...fns, "onCast"]).join("\n"), /要导出 onCast/)
+})

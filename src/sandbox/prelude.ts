@@ -57,6 +57,16 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
     cancel: function (b) { push({ kind: "cancel", building: idOf(b) }); },
     build: function (u, type, x, y) {
       push({ kind: "build", unit: idOf(u), type: typeof type === "string" ? type : null, x: num(x), y: num(y) });
+    },
+    // 技能（D-186）：目标可以不写、写实体或 id、写 { x, y }
+    cast: function (u, skill, t) {
+      var c = { kind: "cast", unit: idOf(u), skill: typeof skill === "string" ? skill : null };
+      if (typeof t === "number") c.target = t;
+      else if (t !== null && typeof t === "object") {
+        if (typeof t.id === "number") c.target = t.id;
+        else { c.x = num(t.x); c.y = num(t.y); }
+      }
+      push(c);
     }
   });
 

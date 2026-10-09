@@ -18,6 +18,11 @@ export function fnBot(onTick: (view: View, cmd: Commands) => void): BotRunner {
         produce: (b, type) => out.push({ kind: "produce", building: idOf(b), type }),
         cancel: (b) => out.push({ kind: "cancel", building: idOf(b) }),
         build: (u, type, x, y) => out.push({ kind: "build", unit: idOf(u), type, x, y }),
+        cast: (u, skill, t) => {
+          if (t === undefined) out.push({ kind: "cast", unit: idOf(u), skill })
+          else if (typeof t === "number" || "id" in t) out.push({ kind: "cast", unit: idOf(u), skill, target: idOf(t as Entity | number) })
+          else out.push({ kind: "cast", unit: idOf(u), skill, x: t.x, y: t.y })
+        },
       }
       onTick(JSON.parse(viewJson) as View, cmd)
       return { commands: out, logs: [], fuel: 0, ms: 0 }

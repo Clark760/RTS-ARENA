@@ -1,6 +1,6 @@
-// 每 tick 的结算：生产 → 战斗（同时结算）→ 死亡 → 移动（随机先后）→ 建造 → 采集
+// 每 tick 的结算：技能冷却和光环 → 生产 → 战斗（同时结算）→ 死亡 → 被动（回血）→ 移动（随机先后）→ 建造 → 采集
 import { flowStep, UNREACHABLE } from "./nav.ts"
-import { attackable, rectDist, type World } from "./world.ts"
+import { attackable, buffedDamage, rectDist, type World } from "./world.ts"
 import type { EntityState, Rect } from "./types.ts"
 import type { TypeDef } from "../api/bot-api.ts"
 
@@ -16,13 +16,78 @@ const DETOUR_EXPAND = 300
 const SPAWN_RING = 4
 
 export function step(w: World): void {
-  w.events = []
+  // 这一 tick 执行命令时放成功的技能（D-186），规则包在 onTick 里从 events 看得到
+  w.events = w.casts.map((c) => ({ kind: "cast" as const, ...c }))
   w.shots = []
+  if (w.hasSkills || w.hasAuras || w.ruleBuffs.size > 0 || w.buffed.size > 0) abilities(w)
   production(w)
   combat(w)
+  if (w.hasPassives) passives(w)
   movement(w)
   construction(w)
   gathering(w)
+}
+
+// ---------- 技能冷却、增益、光环（D-186） ----------
+
+function abilities(w: World): void {
+  if (w.hasSkills)
+    for (const e of w.ents.values())
+      for (const k in e.skillCooldowns) if (e.skillCooldowns[k] > 0) e.skillCooldowns[k]--
+  // 规则包加的限时增益到期
+  for (const [id, m] of w.ruleBuffs) {
+    for (const [name, b] of m) if (b.until !== null && b.until <= w.tick) m.delete(name)
+    if (m.size === 0) w.ruleBuffs.delete(id)
+  }
+  // 光环：每个带光环的实体，范围内符合条件的实体拿到一份；同名的只算一份（取数值大的）
+  const aura = new Map<number, { name: string; damagePct: number; defensePct: number }[]>()
+  if (w.hasAuras)
+    for (const h of w.ents.values()) {
+      if (h.def.auras.length === 0 || h.construction) continue
+      for (const a of h.def.auras) {
+        const r = a.radius < 0 ? h.def.sight : a.radius
+        for (const o of w.ents.values()) {
+          if (o === h ? !a.self : !auraHits(w, a.affects, h.owner, o.owner)) continue
+          if (!attackable(o) || (a.types.length > 0 && !a.types.includes(o.type)) || rectDist(h, o) > r) continue
+          let list = aura.get(o.id)
+          if (!list) aura.set(o.id, (list = []))
+          const same = list.find((x) => x.name === a.name)
+          if (!same) list.push({ name: a.name, damagePct: a.damagePct, defensePct: a.defensePct })
+          else {
+            same.damagePct = Math.max(same.damagePct, a.damagePct)
+            same.defensePct = Math.max(same.defensePct, a.defensePct)
+          }
+        }
+      }
+    }
+  w.auraOf = aura
+  // 这一 tick 有光环、有规则包增益的，加上一 tick 有增益的（没有了要清掉）
+  for (const id of new Set([...w.buffed, ...aura.keys(), ...w.ruleBuffs.keys()])) {
+    const e = w.ents.get(id)
+    if (e) w.refreshBuffs(e, aura.get(id) ?? [])
+    else w.buffed.delete(id)
+  }
+}
+
+/** 光环给不给 owner 的实体（光环来自 from 的实体） */
+function auraHits(w: World, affects: "own" | "allies" | "enemies", from: number, owner: number): boolean {
+  if (affects === "own") return owner === from
+  if (affects === "allies") return owner === from || w.isAlly(from, owner)
+  return owner !== from && !w.isAlly(from, owner) && (owner >= 0 || from >= 0)
+}
+
+// ---------- 被动（D-186） ----------
+
+/** 脱战回血：delay 个 tick 没出手、没挨打以后，每 every 个 tick 回 amount */
+function passives(w: World): void {
+  for (const e of w.ents.values()) {
+    if (e.def.passives.length === 0 || e.construction || e.hp >= e.def.maxHp) continue
+    for (const p of e.def.passives) {
+      if (p.kind !== "regen") continue
+      const idle = w.tick - e.lastCombat - p.delay
+      if (idle >= 0 && idle % p.every === 0) e.hp = Math.min(e.def.maxHp, e.hp + p.amount)
+    }
+  }
 }
 
 function setIdle(e: EntityState): void {
@@ -134,8 +199,11 @@ function combat(w: World): void {
   for (let i = 0; i < hits.length; i += 2) {
     const a = hits[i]
     const t = hits[i + 1]
-    const dmg = damageOf(a.def.attack!, t.type)
+    // 增益（光环、技能，D-186）：攻击方的伤害加成、挨打方的减伤
+    const dmg = buffedDamage(damageOf(a.def.attack!, t.type), a.dmgPct, t.defPct)
     t.hp -= dmg
+    a.lastCombat = w.tick
+    t.lastCombat = w.tick
     t.lastHitBy = a.owner
     t.lastHitNeutral = a.owner < 0
     w.shots.push(a.id, t.id)

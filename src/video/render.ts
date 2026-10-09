@@ -280,6 +280,9 @@ function typeDetail(t: Replay["types"][string], spec?: TypeSpecs[string], nameOf
   const builds = t.builds ?? spec?.builds ?? []
   const can = [gather ? "采矿" : "", builds.length ? "建造" : ""].filter(Boolean)
   if (can.length) parts.push(can.join("、"))
+  // 技能、光环、被动（D-186）：写名字
+  const ab = [...(t.auras ?? []).map((a) => `光环${a.name}`), ...(t.skills ?? []).map((k) => `技能${k.name}`), ...(t.passives ?? []).map((p) => p.name)]
+  if (ab.length) parts.push(ab.join("、"))
   return parts.join(" · ")
 }
 
@@ -545,12 +548,17 @@ function replayScene(
     }
     lastTick = t
     const ents: number[] = []
+    const auras: number[] = []
+    const buffed: number[] = []
     for (const e of state.ents.values()) {
       const ty = replay.types[e.type]
       if (!ty) continue
       const max = e.st?.maxHp ?? ty.maxHp
       const hp = ty.kind === "resource" || !max ? 100 : Math.max(0, Math.min(100, Math.round((100 * e.hp) / max)))
       ents.push(e.x, e.y, ty.w, ty.h, e.owner, typeNames.indexOf(e.type), hp, e.bp ?? 100)
+      // 光环范围、身上有增益的单位（D-186）
+      if (e.bp === undefined) for (const a of ty.auras ?? []) auras.push(e.x, e.y, ty.w, ty.h, a.radius < 0 ? (e.st?.sight ?? ty.sight ?? 0) : a.radius, e.owner)
+      if (e.bf?.length && ty.kind === "unit") buffed.push(e.x, e.y)
     }
     const counts = seats.map((_, p) => {
       let army = 0
@@ -577,6 +585,8 @@ function replayScene(
       pace: pace.mode(Math.min(i, playFrames - 1)),
       markers: state.markers,
       status: relabelSeats(state.status, seats, false),
+      ...(auras.length ? { auras } : {}),
+      ...(buffed.length ? { buffed } : {}),
     }
   }
   return {

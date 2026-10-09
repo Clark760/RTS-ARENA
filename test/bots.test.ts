@@ -19,6 +19,8 @@ import caravanRaid from "../rulesets/caravan-raid/index.ts"
 import flagRun from "../rulesets/flag-run/index.ts"
 import counterAnnihilation from "../rulesets/counter-annihilation/index.ts"
 import counterFrontier from "../rulesets/counter-frontier/index.ts"
+import regicideAnnihilation from "../rulesets/regicide-annihilation/index.ts"
+import regicideFrontier from "../rulesets/regicide-frontier/index.ts"
 
 const ROOT = join(import.meta.dirname, "..")
 
@@ -28,7 +30,7 @@ const load = async (rules: Ruleset, file: string, p: number) => {
   return { name: file, file, runner: await createBot(c.code, p, { fuel: rules.fuel }) }
 }
 
-for (const rules of [annihilation, koth, harvest, melee, frontier, tech, beacons, wildHerd, caravanRaid, flagRun, counterAnnihilation, counterFrontier] as Ruleset[]) {
+for (const rules of [annihilation, koth, harvest, melee, frontier, tech, beacons, wildHerd, caravanRaid, flagRun, counterAnnihilation, counterFrontier, regicideAnnihilation, regicideFrontier] as Ruleset[]) {
   test(`示例 bot 能通过「${rules.name}」生成的 arena.d.ts 类型检查`, () => {
     const dir = join(ROOT, "rulesets", rules.id, "bots")
     const files = [join(ROOT, "bots", "idle.ts"), ...readdirSync(dir).map((f) => join(dir, f))]

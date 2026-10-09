@@ -26,6 +26,7 @@ function snapOf(e: EntityState, w: World): EntSnap {
   if (e.construction) s.bp = Math.floor((100 * e.construction.done) / e.construction.total)
   const st = statDiff(e.def, w.types[e.type])
   if (st) s.st = st
+  if (e.buffs.length) s.bf = e.buffs.map((b) => b.name)
   return s
 }
 
@@ -61,6 +62,7 @@ export class Recorder {
     const bp: number[] = []
     const owner: number[] = []
     const st: [number, StatDiff | null][] = []
+    const bf: [number, string[] | null][] = []
     for (const e of w.ents.values()) {
       const prev = this.last.get(e.id)
       const cur = snapOf(e, w)
@@ -75,6 +77,7 @@ export class Recorder {
       if (prev.bp !== cur.bp) bp.push(e.id, cur.bp ?? 100)
       if (prev.owner !== cur.owner) owner.push(e.id, cur.owner)
       if ((prev.st || cur.st) && JSON.stringify(prev.st) !== JSON.stringify(cur.st)) st.push([e.id, cur.st ?? null])
+      if ((prev.bf || cur.bf) && (prev.bf ?? []).join("|") !== (cur.bf ?? []).join("|")) bf.push([e.id, cur.bf ?? null])
       this.last.set(e.id, cur)
     }
     const die: number[] = []
@@ -93,6 +96,8 @@ export class Recorder {
     if (bp.length) f.bp = bp
     if (owner.length) f.owner = owner
     if (st.length) f.st = st
+    if (bf.length) f.bf = bf
+    if (w.casts.length) f.casts = w.casts.splice(0).map((c) => ({ u: c.unit, s: c.skill, ...(c.x !== undefined ? { x: c.x, y: c.y } : {}), ...(c.target !== undefined ? { t: c.target } : {}) }))
     const players = playerSnaps(w)
     const pj = JSON.stringify(players)
     if (pj !== this.lastPlayers) {

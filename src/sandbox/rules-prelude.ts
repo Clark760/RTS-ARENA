@@ -60,6 +60,8 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
       if (e.carrying === undefined) e.carrying = null;
       if (e.queue === undefined) e.queue = [];
       if (e.construction === undefined) e.construction = null;
+      if (e.buffs === undefined) e.buffs = [];
+      if (e.skillCooldowns === undefined) e.skillCooldowns = {};
       e.alive = true;
     }
     return list;
@@ -164,7 +166,10 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
     setHp: function (id, hp) { H.setHp(id, hp); entsChanged(); },
     setOwner: function (id, owner) { H.setOwner(id, owner); entsChanged(); },
     setTypeStats: function (p, type, patch) { H.setTypeStats(p, type, stringify(patch === undefined ? null : patch)); entsChanged(); },
-    setStats: function (id, patch) { H.setStats(id, stringify(patch === undefined ? null : patch)); entsChanged(); }
+    setStats: function (id, patch) { H.setStats(id, stringify(patch === undefined ? null : patch)); entsChanged(); },
+    addBuff: function (id, buff) { H.addBuff(id, stringify(buff === undefined ? null : buff)); entsChanged(); },
+    removeBuff: function (id, name) { H.removeBuff(id, String(name)); entsChanged(); },
+    setSkillCooldown: function (id, skill, ticks) { H.setSkillCooldown(id, String(skill), ticks); entsChanged(); }
   });
 
   function errText(e) {
@@ -177,7 +182,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
 
   var R = null;
   var KEYS = ["id", "name", "summary", "players", "teams", "maxTicks", "tickRate", "decisionInterval", "fuel", "unitCap", "fog", "resources", "terrain", "types"];
-  var FNS = ["setup", "onTick", "objectives", "result", "timeUp", "buildCheck"];
+  var FNS = ["setup", "onTick", "objectives", "result", "timeUp", "buildCheck", "onCast"];
 
   G.__rules = {
     bind: function (ns) { R = ns !== null && typeof ns === "object" ? ns["default"] : null; },

@@ -105,6 +105,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
         if (!Array.isArray(list) || list.some((x) => typeof x !== "string" || !names.has(x))) bad(`${at}.${k} 要是已定义的类型名数组`)
         else if (k === "builds" && list.some((x) => (types[x as string] as Obj | undefined)?.kind !== "building")) bad(`${at}.builds 里只能是建筑类型`)
       }
+      checkAbilities(s, at, names, kind, bad)
       if (kind === "resource" && (typeof s.resource !== "string" || !resSet.has(s.resource))) bad(`${at}.resource：资源点要写产出的资源名（在 resources 里）`)
       if (kind !== "resource" && s.resource !== undefined && s.resource !== null) bad(`${at}.resource：只有资源点能写`)
       const look = s.look
@@ -118,7 +119,63 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
   }
 
   for (const fn of ["setup", "objectives", "result", "timeUp"]) if (!callbacks.includes(fn)) bad(`缺少函数 ${fn}(ctx)`)
+  // 技能的效果在 onCast 里实现（D-186），没有的话 bot 放什么技能都会被拒
+  const withSkills = isObj(d.types) ? Object.entries(d.types).filter(([, t]) => isObj(t) && Array.isArray(t.skills) && t.skills.length > 0).map(([k]) => k) : []
+  if (withSkills.length && !callbacks.includes("onCast")) bad(`${withSkills.join("、")} 有技能（skills），要导出 onCast(ctx, cast) 实现技能效果`)
   return errs
+}
+
+/** 技能、光环、被动（D-186） */
+function checkAbilities(s: Obj, at: string, names: Set<string>, kind: string, bad: (msg: string) => void): void {
+  const short = (v: unknown, max: number) => typeof v === "string" && [...v].length >= 1 && [...v].length <= max
+  if (s.skills !== undefined) {
+    if (!Array.isArray(s.skills) || s.skills.length > 8) bad(`${at}.skills 要是数组，最多 8 个`)
+    else {
+      if (kind === "resource" && s.skills.length) bad(`${at}.skills：资源点不能有技能`)
+      const ids = new Set<string>()
+      s.skills.forEach((k, i) => {
+        const w = `${at}.skills[${i}]`
+        if (!isObj(k)) return bad(`${w} 要写成 { id, name, cooldown, desc }`)
+        if (typeof k.id !== "string" || !NAME.test(k.id)) bad(`${w}.id 要是小写字母开头的小写名字（cmd.cast 用它）`)
+        else if (ids.has(k.id)) bad(`${w}.id 和前面的技能重名`)
+        else ids.add(k.id)
+        if (!short(k.name, 6)) bad(`${w}.name 要写 1～6 个字的中文名`)
+        if (!short(k.desc, 80)) bad(`${w}.desc 要写 1～80 字的效果说明（bot 作者看它）`)
+        if (!isInt(k.cooldown, 1, 100_000)) bad(`${w}.cooldown 要是 1～100000 的整数（tick）`)
+        if (k.initialCooldown !== undefined && !isInt(k.initialCooldown, 0, 100_000)) bad(`${w}.initialCooldown 要是 0～100000 的整数`)
+        if (k.target !== undefined && !["none", "point", "unit"].includes(k.target as string)) bad(`${w}.target 要是 none、point、unit 之一`)
+        if (k.range !== undefined && !isInt(k.range, 0, 64)) bad(`${w}.range 要是 0～64 的整数`)
+        if ((k.target === "point" || k.target === "unit") && !isInt(k.range, 1, 64)) bad(`${w}：target 是 ${k.target} 时要写 range（1～64）`)
+      })
+    }
+  }
+  if (s.auras !== undefined) {
+    if (!Array.isArray(s.auras) || s.auras.length > 4) bad(`${at}.auras 要是数组，最多 4 个`)
+    else
+      s.auras.forEach((a, i) => {
+        const w = `${at}.auras[${i}]`
+        if (!isObj(a)) return bad(`${w} 要写成 { name, damagePct, defensePct, ... }`)
+        if (!short(a.name, 6)) bad(`${w}.name 要写 1～6 个字的中文名`)
+        if (a.radius !== undefined && !isInt(a.radius, -1, 32)) bad(`${w}.radius 要是 -1～32 的整数（-1 是等于视野）`)
+        if (a.affects !== undefined && !["own", "allies", "enemies"].includes(a.affects as string)) bad(`${w}.affects 要是 own、allies、enemies 之一`)
+        if (a.types !== undefined && (!Array.isArray(a.types) || a.types.some((t) => typeof t !== "string" || !names.has(t)))) bad(`${w}.types 要是已定义的类型名数组`)
+        if (a.self !== undefined && typeof a.self !== "boolean") bad(`${w}.self 要是 true / false`)
+        if (a.damagePct !== undefined && !isInt(a.damagePct, -100, 1000)) bad(`${w}.damagePct 要是 -100～1000 的整数（百分比）`)
+        if (a.defensePct !== undefined && !isInt(a.defensePct, -1000, 90)) bad(`${w}.defensePct 要是 -1000～90 的整数（百分比）`)
+        if (!a.damagePct && !a.defensePct) bad(`${w}：damagePct、defensePct 至少写一项（不然光环没有效果）`)
+      })
+  }
+  if (s.passives !== undefined) {
+    if (!Array.isArray(s.passives) || s.passives.length > 4) bad(`${at}.passives 要是数组，最多 4 个`)
+    else
+      s.passives.forEach((x, i) => {
+        const w = `${at}.passives[${i}]`
+        if (!isObj(x) || x.kind !== "regen") return bad(`${w} 现在只支持 { kind: "regen", name, delay, every, amount }（脱战回血）`)
+        if (!short(x.name, 6)) bad(`${w}.name 要写 1～6 个字的中文名`)
+        if (!isInt(x.delay, 0, 100_000) || !isInt(x.every, 1, 100_000) || !isInt(x.amount, 1, 100_000)) bad(`${w}：delay ≥ 0、every ≥ 1、amount ≥ 1（整数）`)
+        if (kind === "resource") bad(`${w}：资源点不能有被动`)
+      })
+  }
 }
 
 /** 检查 result / timeUp 的返回值；返回问题说明，没问题返回 null */

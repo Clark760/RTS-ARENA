@@ -94,6 +94,10 @@ export interface ReplayFrame {
   markers: ({ kind: "zone"; x: number; y: number; w: number; h: number; owner: number | null; label?: string; color?: string } | { kind: "label"; x: number; y: number; text: string; owner?: number | null })[]
   /** 规则包的状态栏文字（比分、目标……） */
   status: string
+  /** 光环（D-186）：[x, y, w, h, 半径, 座位] 一组 6 个，地图上画一圈淡淡的菱形 */
+  auras?: number[]
+  /** 身上有增益的单位：[x, y] 一组 2 个，外面描一圈金色 */
+  buffed?: number[]
 }
 
 export function installVideoPage(): void {
@@ -954,6 +958,28 @@ export function installVideoPage(): void {
         if (m.label) text(m.label, ox + m.x * TILE + 3, oy + m.y * TILE - 4, 13, col, { bold: true })
       } else text(m.text, ox + (m.x + 0.5) * TILE, oy + (m.y + 0.5) * TILE, 13, col, { bold: true, align: "center" })
     }
+    // 光环范围：曼哈顿距离的菱形（D-186）
+    const au = (f.auras ?? []) as number[]
+    for (let k = 0; k < au.length; k += 6) {
+      const [x, y, ew, eh, r, seat] = au.slice(k, k + 6)
+      const cx = ox + (x + ew / 2) * TILE
+      const cy = oy + (y + eh / 2) * TILE
+      const R = (r + 0.5) * TILE
+      g.beginPath()
+      g.moveTo(cx, cy - R)
+      g.lineTo(cx + R, cy)
+      g.lineTo(cx, cy + R)
+      g.lineTo(cx - R, cy)
+      g.closePath()
+      g.globalAlpha = 0.08
+      g.fillStyle = colorOf(seat)
+      g.fill()
+      g.globalAlpha = 0.45
+      g.strokeStyle = colorOf(seat)
+      g.lineWidth = 1.2
+      g.stroke()
+      g.globalAlpha = 1
+    }
     const e = f.ents as number[]
     for (let k = 0; k < e.length; k += 8) {
       const [x, y, ew, eh, seat, ti, hp, bp] = e.slice(k, k + 8)
@@ -1043,6 +1069,17 @@ export function installVideoPage(): void {
         g.fillRect(px + 1, py - 4, ((pw - 2) * hp) / 100, 3)
       }
     }
+    // 身上有增益的单位：外面一圈金色（D-186）
+    const bf = (f.buffed ?? []) as number[]
+    g.strokeStyle = "#f2c14e"
+    g.lineWidth = 1.3
+    g.globalAlpha = 0.9
+    for (let k = 0; k < bf.length; k += 2) {
+      g.beginPath()
+      g.arc(ox + (bf[k] + 0.5) * TILE, oy + (bf[k + 1] + 0.5) * TILE, TILE / 2 + 1, 0, Math.PI * 2)
+      g.stroke()
+    }
+    g.globalAlpha = 1
     // 攻击线
     const sh = f.shots as number[]
     g.lineWidth = 1.6

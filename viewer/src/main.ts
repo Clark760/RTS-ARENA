@@ -169,7 +169,9 @@ function updateUI(force = false): void {
         <span class="muted">归属</span><span>${owner}</span><span class="muted">位置</span><span>(${e.x}, ${e.y})</span>
         <span class="muted">生命</span><span>${hp}</span><span class="muted">命令</span><span>${e.ord}</span>${
           e.bp === undefined ? "" : html`<span class="muted">建造</span><span>${e.bp}%（还没建好）</span>`
-        }</div>`.s
+        }${e.bf?.length ? html`<span class="muted">增益</span><span>${e.bf.join("、")}</span>` : ""}${
+          info?.skills?.length ? html`<span class="muted">技能</span><span>${info.skills.map((k) => `${k.name}（冷却 ${k.cooldown}）`).join("、")}</span>` : ""
+        }${info?.auras?.length ? html`<span class="muted">光环</span><span>${info.auras.map((a) => a.name).join("、")}</span>` : ""}</div>`.s
     }
   }
 
@@ -265,6 +267,12 @@ function drawLogs(): void {
       const kind = String(e.msg).startsWith("命令被拒") ? "rej" : "err"
       lines.push(html`<div class="line ${kind}${cls}"><span class="t">${t} P${e.p}</span> ${e.msg}</div>`)
     }
+    // 规则包写的事件、放的技能（D-186）
+    for (const n of f.notes ?? []) {
+      if (logFilter !== null && n.p >= 0 && n.p !== logFilter) continue
+      lines.push(html`<div class="line${cls}"><span class="t">${t}${n.p >= 0 ? ` P${n.p}` : ""}</span> （规则包）${n.text}</div>`)
+    }
+    for (const c of f.casts ?? []) lines.push(html`<div class="line${cls}"><span class="t">${t}</span> #${c.u} 放了技能 ${c.s}</div>`)
   }
   const box = $("logs")
   box.innerHTML = lines.length ? html`${lines.slice(-400)}`.s : '<span class="muted">最近 200 tick 没有日志</span>'

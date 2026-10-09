@@ -51,6 +51,70 @@ export interface TypeDef {
   builds: TypeName[]
   /** 资源点产出的资源；不是资源点为 null */
   resource: ResourceName | null
+  /** 技能（用 cmd.cast 释放，D-186）；没有就是空数组 */
+  skills: SkillDef[]
+  /** 光环：给周围的实体加成（D-186）；没有就是空数组 */
+  auras: AuraDef[]
+  /** 被动：一直生效、不用下命令（D-186）；没有就是空数组 */
+  passives: PassiveDef[]
+}
+
+/** 技能：用 cmd.cast 释放，放完要等 cooldown 个 tick 才能再放（D-186）。效果由规则包定，看 desc 和规则说明 */
+export interface SkillDef {
+  /** 技能名，cmd.cast 用它，比如 "goldmine" */
+  id: string
+  /** 中文名 */
+  name: string
+  /** 放完以后要等多少 tick 才能再放 */
+  cooldown: number
+  /** 开局（或实体刚出现时）要等多少 tick 才能第一次放；0 是马上就能放 */
+  initialCooldown: number
+  /**
+   * 要不要指定目标：none 是不用（cmd.cast(unit, skill)）；point 是指定一格（cmd.cast(unit, skill, { x, y })）；
+   * unit 是指定一个看得见的实体（cmd.cast(unit, skill, target)）
+   */
+  target: "none" | "point" | "unit"
+  /** 目标离释放者最远几格（曼哈顿距离，从占地最近的格子算）；target 是 none 时没有意义 */
+  range: number
+  /** 效果说明 */
+  desc: string
+}
+
+/**
+ * 光环（D-186）：带光环的实体周围 radius 格内、符合条件的实体得到加成，每 tick 重新算，出了范围就没有了。
+ * 同名的光环不叠加（几个领主的同一种光环只算一次），不同名的加成相加
+ */
+export interface AuraDef {
+  /** 中文名 */
+  name: string
+  /** 半径（曼哈顿距离，从占地最近的格子算）；-1 表示等于带光环的实体现在的视野 */
+  radius: number
+  /** 给谁：own 自己的、allies 自己和盟友的、enemies 敌人的 */
+  affects: "own" | "allies" | "enemies"
+  /** 只给这些类型；空数组是所有单位和建筑 */
+  types: TypeName[]
+  /** 带光环的实体自己有没有这份加成 */
+  self: boolean
+  /** 伤害加成（百分比）：25 是打出的伤害 ×1.25，-20 是 ×0.8 */
+  damagePct: number
+  /** 减伤（百分比）：25 是受到的伤害 ×0.75，负数是受到的伤害变多 */
+  defensePct: number
+}
+
+/** 被动（D-186）：一直生效、不用下命令 */
+export type PassiveDef =
+  /** 脱战回血：delay 个 tick 没挨打、也没出手以后，每 every 个 tick 回 amount 生命（不超过上限）；一挨打或出手就重新计时 */
+  { kind: "regen"; name: string; delay: number; every: number; amount: number }
+
+/** 实体身上的一个增益或减益（光环、技能给的，D-186） */
+export interface Buff {
+  name: string
+  /** 伤害加成（百分比） */
+  damagePct: number
+  /** 减伤（百分比） */
+  defensePct: number
+  /** 还剩几 tick；光环给的、一直有效的没有这个字段 */
+  ticksLeft?: number
 }
 
 /** 单位当前在执行的命令。命令会一直执行，直到完成、失效或被新命令替换 */
@@ -98,6 +162,13 @@ export interface Entity {
   queue?: { type: TypeName; ticksLeft: number }[]
   /** 还要几个 tick 才能再攻击，0 表示现在就能打（只有自己的、能攻击的实体有） */
   cooldown?: number
+  /** 每个技能还要几个 tick 才能再放，0 表示现在就能放（只有自己的、有技能的实体有，D-186） */
+  skillCooldowns?: Record<string, number>
+  /**
+   * 身上的增益、减益（光环、技能给的，D-186），看得到这个实体就看得到；没有就没有这个字段。
+   * 打出的伤害 = 原伤害 ×（1 + 攻击方各项 damagePct 之和 / 100）×（1 − 挨打方各项 defensePct 之和 / 100），四舍五入，原伤害大于 0 时至少 1
+   */
+  buffs?: Buff[]
   /**
    * 没建好的建筑才有（谁都看得到）：done 是已完成的工作量，total 是总工作量（就是 buildTicks）。
    * 没建好的建筑不能生产、不能当交货点、不能攻击，但会挡路、能被打。建好后没有这个字段
@@ -127,6 +198,7 @@ export type Command =
   | { kind: "produce"; building: number; type: TypeName }
   | { kind: "cancel"; building: number }
   | { kind: "build"; unit: number; type: TypeName; x: number; y: number }
+  | { kind: "cast"; unit: number; skill: string; x?: number; y?: number; target?: number }
 
 /** 上次调用 onTick 之后发生的、和你有关的事 */
 export type GameEvent =
@@ -209,6 +281,12 @@ export interface Commands {
    * 对自己没建好的同类地基（左上角正好是 (x, y)）下这个命令，就是去接着建或者帮忙，不扣钱。
    */
   build(unit: Entity | number, type: TypeName, x: number, y: number): void
+  /**
+   * 让 unit 释放技能 skill（game.types[类型].skills 里的 id，D-186）。技能的 target 是 none 时不写第三个参数；
+   * point 时写一格 { x, y }；unit 时写一个看得见的实体（或它的 id）。冷却没好、目标不对、规则包不让放的都会被拒（rejected 事件说明原因）。
+   * 放成功就开始冷却（entity.skillCooldowns），效果看规则说明
+   */
+  cast(unit: Entity | number, skill: string, target?: Entity | number | Pos): void
 }
 
 /** bot 文件导出的 onTick 的类型 */

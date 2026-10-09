@@ -586,6 +586,22 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   out.push("")
 
   out.push("## 经济和损失")
+  // 每家放了哪些技能、各几次（D-186）：释放者的归属按回放里的出生和换主人算
+  const castsBy = [...Array(n)].map(() => new Map<string, number>())
+  {
+    const ownerOf = new Map<number, number>()
+    for (const e of replay.initial.entities) ownerOf.set(e.id, e.owner)
+    const skillName = (id: string) => Object.values(replay.types).flatMap((t) => t.skills ?? []).find((k) => k.id === id)?.name ?? id
+    for (const f of replay.frames) {
+      for (const e of f.spawn ?? []) ownerOf.set(e.id, e.owner)
+      const ow = f.owner ?? []
+      for (let i = 0; i < ow.length; i += 2) ownerOf.set(ow[i], ow[i + 1])
+      for (const c of f.casts ?? []) {
+        const p = ownerOf.get(c.u)
+        if (p !== undefined && p >= 0 && p < n) castsBy[p].set(skillName(c.s), (castsBy[p].get(skillName(c.s)) ?? 0) + 1)
+      }
+    }
+  }
   const after = samples.slice(1)
   const incomeOf: number[] = []
   for (let p = 0; p < n; p++) incomeOf[p] = sum(samples[samples.length - 1].players[p].res) - sum(initialRes[p]) + spentTotal[p]
@@ -606,6 +622,8 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       .map((k) => `${k} ${Math.round(after.reduce((a, smp) => a + (smp.players[p].res[k] ?? 0), 0) / Math.max(1, after.length))}`)
       .join(" ")
     out.push(`${who0(p)}：采集约 ${income}（估算：结束时剩的 − 开局的 + 造东西花掉的），花掉 ${spentText}，抽样时平均手上留着 ${bank}；整局损失 ${countList(lost)}；整局击杀 ${countList(killed)}`)
+    if (castsBy[p].size) out.push(`  放技能：${[...castsBy[p]].map(([k, v]) => `${k} ×${v}`).join("、")}`)
+    else if (Object.values(replay.types).some((t) => t.skills?.length)) out.push("  放技能：一次都没放（规则包里有技能，见说明书单位表下面）")
     // 出兵顺序（连着出同一种的合成一个，比如 spearman×2）：看对手按什么规律出兵
     if (armyOrder[p].length) {
       const runs: string[] = []

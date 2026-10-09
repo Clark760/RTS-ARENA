@@ -149,9 +149,49 @@ function applyOne(w: World, p: number, c: unknown): string | null {
       resetOrder(e, { kind: "build", target: w.placeSite(type, p, x, y).id })
       return null
     }
+    case "cast":
+      return castSkill(w, p, e, cmd)
     default:
       return `未知命令 "${String(kind)}"`
   }
+}
+
+/**
+ * 放技能（D-186）：平台检查技能、冷却、目标，效果交给规则包的 onCast；onCast 返回 null 才算放成功、开始冷却。
+ * 看不见的目标和不存在的目标用同一句话拒绝（不泄露迷雾里的东西）
+ */
+function castSkill(w: World, p: number, e: EntityState, cmd: Record<string, unknown>): string | null {
+  const id = cmd.skill
+  const skills = e.def.skills
+  if (skills.length === 0) return `#${e.id}（${e.type}）没有技能`
+  const sk = skills.find((k) => k.id === id)
+  if (!sk) return `#${e.id}（${e.type}）没有技能 "${String(id)}"，有：${skills.map((k) => k.id).join("、")}`
+  if (e.construction) return `#${e.id}（${e.type}）还没建好`
+  const cd = e.skillCooldowns[sk.id] ?? 0
+  if (cd > 0) return `${sk.name}（${sk.id}）还在冷却，还要 ${cd} tick`
+  const info: { player: number; unit: number; skill: string; x?: number; y?: number; target?: number } = { player: p, unit: e.id, skill: sk.id }
+  if (sk.target === "point") {
+    const err = checkXY(w, cmd.x, cmd.y)
+    if (err) return `${sk.name} 要指定一格：cmd.cast(unit, "${sk.id}", { x, y })（${err}）`
+    const d = w.dist(e, { x: cmd.x as number, y: cmd.y as number, w: 1, h: 1 })
+    if (d > sk.range) return `(${cmd.x}, ${cmd.y}) 离 #${e.id} ${d} 格，${sk.name} 最远 ${sk.range} 格`
+    info.x = cmd.x as number
+    info.y = cmd.y as number
+  } else if (sk.target === "unit") {
+    if (!isInt(cmd.target)) return `${sk.name} 要指定目标：cmd.cast(unit, "${sk.id}", 目标实体)`
+    const t = w.ents.get(cmd.target)
+    if (!t || !w.visibleTo(p, t)) return `看不到目标 #${cmd.target}`
+    const d = w.dist(e, t)
+    if (d > sk.range) return `#${t.id} 离 #${e.id} ${d} 格，${sk.name} 最远 ${sk.range} 格`
+    info.target = t.id
+  }
+  if (!w.rules.onCast) return `规则包没有实现技能的效果（onCast），${sk.name} 放不了`
+  const veto = w.rules.onCast(w, info)
+  if (veto) return veto
+  // onCast 里实体可能已经没了（比如技能是自爆）
+  if (e.alive) e.skillCooldowns[sk.id] = sk.cooldown
+  w.casts.push(info)
+  return null
 }
 
 /** 扣造价；不够返回原因、一分不扣 */

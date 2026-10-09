@@ -112,7 +112,46 @@ export function unitTable(rules: Ruleset): string {
     const names = [...buildable].map((n) => "`" + n + "`").join("、")
     rows.push("", `能被建造的建筑（${names}）的「建造工作量」：一个工人贴着地基每 tick 干 1，几个工人一起建按人数加快。`)
   }
+  const abilities = abilityText(defs.map(({ d }) => d))
+  if (abilities) rows.push("", abilities)
   return rows.join("\n")
+}
+
+const pct = (n: number) => (n > 0 ? `+${n}%` : `${n}%`)
+
+/** 技能、光环、被动（D-186）：单位表下面逐个类型列出来 */
+export function abilityText(defs: ReturnType<typeof resolveType>[]): string {
+  const lines: string[] = []
+  const code = (s: string) => "`" + s + "`"
+  for (const d of defs) {
+    for (const k of d.skills) {
+      const how =
+        k.target === "none"
+          ? `cmd.cast(${d.name}, "${k.id}")`
+          : k.target === "point"
+            ? `cmd.cast(${d.name}, "${k.id}", { x, y })`
+            : `cmd.cast(${d.name}, "${k.id}", 目标)`
+      const range = k.target === "none" ? "" : `，目标最远 ${k.range} 格`
+      const first = k.initialCooldown ? `，开局要等 ${k.initialCooldown} tick 才能第一次放` : "，开局就能放"
+      lines.push(`- ${code(d.name)} 的技能「${k.name}」（${code(k.id)}）：${k.desc}。用 ${code(how)} 释放${range}，冷却 ${k.cooldown} tick${first}。`)
+    }
+    for (const a of d.auras) {
+      const who = a.affects === "own" ? "自己的" : a.affects === "allies" ? "自己和盟友的" : "敌方的"
+      const types = a.types.length ? a.types.map(code).join("、") : "单位和建筑"
+      const fx = [a.damagePct ? `打出的伤害 ${pct(a.damagePct)}` : "", a.defensePct ? `受到的伤害 ${pct(-a.defensePct)}` : ""].filter(Boolean).join("、")
+      lines.push(`- ${code(d.name)} 的光环「${a.name}」：${a.radius < 0 ? "视野" : `${a.radius} 格`}内${who}${types}${a.self ? "（含它自己）" : ""}${fx}。`)
+    }
+    for (const x of d.passives)
+      if (x.kind === "regen") lines.push(`- ${code(d.name)} 的被动「${x.name}」：${x.delay} tick 没出手、也没挨打以后，每 ${x.every} tick 回 ${x.amount} 生命（一出手或挨打就重新计时）。`)
+  }
+  if (lines.length === 0) return ""
+  return [
+    `**技能、光环、被动**（数值在 ${code("game.types[类型]")} 的 ${code("skills")}、${code("auras")}、${code("passives")}）：`,
+    "",
+    ...lines,
+    "",
+    `技能的冷却在自己实体的 ${code("skillCooldowns")}（0 是现在就能放）；光环、技能给的加成在实体的 ${code("buffs")} 里，看得见这个实体就看得见。打出的伤害 = 原伤害 ×（1 + 攻击方伤害加成）×（1 − 挨打方减伤），四舍五入，原伤害大于 0 时至少 1。同名的光环不叠加。`,
+  ].join("\n")
 }
 
 /**

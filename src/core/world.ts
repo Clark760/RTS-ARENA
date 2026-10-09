@@ -6,6 +6,8 @@ import { PathFinder } from "./path.ts"
 import { markSight, rectSeen } from "./vision.ts"
 import { Mulberry32, mixSeed } from "./rng.ts"
 import type {
+  BuffSpec,
+  CastInfo,
   EntityFilter,
   EntityState,
   Marker,
@@ -43,7 +45,28 @@ export function resolveType(name: string, s: TypeSpec): TypeDef {
     produces: s.produces ?? [],
     builds: s.kind === "unit" ? (s.builds ?? []) : [],
     resource: s.resource ?? null,
+    skills: (s.skills ?? []).map((k) => ({ id: k.id, name: k.name, cooldown: k.cooldown, initialCooldown: k.initialCooldown ?? 0, target: k.target ?? "none", range: k.range ?? 0, desc: k.desc })),
+    auras: (s.auras ?? []).map((a) => ({
+      name: a.name,
+      radius: a.radius ?? -1,
+      affects: a.affects ?? "own",
+      types: a.types ?? [],
+      self: a.self ?? false,
+      damagePct: a.damagePct ?? 0,
+      defensePct: a.defensePct ?? 0,
+    })),
+    passives: (s.passives ?? []).map((x) => ({ ...x })),
   }
+}
+
+/** 增益合计的上下限：伤害最多减到 0，减伤最多 90%（不会无敌） */
+export const DMG_PCT_MIN = -100
+export const DEF_PCT_MAX = 90
+
+/** 增益之后一次攻击的伤害（D-186）：原伤害 ×（1 + 伤害加成）×（1 − 减伤），四舍五入；原伤害大于 0 时至少 1 */
+export function buffedDamage(base: number, dmgPct: number, defPct: number): number {
+  if (base <= 0 || (dmgPct === 0 && defPct === 0)) return base
+  return Math.max(1, Math.round((base * (100 + dmgPct) * (100 - defPct)) / 10_000))
 }
 
 /** 两个矩形之间的曼哈顿距离（重叠为 0，贴着为 1） */
@@ -190,6 +213,19 @@ export class World implements SetupContext, RuleContext {
   /** 按 "玩家|类型" 算好的数值（setTypeStats 改了就作废） */
   private defCache = new Map<string, TypeDef>()
 
+  // ---------- 技能、光环、被动（D-186） ----------
+  /** 规则包 addBuff 加的增益：实体 id → 名字 → 数值和到期的 tick（null 是一直有效） */
+  readonly ruleBuffs = new Map<number, Map<string, { damagePct: number; defensePct: number; until: number | null }>>()
+  /** 有没有带光环的类型（没有就不用每 tick 算光环） */
+  readonly hasAuras: boolean
+  /** 有没有带技能或被动的类型 */
+  readonly hasSkills: boolean
+  readonly hasPassives: boolean
+  /** 这一 tick 放成功的技能（回放、规则包的 cast 事件用；记下回放后清空） */
+  casts: CastInfo[] = []
+  /** 上一 tick 身上有增益的实体（这一 tick 没有了要清掉） */
+  buffed = new Set<number>()
+
   constructor(rules: Ruleset, names: string[], seed: number, teams?: number[]) {
     this.rules = rules
     this.seed = seed
@@ -203,6 +239,10 @@ export class World implements SetupContext, RuleContext {
     for (const d of Object.values(this.types))
       for (const b of d.builds)
         if (this.types[b]?.kind !== "building") throw new Error(`规则包 ${rules.id}：${d.name} 的 builds 里 "${b}" 不是建筑类型`)
+    const defs = Object.values(this.types)
+    this.hasAuras = defs.some((d) => d.auras.length > 0)
+    this.hasSkills = defs.some((d) => d.skills.length > 0)
+    this.hasPassives = defs.some((d) => d.passives.length > 0)
     this.players = names.map((name, id) => ({
       id,
       name,
@@ -313,6 +353,11 @@ export class World implements SetupContext, RuleContext {
       stuck: 0,
       want: -1,
       alive: true,
+      buffs: [],
+      skillCooldowns: Object.fromEntries(def.skills.map((k) => [k.id, k.initialCooldown])),
+      dmgPct: 0,
+      defPct: 0,
+      lastCombat: -1_000_000,
     }
     this.ents.set(e.id, e)
     this.occupy(e, e.id)
@@ -359,6 +404,7 @@ export class World implements SetupContext, RuleContext {
     this.occupy(e, 0)
     this.ents.delete(e.id)
     this.entPatches.delete(e.id)
+    this.ruleBuffs.delete(e.id)
     if (removed) this.removed.add(e.id)
     const flags = { ...(e.construction ? { unfinished: true as const } : {}), ...(removed ? { removed: true as const } : {}) }
     this.events.push({ kind: "died", id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, killer, ...flags, ...(byNeutral ? { byNeutral: true as const } : {}) })
@@ -700,6 +746,62 @@ export class World implements SetupContext, RuleContext {
 
   eliminate(player: number): void {
     this.players[player].alive = false
+  }
+
+  addBuff(id: number, buff: BuffSpec): void {
+    const e = this.mustGet(id, "addBuff")
+    if (!attackable(e)) throw new Error(`addBuff：#${id}（${e.type}）是资源点或无敌的，不能加增益`)
+    if (buff === null || typeof buff !== "object") throw new Error("addBuff：增益要写成 { name, damagePct, defensePct, ticks }")
+    const name = buff.name
+    if (typeof name !== "string" || name.length === 0 || [...name].length > 12) throw new Error("addBuff：name 要是 1～12 字的字符串")
+    const int = (v: unknown, what: string, min: number, max: number): number => {
+      if (v === undefined) return 0
+      if (!Number.isInteger(v) || (v as number) < min || (v as number) > max) throw new Error(`addBuff：${what} 要是 ${min}～${max} 的整数（现在是 ${JSON.stringify(v)}）`)
+      return v as number
+    }
+    const damagePct = int(buff.damagePct, "damagePct", -100, 1000)
+    const defensePct = int(buff.defensePct, "defensePct", -1000, DEF_PCT_MAX)
+    const ticks = buff.ticks === undefined ? null : int(buff.ticks, "ticks", 1, 1_000_000)
+    let m = this.ruleBuffs.get(id)
+    if (!m) this.ruleBuffs.set(id, (m = new Map()))
+    m.set(name, { damagePct, defensePct, until: ticks === null ? null : this.tick + ticks })
+    this.refreshBuffs(e, this.auraOf.get(id) ?? [])
+  }
+
+  removeBuff(id: number, name: string): void {
+    const e = this.mustGet(id, "removeBuff")
+    const m = this.ruleBuffs.get(id)
+    if (!m || !m.delete(String(name))) return
+    if (m.size === 0) this.ruleBuffs.delete(id)
+    this.refreshBuffs(e, this.auraOf.get(id) ?? [])
+  }
+
+  setSkillCooldown(id: number, skill: string, ticks: number): void {
+    const e = this.mustGet(id, "setSkillCooldown")
+    if (!(skill in e.skillCooldowns)) throw new Error(`setSkillCooldown：#${id}（${e.type}）没有技能 "${skill}"${e.def.skills.length ? `（有：${e.def.skills.map((k) => k.id).join("、")}）` : ""}`)
+    if (!Number.isInteger(ticks) || ticks < 0 || ticks > 1_000_000) throw new Error("setSkillCooldown：ticks 要是 0～1000000 的整数")
+    e.skillCooldowns[skill] = ticks
+  }
+
+  /** 这一 tick 光环给每个实体的加成（实体 id → 光环名和数值），sim 每 tick 开头算 */
+  auraOf = new Map<number, { name: string; damagePct: number; defensePct: number }[]>()
+
+  /** 合并光环和规则包的增益，算出 buffs 和合计的加成 */
+  refreshBuffs(e: EntityState, aura: { name: string; damagePct: number; defensePct: number }[]): void {
+    const list: EntityState["buffs"] = aura.map((a) => ({ ...a, ticksLeft: null }))
+    const rb = this.ruleBuffs.get(e.id)
+    if (rb) for (const [name, b] of rb) list.push({ name, damagePct: b.damagePct, defensePct: b.defensePct, ticksLeft: b.until === null ? null : Math.max(0, b.until - this.tick) })
+    e.buffs = list
+    let dmg = 0
+    let def = 0
+    for (const b of list) {
+      dmg += b.damagePct
+      def += b.defensePct
+    }
+    e.dmgPct = Math.max(DMG_PCT_MIN, dmg)
+    e.defPct = Math.min(DEF_PCT_MAX, def)
+    if (list.length) this.buffed.add(e.id)
+    else this.buffed.delete(e.id)
   }
 
   setMarkers(markers: Marker[]): void {

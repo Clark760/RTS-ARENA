@@ -77,6 +77,9 @@ function entJson(e: RuleEntity): Record<string, unknown> {
   if (e.construction) o.construction = e.construction
   // 局中改过数值的实体（D-153）：带上现在的数值，沙箱里不按类型补
   if (PATCHED.has(e.def)) o.def = e.def
+  // 增益和技能冷却（D-186）
+  if (e.buffs.length) o.buffs = e.buffs
+  if (Object.keys(e.skillCooldowns).length) o.skillCooldowns = e.skillCooldowns
   return o
 }
 
@@ -481,6 +484,18 @@ class RulesBox {
         w().setStats(int(id, "id"), json(h, "数值", 1000) as never)
         return undefined
       },
+      addBuff: (id, h) => {
+        w().addBuff(int(id, "id"), json(h, "增益", 1000) as never)
+        return undefined
+      },
+      removeBuff: (id, name) => {
+        w().removeBuff(int(id, "id"), str(name, "增益名", 64))
+        return undefined
+      },
+      setSkillCooldown: (id, skill, ticks) => {
+        w().setSkillCooldown(int(id, "id"), str(skill, "技能名", 64), int(ticks, "ticks"))
+        return undefined
+      },
     }
   }
 }
@@ -556,6 +571,14 @@ export async function loadSandboxedRuleset(dir: string, opts: { onLog?: (tick: n
       ? (ctx, player, type, x, y) => {
           const v = box.call(ctx as Ctx, "buildCheck", [player, type, x, y], RULES_LIMITS.objectivesFuel, "command")
           if (v !== null && typeof v !== "string") throw new Error(`规则包「${d.name}」的 buildCheck 要返回 null（允许）或字符串（拒绝原因）`)
+          return v === null || v === "" ? null : clip(v, 200)
+        }
+      : undefined,
+    // 技能（D-186）：和 buildCheck 一样是在执行玩家命令的时候调
+    onCast: desc.f.includes("onCast")
+      ? (ctx, cast) => {
+          const v = box.call(ctx as Ctx, "onCast", [cast], RULES_LIMITS.tickFuel, "command")
+          if (v !== null && typeof v !== "string") throw new Error(`规则包「${d.name}」的 onCast 要返回 null（放成功）或字符串（拒绝原因）`)
           return v === null || v === "" ? null : clip(v, 200)
         }
       : undefined,

@@ -1,5 +1,5 @@
 // 内核的数据结构：规则包接口、实体状态、回放格式、bot 运行器接口
-import type { GameEvent, Order, TypeDef } from "../api/bot-api.ts"
+import type { AuraDef, GameEvent, Order, PassiveDef, SkillDef, TypeDef } from "../api/bot-api.ts"
 
 // ---------- 规则包 ----------
 
@@ -53,7 +53,43 @@ export interface TypeSpec {
   resource?: string | null
   /** 资源点默认储量（spawn 时可以另给） */
   amount?: number
+  /** 技能（D-186）：bot 用 cast 命令释放，平台管冷却和目标检查，效果在规则包的 onCast 里实现 */
+  skills?: SkillSpec[]
+  /** 光环（D-186）：平台每 tick 算，给周围的实体加伤害、减伤 */
+  auras?: AuraSpec[]
+  /** 被动（D-186）：平台实现，比如脱战回血 */
+  passives?: PassiveDef[]
   look: Look
+}
+
+/** 规则包写的技能：id、name、cooldown、desc 必写，其余有默认值（见 SkillDef） */
+export type SkillSpec = Pick<SkillDef, "id" | "name" | "cooldown" | "desc"> & Partial<Pick<SkillDef, "initialCooldown" | "target" | "range">>
+
+/** 规则包写的光环：name 必写；radius 默认 -1（等于视野）、affects 默认 own、types 默认全部、self 默认 false、两项加成默认 0 */
+export type AuraSpec = Pick<AuraDef, "name"> & Partial<Omit<AuraDef, "name">>
+
+/** onCast 收到的：谁、用哪个实体、放了什么技能、目标（平台已经检查过） */
+export interface CastInfo {
+  player: number
+  unit: number
+  skill: string
+  /** target 是 point 时的目标格 */
+  x?: number
+  y?: number
+  /** target 是 unit 时的目标实体 id */
+  target?: number
+}
+
+/** ctx.addBuff 加的增益或减益 */
+export interface BuffSpec {
+  /** 名字（同一个实体上同名的会被替换），最多 12 字 */
+  name: string
+  /** 伤害加成（百分比，-100～1000） */
+  damagePct?: number
+  /** 减伤（百分比，-1000～90） */
+  defensePct?: number
+  /** 持续几 tick；不写是一直有效，直到 removeBuff 或实体死掉 */
+  ticks?: number
 }
 
 export interface TerrainSpec {
@@ -112,6 +148,8 @@ export type RuleEvent =
   | { kind: "deposit"; player: number; resource: string; amount: number; by: number }
   /** 工人建造的建筑建好了（放下地基时是 created） */
   | { kind: "built"; id: number; type: string; owner: number }
+  /** 玩家放了技能（onCast 返回 null 之后，D-186） */
+  | ({ kind: "cast" } & CastInfo)
 
 /** setup 阶段能用的接口 */
 export interface SetupContext {
@@ -204,6 +242,15 @@ export interface RuleContext {
   setTypeStats(player: number, type: string, patch: StatPatch | null): void
   /** 改单个实体（在 setTypeStats 的结果上再改，比如光环、站在某种地形上）；同样合并，null 是去掉这个实体单独的改动 */
   setStats(id: number, patch: StatPatch | null): void
+  /**
+   * 给实体加一个增益或减益（技能效果用，D-186）：加伤害、减伤，可以限时。同一个实体上同名的会被替换。
+   * 和光环给的一起算进伤害（见 bot 文档的 Entity.buffs）；bot、回放、视频都看得到
+   */
+  addBuff(id: number, buff: BuffSpec): void
+  /** 去掉实体身上 addBuff 加的同名增益（光环给的去不掉，出了范围自然没有） */
+  removeBuff(id: number, name: string): void
+  /** 改实体某个技能的冷却：还要等 ticks 个 tick 才能再放（0 是马上能放） */
+  setSkillCooldown(id: number, skill: string, ticks: number): void
   setMarkers(markers: Marker[]): void
   /** 回放顶部显示的一行状态文字 */
   setStatus(text: string): void
@@ -256,6 +303,12 @@ export interface Ruleset {
    * （会原样告诉 bot）。比如"烽火台只能建在台址里"。bot 的 canBuild 不知道这条规则，要在 RULES.md 里写清楚
    */
   buildCheck?(ctx: RuleContext, player: number, type: string, x: number, y: number): string | null
+  /**
+   * 玩家用 cast 释放技能时调用（D-186）。平台已经检查完：实体是他的、有这个技能、冷却好了、目标符合技能的 target 和 range。
+   * 在这里实现技能的效果（spawnNear 刷东西、addBuff、setHp……）；返回 null 是放成功（开始冷却），返回字符串是拒绝原因（不进冷却，原样告诉 bot）。
+   * 类型里写了 skills 却没写 onCast 的话，所有技能都会被拒
+   */
+  onCast?(ctx: RuleContext, cast: CastInfo): string | null
   /** 平台内部用：一局结束后调用（沙箱里的规则包在这里释放这一局的沙箱），规则包作者不用写 */
   release?(): void
 }
@@ -292,6 +345,10 @@ export interface RuleEntity extends Rect {
   /** 没建好的建筑：已完成和总工作量；建好的、规则包直接放的都是 null */
   construction: { done: number; total: number } | null
   alive: boolean
+  /** 身上的增益、减益（光环、addBuff 给的，D-186）；ticksLeft 是 null 表示一直有效 */
+  buffs: { name: string; damagePct: number; defensePct: number; ticksLeft: number | null }[]
+  /** 每个技能还要几 tick 才能再放（没有技能就是空对象） */
+  skillCooldowns: Record<string, number>
 }
 
 /** 规则包看到的玩家 */
@@ -321,6 +378,11 @@ export interface EntityState extends RuleEntity {
   stuck: number
   /** 上次被挡住时想走进的格子（-1 表示没有）；两个自己人互相想进对方的格就交换位置 */
   want: number
+  /** 所有增益合计的伤害加成、减伤（百分比，已限幅），战斗用 */
+  dmgPct: number
+  defPct: number
+  /** 上一次出手或挨打的 tick（脱战回血用） */
+  lastCombat: number
 }
 
 export interface PlayerState extends RulePlayer {
@@ -366,6 +428,8 @@ export interface EntSnap {
   bp?: number
   /** 被规则包改过的数值（和回放 types 里不一样的项，D-153）；没改过就没有 */
   st?: StatDiff
+  /** 身上的增益、减益的名字（D-186）；没有就没有 */
+  bf?: string[]
 }
 
 /** 实体和它类型原值不一样的数值（bot 视图的 stats、回放的 st） */
@@ -412,6 +476,10 @@ export interface Frame {
   st?: [number, StatDiff | null][]
   /** [id, 建造进度百分比, ...]；100 表示建好了 */
   bp?: number[]
+  /** [id, 身上增益的名字（null 是没有了）]：增益有变化的实体（D-186） */
+  bf?: [number, string[] | null][]
+  /** 这一 tick 放的技能（D-186）：u 是释放者、s 是技能 id，x、y、t 是目标 */
+  casts?: { u: number; s: string; x?: number; y?: number; t?: number }[]
   players?: PlayerSnap[]
   markers?: Marker[]
   status?: string
@@ -446,7 +514,7 @@ export interface Replay {
   /** walkable：每种地形能不能走（D-167 起记下，战报算矿旁边站得下几个用） */
   map: { width: number; height: number; terrain: string[]; colors: Record<string, string>; walkable?: Record<string, boolean> }
   /** sight 是视野半径、cost 是造价、worker 表示能采集或建造（老回放没有）；按视野看回放、战报用 */
-  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; worker?: boolean; /** D-145 起记下（vs 是克制倍数，D-166） */ attack?: { damage: number; range: number; cooldown: number; vs?: Partial<Record<string, number>> }; /** D-148 起记下：能不能采集、能建什么 */ gather?: boolean; builds?: string[]; /** D-167 起记下：生产用时、能生产什么（战报算兵营利用率） */ buildTicks?: number; produces?: string[]; look: Look }>
+  types: Record<string, { kind: TypeDef["kind"]; w: number; h: number; maxHp: number; moveTicks: number; sight?: number; cost?: TypeDef["cost"]; worker?: boolean; /** D-145 起记下（vs 是克制倍数，D-166） */ attack?: { damage: number; range: number; cooldown: number; vs?: Partial<Record<string, number>> }; /** D-148 起记下：能不能采集、能建什么 */ gather?: boolean; builds?: string[]; /** D-167 起记下：生产用时、能生产什么（战报算兵营利用率） */ buildTicks?: number; produces?: string[]; /** D-186 起记下（有才写）：技能、光环、被动 */ skills?: SkillDef[]; auras?: AuraDef[]; passives?: PassiveDef[]; look: Look }>
   /** 有没有战争迷雾（老回放没有） */
   fog?: boolean
   initial: Snapshot

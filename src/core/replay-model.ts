@@ -19,6 +19,8 @@ export interface Delta {
   shots: number[]
   /** 换了主人的实体（from 是原来的主人） */
   owned: { id: number; from: number }[]
+  /** 这一 tick 放的技能（D-186） */
+  casts: NonNullable<Frame["casts"]>
 }
 
 function clone(s: State): State {
@@ -66,7 +68,7 @@ export class ReplayModel {
 
 /** 把一帧应用到局面上（原地修改），返回变化 */
 export function applyFrame(s: State, f: Frame): Delta {
-  const d: Delta = { moved: [], spawned: [], died: [], shots: f.shots ?? [], owned: [] }
+  const d: Delta = { moved: [], spawned: [], died: [], shots: f.shots ?? [], owned: [], casts: f.casts ?? [] }
   for (const e of f.spawn ?? []) {
     s.ents.set(e.id, { ...e })
     d.spawned.push(e.id)
@@ -100,6 +102,12 @@ export function applyFrame(s: State, f: Frame): Delta {
     if (!e) continue
     if (st) e.st = st
     else delete e.st
+  }
+  for (const [id, bf] of f.bf ?? []) {
+    const e = s.ents.get(id)
+    if (!e) continue
+    if (bf) e.bf = bf
+    else delete e.bf
   }
   const bp = f.bp ?? []
   for (let i = 0; i < bp.length; i += 2) {

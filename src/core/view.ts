@@ -19,11 +19,14 @@ export function buildView(w: World, p: number): View {
       if (Object.keys(rest).length) v.stats = rest
     }
     if (e.construction) v.construction = { ...e.construction }
+    // 增益、减益（D-186）：看得到实体就看得到
+    if (e.buffs.length) v.buffs = e.buffs.map((b) => (b.ticksLeft === null ? { name: b.name, damagePct: b.damagePct, defensePct: b.defensePct } : { name: b.name, damagePct: b.damagePct, defensePct: b.defensePct, ticksLeft: b.ticksLeft }))
     if (e.owner === p) {
       v.order = copyOrder(e.order)
       if (e.carrying) v.carrying = { ...e.carrying }
       if (e.def.produces.length > 0) v.queue = e.queue.map((q) => ({ ...q }))
       if (e.def.attack) v.cooldown = e.attackCd
+      if (e.def.skills.length > 0) v.skillCooldowns = { ...e.skillCooldowns }
     }
     entities.push(v)
   }

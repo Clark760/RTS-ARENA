@@ -20,6 +20,10 @@ interface EntView {
   root: Container
   body: Graphics
   bar: Graphics
+  /** 身上有增益时外面的金色圈（D-186） */
+  ring: Graphics
+  /** 上次画的增益名字 */
+  lastBf: string
   w: number
   h: number
   /** 动画：从 (fx, fy) 到 (x, y)，从 start tick 开始，持续 dur tick */
@@ -47,6 +51,11 @@ export class Renderer {
   private markerLayer = new Container()
   private entLayer = new Container()
   private shotLayer = new Graphics()
+  /** 光环范围（菱形，曼哈顿距离）和放技能的闪光（D-186） */
+  private auraLayer = new Graphics()
+  private castLayer = new Graphics()
+  private casts: { u: number; s: string }[] = []
+  private castTick = 0
   private selLayer = new Graphics()
   private views = new Map<number, EntView>()
   private replay!: Replay
@@ -62,7 +71,7 @@ export class Renderer {
   async init(host: HTMLElement): Promise<void> {
     await this.app.init({ resizeTo: host, background: 0x15181c, antialias: true, autoDensity: true, resolution: window.devicePixelRatio || 1 })
     host.appendChild(this.app.canvas)
-    this.camera.addChild(this.terrainLayer, this.fogLayer, this.markerLayer, this.entLayer, this.shotLayer, this.selLayer)
+    this.camera.addChild(this.terrainLayer, this.fogLayer, this.markerLayer, this.auraLayer, this.entLayer, this.shotLayer, this.castLayer, this.selLayer)
     this.app.stage.addChild(this.camera)
     this.setupInput(host)
   }
@@ -164,6 +173,7 @@ export class Renderer {
     this.ghosts.clear()
     for (const e of state.ents.values()) this.addView(e, state.tick)
     this.shots = []
+    this.casts = []
     this.drawMarkers(state.markers)
     this.refreshVision()
   }
@@ -204,6 +214,10 @@ export class Renderer {
     if (d.shots.length) {
       this.shots = d.shots
       this.shotTick = t
+    }
+    if (d.casts.length) {
+      this.casts = d.casts
+      this.castTick = t
     }
     if (this.replay.frames[t - 1]?.markers) this.drawMarkers(state.markers)
     this.refreshVision()
@@ -251,9 +265,10 @@ export class Renderer {
       root.addChild(label)
     }
     const bar = new Graphics()
-    root.addChild(bar)
+    const ring = new Graphics()
+    root.addChild(bar, ring)
     this.entLayer.addChild(root)
-    this.views.set(e.id, { root, body, bar, w, h, fx: e.x, fy: e.y, x: e.x, y: e.y, start: t, dur: 1, lastHp: -1, lastBp: -1 })
+    this.views.set(e.id, { root, body, bar, ring, lastBf: "", w, h, fx: e.x, fy: e.y, x: e.x, y: e.y, start: t, dur: 1, lastHp: -1, lastBp: -1 })
   }
 
   private drawMarkers(markers: Marker[]): void {
@@ -295,6 +310,37 @@ export class Renderer {
         // 没建好的建筑画得淡一些
         v.body.alpha = v.lastBp < 100 ? 0.4 : 1
         this.drawBar(v, e)
+      }
+      // 身上有增益（光环、技能给的）：外面一圈金色
+      const bf = e?.bf?.join("|") ?? ""
+      if (bf !== v.lastBf) {
+        v.lastBf = bf
+        const g = v.ring.clear()
+        if (bf) g.circle((v.w * TILE) / 2, (v.h * TILE) / 2, (Math.min(v.w, v.h) * TILE) / 2 + 1).stroke({ width: 1.4, color: 0xf2c14e, alpha: 0.9 })
+      }
+    }
+    // 光环范围：带光环的实体（看得见的）周围画一个淡淡的菱形
+    const ag = this.auraLayer.clear()
+    for (const [id, v] of this.views) {
+      const e = this.state.ents.get(id)
+      const info = e ? this.replay.types[e.type] : undefined
+      if (!e || !info?.auras?.length || !v.root.visible || e.bp !== undefined) continue
+      const cx = v.root.x + (v.w * TILE) / 2
+      const cy = v.root.y + (v.h * TILE) / 2
+      for (const a of info.auras) {
+        const r = ((a.radius < 0 ? (e.st?.sight ?? info.sight ?? 0) : a.radius) + 0.5) * TILE
+        ag.poly([cx, cy - r, cx + r, cy, cx, cy + r, cx - r, cy]).fill({ color: playerColor(e.owner), alpha: 0.06 }).stroke({ width: 1, color: playerColor(e.owner), alpha: 0.35 })
+      }
+    }
+    // 放技能：释放者身上一圈扩散的金光，3 tick 后淡出（技能名在右边的事件列表里）
+    const cg = this.castLayer.clear()
+    const cAge = now - this.castTick
+    if (this.casts.length && cAge < 3) {
+      const alpha = Math.max(0, 1 - cAge / 3)
+      for (const c of this.casts) {
+        const p = this.centerOf(c.u)
+        if (!p) continue
+        cg.circle(p.x, p.y, TILE * (0.6 + cAge * 0.5)).stroke({ width: 2, color: 0xf2c14e, alpha })
       }
     }
     // 攻击线：本帧发生的攻击，在一个 tick 内淡出
