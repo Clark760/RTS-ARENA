@@ -1,5 +1,7 @@
 // 野怪营地（D-189，弑君歼灭、弑君拓荒用）：地图上有几处中立野怪，打死一只给最后一击的玩家高额赏金，
-// 一个营地清空以后过一段时间原地刷新。用来把双方从家门口引出来（试写反馈：守家方优势太大，两边都守就拖成平局）。
+// 死了的野怪过一段时间原地刷新。刷新有两种（D-193，setupCamps 的 opts.respawn）：
+// - cleared（弑君拓荒）：营地整个清空以后过 900 tick 一起刷新，没清空的营地不补
+// - periodic（弑君歼灭，用户：死亡后会定期刷新）：每 900 tick（第 900、1800……tick）把所有营地死掉的野怪原地补满，营地没清空也补用来把双方从家门口引出来（试写反馈：守家方优势太大，两边都守就拖成平局）。
 // - 营地成对摆放，两两中心对称，都在离两家主基地一样远的那条斜线上（内圈一对离地图中心近、外圈一对靠边）
 // - 野怪平时站在营地里不动；挨了打、或者玩家的东西走进营地 2 格内，整个营地一起出手，追打营地 8 格内离它最近的玩家实体（单位和建筑）；
 //   营地 8 格内没有玩家的东西了就走回营地，回到原位就回满血（风筝出 8 格、在营地外放箭塔都占不到便宜）。
@@ -9,10 +11,16 @@
 import type { MatchResult, RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
 import { STANDARD_TERRAIN } from "./standard.ts"
 
-/** 每只野怪的赏金（金） */
+/** 每只野怪的赏金（金），规则包没另外写时用这个（弑君拓荒 100；弑君歼灭写 150，D-193） */
 export const CREEP_BOUNTY = 100
-/** 营地清空后多少 tick 刷新 */
+/** 刷新间隔：cleared 是营地清空后多少 tick 刷新，periodic 是每隔多少 tick 补满一次 */
 export const CREEP_RESPAWN = 900
+
+/** 营地的设置：赏金、刷新方式（见文件开头） */
+export interface CampOptions {
+  bounty?: number
+  respawn?: "cleared" | "periodic"
+}
 /** 追打范围：离营地这么多格以内 */
 const LEASH = 8
 /** 警戒范围：玩家的东西走进营地这么多格以内，营地就出手 */
@@ -34,7 +42,7 @@ interface Camp {
   spots: { x: number; y: number }[]
   /** 活着的野怪 id */
   ids: number[]
-  /** 清空了：哪个 tick 刷新；没清空是 null */
+  /** 下一次刷新的 tick：cleared 是清空以后才有，periodic 是有死掉的野怪就有；不用刷新是 null */
   respawnAt: number | null
   /** 正在出手 */
   angry: boolean
@@ -46,6 +54,7 @@ const homeOf = new Map<number, { x: number; y: number; camp: number }>()
 const lastHp = new Map<number, number>()
 let kills: number[] = []
 let bounty: number[] = []
+let opts: Required<CampOptions> = { bounty: CREEP_BOUNTY, respawn: "cleared" }
 
 /** 给 bot 看的营地信息（位置公开，和金矿一样） */
 export interface CampInfo {
@@ -103,7 +112,8 @@ export function creepTimeUp(ctx: RuleContext, r: MatchResult): MatchResult {
  * 摆营地。inner / outer 是内圈、外圈那一对里左下那个营地的目标位置（另一个是中心对称的）：在目标附近找一块空地，
  * 营地的格子能走、没有实体，2 格内没有建筑和资源点（别挡矿、别贴着家）。只找一边，另一边取镜像，两边保证一样
  */
-export function setupCamps(ctx: SetupContext, W: number, H: number, inner: { x: number; y: number }, outer: { x: number; y: number }): void {
+export function setupCamps(ctx: SetupContext, W: number, H: number, inner: { x: number; y: number }, outer: { x: number; y: number }, options: CampOptions = {}): void {
+  opts = { bounty: options.bounty ?? CREEP_BOUNTY, respawn: options.respawn ?? "cleared" }
   camps = []
   homeOf.clear()
   lastHp.clear()
@@ -144,6 +154,11 @@ export function setupCamps(ctx: SetupContext, W: number, H: number, inner: { x: 
   }
 }
 
+/** periodic：tick 之后的下一个刷新时刻（CREEP_RESPAWN 的整数倍） */
+function nextRefresh(tick: number): number {
+  return (Math.floor(tick / CREEP_RESPAWN) + 1) * CREEP_RESPAWN
+}
+
 /** 每 tick：发赏金、刷新、野怪的行为 */
 export function creepTick(ctx: RuleContext): void {
   // 赏金：最后一击的玩家拿；营地清空了记下刷新时间
@@ -153,33 +168,36 @@ export function creepTick(ctx: RuleContext): void {
     homeOf.delete(ev.id)
     lastHp.delete(ev.id)
     if (ev.killer >= 0) {
-      ctx.addResource(ev.killer, "gold", CREEP_BOUNTY)
+      ctx.addResource(ev.killer, "gold", opts.bounty)
       kills[ev.killer] = (kills[ev.killer] ?? 0) + 1
-      bounty[ev.killer] = (bounty[ev.killer] ?? 0) + CREEP_BOUNTY
-      ctx.note(`P${ev.killer} 打死一只野怪，赏金 ${CREEP_BOUNTY}`, ev.killer)
+      bounty[ev.killer] = (bounty[ev.killer] ?? 0) + opts.bounty
+      ctx.note(`P${ev.killer} 打死一只野怪，赏金 ${opts.bounty}`, ev.killer)
     }
     if (!home) continue
     const camp = camps[home.camp]
     camp.ids = camp.ids.filter((id) => id !== ev.id)
+    if (opts.respawn === "periodic") camp.respawnAt = nextRefresh(ctx.tick)
     if (camp.ids.length === 0) {
-      camp.respawnAt = ctx.tick + CREEP_RESPAWN
+      if (opts.respawn === "cleared") camp.respawnAt = ctx.tick + CREEP_RESPAWN
       camp.angry = false
       ctx.note(`(${camp.spots[0].x}, ${camp.spots[0].y}) 的野怪营地清空了，第 ${camp.respawnAt} tick 刷新`)
     }
   }
-  // 刷新：放回原位（被占了就放在旁边）
+  // 刷新：放回原位（被占了就放在旁边）；periodic 只补死掉的那几只
   camps.forEach((camp, k) => {
     if (camp.respawnAt === null || ctx.tick < camp.respawnAt) return
+    const alive = new Set(camp.ids.map((id) => homeOf.get(id)).filter((h) => h !== undefined).map((h) => `${h.x},${h.y}`))
     for (const p of camp.spots) {
+      if (alive.has(`${p.x},${p.y}`)) continue
       const id = ctx.spawnNear("creep", -1, p.x, p.y)
       if (id === null) continue
       camp.ids.push(id)
       homeOf.set(id, { x: p.x, y: p.y, camp: k })
     }
-    if (camp.ids.length) {
+    if (camp.ids.length === camp.spots.length || (opts.respawn === "cleared" && camp.ids.length)) {
       camp.respawnAt = null
       ctx.note(`(${camp.spots[0].x}, ${camp.spots[0].y}) 的野怪营地刷新了`)
-    }
+    } else if (opts.respawn === "periodic") camp.respawnAt = nextRefresh(ctx.tick)
   })
   if (ctx.tick % 2 !== 0) return
   const creeps = ctx.entities({ type: "creep" })

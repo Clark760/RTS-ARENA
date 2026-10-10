@@ -29,7 +29,8 @@ const ruleset: Ruleset = {
     annihilationSetup(ctx, types)
     spawnLords(ctx, ANNIHILATION_W, ANNIHILATION_H, types)
     // 野怪营地（D-189）：内圈、外圈各一对，都在离两家主基地一样远的斜线上
-    setupCamps(ctx, ANNIHILATION_W, ANNIHILATION_H, { x: 20, y: 19 }, { x: 14, y: 25 })
+    // D-193（用户）：赏金 150，死了的野怪每 900 tick 定时补满（拓荒是 100、营地清空后才刷新）
+    setupCamps(ctx, ANNIHILATION_W, ANNIHILATION_H, { x: 20, y: 19 }, { x: 14, y: 25 }, { bounty: 150, respawn: "periodic" })
   },
 
   onTick(ctx) {

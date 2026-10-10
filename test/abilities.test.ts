@@ -349,6 +349,45 @@ test("格式检查：技能、光环、被动写错会报出来；有技能没�
   assert.doesNotMatch(checkRulesetData({ ...base, types }, [...fns, "onCast"]).join("\n"), /要导出 onCast/)
 })
 
+test("野怪定时刷新（D-193）：每 900 tick 把死掉的野怪补满，营地没清空也补；赏金按规则包写的给", async () => {
+  const { campInfo, creepTick, creepType, setupCamps } = await import("../rulesets/common/creeps.ts")
+  const W = 30
+  const H = 20
+  const rules = mini([], {
+    maxTicks: 905,
+    types: { ...TYPES, creep: creepType(), brute: { kind: "unit", maxHp: 5000, moveTicks: 1, sight: 6, attack: { damage: 200, range: 1, cooldown: 2 }, look } },
+    setup(ctx) {
+      ctx.setTerrain(Array(H).fill(".".repeat(W)))
+      setupCamps(ctx, W, H, { x: 12, y: 11 }, { x: 6, y: 15 }, { bounty: 150, respawn: "periodic" })
+      const c = campInfo()[0]
+      ctx.spawnNear("brute", 0, c.x, c.y - 1)
+    },
+    onTick: (ctx) => creepTick(ctx),
+    objectives: () => campInfo(),
+  })
+  const seen: { tick: number; alive: number; respawnAt: number | null; gold: number }[] = []
+  let target: number | undefined
+  play(rules, (v, cmd) => {
+    const c0 = (v.objectives as ReturnType<typeof campInfo>)[0]
+    seen.push({ tick: v.tick, alive: c0.alive, respawnAt: c0.respawnAt, gold: v.resources.gold })
+    const u = mine(v, "brute")[0]
+    // 打死第一只就跑远（离营地 8 格以外，野怪回去）
+    if (target === undefined) {
+      const k = v.entities.find((e) => e.type === "creep" && Math.abs(e.x - c0.x) + Math.abs(e.y - c0.y) <= 2)
+      if (k) {
+        target = k.id
+        cmd.attack(u, k)
+      }
+    } else if (!v.entities.some((e) => e.id === target) && u.order?.kind !== "move") cmd.move(u, 0, 0)
+  })
+  const after = seen.find((s) => s.alive === 2)!
+  assert.equal(after.respawnAt, 900)
+  assert.equal(after.gold - seen[0].gold, 150)
+  const last = seen[seen.length - 1]
+  assert.equal(last.alive, 3)
+  assert.equal(last.respawnAt, null)
+})
+
 test("attackMove 写 { neutral: true } 也打中立单位，射程里有对手的先打对手的；不写就不打中立的（D-191）", () => {
   const hpOf = (v: View, owner: number) => v.entities.find((e) => e.owner === owner && e.type === "grunt")?.hp
   // 不写 neutral：从中立的旁边走过去，一下都不打它
