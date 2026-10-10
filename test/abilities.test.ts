@@ -254,7 +254,7 @@ test("技能造价（D-192）：放成功才扣，不够被拒，规则包拒绝
   assert.ok(rejected.some((r) => /gold 不够：花钱要 20，现有 10/.test(r)), rejected.join("\n"))
 })
 
-test("击退（D-197）：领主视野内的敌方单位推到视野外，建筑和中立的不推；视野里没敌人被拒", async () => {
+test("击退（D-197、D-206）：领主视野内的敌方单位各自往外推 3 格，建筑和中立的不推；视野里没敌人被拒", async () => {
   const { lordType, regicideCast } = await import("../rulesets/common/regicide.ts")
   const events: GameEvent[] = []
   const before: Entity[] = []
@@ -292,7 +292,8 @@ test("击退（D-197）：领主视野内的敌方单位推到视野外，建筑
   const far = (e: Entity) => Math.abs(e.x - 6) + Math.abs(e.y - 4)
   const grunts = after.filter((e) => e.type === "grunt" && e.owner === 1)
   assert.equal(grunts.length, 2)
-  assert.ok(grunts.every((e) => far(e) === 9), JSON.stringify(grunts.map((e) => [e.x, e.y])))
+  // 两个都离领主 2 格，推到 5 格
+  assert.ok(grunts.every((e) => far(e) === 5), JSON.stringify(grunts.map((e) => [e.x, e.y])))
   // 建筑、中立的不动
   const at = (list: Entity[], type: string, owner: number) => list.find((e) => e.type === type && e.owner === owner)!
   assert.deepEqual([at(after, "hut", 1).x, at(after, "hut", 1).y], [9, 5])
@@ -420,7 +421,7 @@ test("并行生产（D-196）：parallel 3 的建筑，队列里前 3 个同时�
   assert.equal(count[21], 4)
 })
 
-test("中央宝箱（D-202）：第 900 tick 在正中刷出，打掉它的玩家得 600 金；正中被挡就在中心对称的两处各放一个", async () => {
+test("中央宝箱（D-202、D-206）：第 900 tick 在正中两格各刷一个，都打掉得 600 金；正中被挡就换离正中最近、中心对称的一对格子", async () => {
   const { setupTreasure, treasureInfo, treasureTick, treasureType, TREASURE_EVERY, TREASURE_GOLD } = await import("../rulesets/common/treasure.ts")
   const W = 20
   const H = 10
@@ -430,7 +431,7 @@ test("中央宝箱（D-202）：第 900 tick 在正中刷出，打掉它的玩�
     let info: ReturnType<typeof treasureInfo> | null = null
     play(
       mini([], {
-        maxTicks: TREASURE_EVERY + 20,
+        maxTicks: TREASURE_EVERY + 40,
         types: { ...TYPES, treasure: treasureType(), brute },
         setup(ctx) {
           ctx.setTerrain(terrain)
@@ -452,27 +453,29 @@ test("中央宝箱（D-202）：第 900 tick 在正中刷出，打掉它的玩�
     )
     return { gold, info: info! }
   }
-  // 正中能放：一个，打掉得 600
+  // 正中能放：正中 2×2 里斜对着的两格，两个都打掉得 600
   const open = play2(Array(H).fill(".".repeat(W)))
-  assert.deepEqual(open.info.spots, [{ x: W / 2 - 1, y: H / 2 - 1 }])
+  assert.deepEqual(open.info.spots, [{ x: W / 2 - 1, y: H / 2 - 1 }, { x: W / 2, y: H / 2 }])
   assert.equal(open.gold[TREASURE_EVERY - 1], 0)
-  assert.equal(open.gold[TREASURE_EVERY + 19], TREASURE_GOLD)
-  // 正中是墙：中心对称的两处各一个
+  assert.equal(open.gold[TREASURE_EVERY + 39], TREASURE_GOLD)
+  // 正中是墙：离正中最近、中心对称的一对格子
   const rows = Array(H).fill(".".repeat(W))
   rows[4] = ".".repeat(8) + "####" + ".".repeat(8)
   rows[5] = ".".repeat(8) + "####" + ".".repeat(8)
   const walled = play2(rows)
   assert.equal(walled.info.spots.length, 2)
   const [a, b] = walled.info.spots
-  assert.deepEqual([b.x, b.y], [W - 2 - a.x, H - 2 - a.y])
+  assert.deepEqual([b.x, b.y], [W - 1 - a.x, H - 1 - a.y])
+  assert.deepEqual(a, { x: 9, y: 3 })
 })
 
-test("中央宝箱（D-205）：刷新那一刻占着位置的一方直接捡到（放特效）；双方一样多就挤开照常刷", async () => {
+test("中央宝箱（D-205、D-206）：刷新那一刻站在宝箱格子上的一方直接捡到这个宝箱（放特效）；站着野怪就等它走开", async () => {
   const { setupTreasure, treasureTick, treasureType, TREASURE_EVERY, TREASURE_GOLD } = await import("../rulesets/common/treasure.ts")
-  // 在 20×10 的空地上，宝箱位置是 (9, 4)～(10, 5)；spots 里放 P0、P1 的兵，看第 900 tick 之后的结果
+  // 在 20×10 的空地上，两个宝箱的格子是 (9, 4)、(10, 5)；放好 P0、P1、中立的兵，看第 900 tick 之后的结果
+  const half = TREASURE_GOLD / 2
   const run = (units: [number, number, number][]) => {
     const gold: number[][] = [[], []]
-    let box = false
+    let boxes: [number, number][] = []
     const replay = play(
       mini([], {
         maxTicks: TREASURE_EVERY + 2,
@@ -488,25 +491,31 @@ test("中央宝箱（D-205）：刷新那一刻占着位置的一方直接捡到
       }),
       (v) => {
         gold[0][v.tick] = v.resources.gold
-        box = v.entities.some((e) => e.type === "treasure")
+        boxes = v.entities.filter((e) => e.type === "treasure").map((e) => [e.x, e.y])
       },
       (v) => {
         gold[1][v.tick] = v.resources.gold
       },
     )
     const fx = replay.frames.flatMap((f) => f.fx ?? [])
-    return { g0: gold[0][TREASURE_EVERY + 1], g1: gold[1][TREASURE_EVERY + 1], box, fx }
+    return { g0: gold[0][TREASURE_EVERY + 1], g1: gold[1][TREASURE_EVERY + 1], boxes, fx }
   }
-  // 只有 P0 站着：P0 直接捡到，宝箱不刷出来，放了特效
-  const only = run([[0, 9, 4]])
-  assert.deepEqual([only.g0, only.g1, only.box], [TREASURE_GOLD, 0, false])
-  assert.deepEqual(only.fx, [{ x: 9, y: 4, w: 2, h: 2, text: `P0 +${TREASURE_GOLD}`, color: "#f2c14e" }])
-  // P0 两个、P1 一个：P0 捡到
-  const more = run([[0, 9, 4], [0, 10, 4], [1, 9, 5]])
-  assert.deepEqual([more.g0, more.g1, more.box], [TREASURE_GOLD, 0, false])
-  // 一样多：谁也不给，挤开照常刷出宝箱
-  const tie = run([[0, 9, 4], [1, 10, 5]])
-  assert.deepEqual([tie.g0, tie.g1, tie.box], [0, 0, true])
+  // P0 两格都占：两个都捡到，一个都不刷出来，放两个特效
+  const both = run([[0, 9, 4], [0, 10, 5]])
+  assert.deepEqual([both.g0, both.g1, both.boxes], [TREASURE_GOLD, 0, []])
+  assert.deepEqual(both.fx, [
+    { x: 9, y: 4, w: 1, h: 1, text: `P0 +${half}`, color: "#f2c14e" },
+    { x: 10, y: 5, w: 1, h: 1, text: `P0 +${half}`, color: "#f2c14e" },
+  ])
+  // 一人一格：各捡一个
+  const split = run([[0, 9, 4], [1, 10, 5]])
+  assert.deepEqual([split.g0, split.g1, split.boxes], [half, half, []])
+  // 只占一格：捡到这一个，另一格照常刷出
+  const one = run([[0, 9, 4]])
+  assert.deepEqual([one.g0, one.g1, one.boxes], [half, 0, [[10, 5]]])
+  // 中立的单位站着：那一格等着不刷，另一格照常刷出
+  const neutral = run([[-1, 9, 4]])
+  assert.deepEqual([neutral.g0, neutral.g1, neutral.boxes], [0, 0, [[10, 5]]])
 })
 
 test("死亡事件带 killerType（D-203）：最后一击的实体类型，规则包据此可以让某些实体打死的不算分", () => {

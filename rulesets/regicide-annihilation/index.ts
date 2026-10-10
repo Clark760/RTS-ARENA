@@ -10,7 +10,7 @@ import type { Objectives } from "./objectives.ts"
 
 const types = withLord(standardTypes(), ["soldier", "archer"], "repel")
 types.creep = creepType()
-// D-202（用户：希望大模型更灵活地去打仗而不是龟缩）：每 900 tick 在地图正中刷一个宝箱，打掉得 600 金
+// D-202（用户：希望大模型更灵活地去打仗而不是龟缩）：每 900 tick 在地图正中刷宝箱（D-206：两个 1×1，各 300 金）
 types.treasure = treasureType()
 // D-196（用户：钱没处花，又不想加建造把歼灭弄复杂）：兵营排进队列的 5 个同时造，出兵快慢看钱
 types.barracks.parallel = 5
@@ -22,6 +22,8 @@ types.base.attack = { damage: 12, range: 5, cooldown: 10 }
 types.base.maxHp = 3000
 // D-200（用户）：领主 800 → 1500 血（主基地改 3000 以后杀领主成了最主要的结束方式）
 types.lord.maxHp = 1500
+// D-206（用户）：家门口的 4 个金矿 400 → 600（中间的矿生成时自己写了 600，改类型的默认储量只动家门口的）
+types.goldmine = { ...types.goldmine, amount: 600 }
 
 const ruleset: Ruleset = {
   id: "regicide-annihilation",

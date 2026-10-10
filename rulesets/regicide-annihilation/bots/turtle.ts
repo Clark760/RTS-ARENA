@@ -1,4 +1,4 @@
-// 守家反击：兵守在家门口、领主在旁边给光环，6 格内有 3 个以上敌兵就放击退，不主动进攻，但兵够 8 个、家里没事就去清最近的野怪营地（先聚齐再集火）；挡住一波进攻（守的时候杀了 4 个以上）就趁对方兵少反攻，快到时间上限还不领先就出击；家里没事、兵够 10 个先去抢中央宝箱（快刷新时先开到宝箱的位置上占位，刷出来了就在旁边聚齐再点名打），野怪咬过来附近的兵一起集火还手。
+// 守家反击：兵守在家门口、领主在旁边给光环，6 格内有 3 个以上敌兵就放击退，不主动进攻，但兵够 8 个、家里没事就去清最近的野怪营地（先聚齐再集火）；挡住一波进攻（守的时候杀了 4 个以上）就趁对方兵少反攻，快到时间上限还不领先就出击；家里没事、兵够 10 个先去抢中央宝箱（快刷新时各派一个兵站到两个宝箱的格子上占位、其余的跟过去护着，刷出来了就在旁边聚齐再点名打），野怪咬过来附近的兵一起集火还手。
 // - 集结点离兵营只有 3 格（在家里的领主光环范围内）；家里或领主附近来敌人全军回防，领主跟着守军。
 // - 其余（经济、挑目标、撤退）和基准一样。
 const ATTACK_AT = 60
@@ -229,13 +229,19 @@ function mainTick(view: View, cmd: Commands): void {
 
   if (mode === "defend") {
     // 清野（D-189）：兵够 8 个、家里没事时去打离家最近的野怪营地，一只 150 金赏金
-    // 中央宝箱（D-202）：兵够 10 个、家里没事就先去打离家近的那个宝箱，打掉得 600 金
+    // 中央宝箱（D-202）：兵够 10 个、家里没事就先去打离家近的那个宝箱，打掉一个得 300 金（D-206：两个 1×1）
     const chest = army.length >= 10 ? [...view.objectives.treasure.chests].sort((a, b) => dist(a, base) - dist(b, base))[0] : undefined
-    // 宝箱快刷新了（D-205）：兵够 10 个、家里没事就先开到宝箱的位置上等着，刷新那一刻占着位置（人比对手多）就直接捡到
+    // 宝箱快刷新了（D-205）：兵够 10 个、家里没事就先开到宝箱的位置上等着，刷新那一刻占着格子就直接捡到。
+    // D-206：宝箱是两个 1×1，各派离得最近的一个兵 move 站上去（attackMove 会被敌兵引走），其余的 attackMove 到旁边护着
     const tr = view.objectives.treasure
-    const soon = !chest && army.length >= 10 && tr.nextAt - view.tick <= 150 ? [...tr.spots].sort((a, b) => dist(a, base) - dist(b, base))[0] : undefined
-    if (soon) {
-      for (const u of army) attackMove(cmd, u, { x: soon.x, y: soon.y })
+    if (!chest && army.length >= 10 && tr.nextAt - view.tick <= 150 && tr.spots.length) {
+      const rest = [...army]
+      for (const s of tr.spots) {
+        const u = rest.sort((a, b) => dist(a, s) - dist(b, s)).shift()
+        if (u) moveTo(cmd, u, s)
+      }
+      const guard = [...tr.spots].sort((a, b) => dist(a, base) - dist(b, base))[0]
+      for (const u of rest) attackMove(cmd, u, guard)
       return
     }
     if (chest) {
@@ -311,7 +317,7 @@ export function onTick(view: View, cmd: Commands): void {
 }
 
 /**
- * 击退（D-197）：领主 6 格内有 3 个以上敌兵就放，把领主视野里的敌方单位推到视野外。
+ * 击退（D-197）：领主 6 格内有 3 个以上敌兵就放，把领主视野里的敌方单位各自往外推 3 格（D-206）。
  * 放在每次决策的最后：击退当场生效，先放的话，后面对被推走的敌人下 attack 会被拒（看不到目标）
  */
 function repel(view: View, cmd: Commands): void {

@@ -4,6 +4,7 @@
 // - 被动「休养生息」：100 tick 没出手、没挨打以后，每 10 tick 回 10 生命
 // - 技能「点金」（goldmine，弑君拓荒）：在领主 3 格内的空地上造一座 300 金的中立金矿，冷却 600 tick（落点见 mineSpot）
 // - 技能「击退」（repel，弑君歼灭，D-197）：把领主视野内的敌方单位推到视野外，纯冷却 600 tick、不要钱（用户：想让两边打得更焦灼、时间更长）。
+//   D-206（用户）：改成各自往外推 3 格（原来推到视野外，近身的兵一下被推出七八格）
 //   D-198 冷却 600 → 300。之前是召唤箭塔（D-192～196：500 金基本没用，降到 250 不亏不赚，兵营同时造 5 个以后没人放）
 // 领主的移速、视野、攻击和克制规则包的侦察兵一样（走一格 1 tick、视野 8、攻击 1），生命 500（主基地 1500 的三分之一）
 import type { CastInfo, MatchResult, RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
@@ -19,8 +20,10 @@ export const LORD_MINE_RANGE = 3
 export const LORD_REPEL_COOLDOWN = 150
 /** 击退的特效颜色（浅蓝） */
 const REPEL_COLOR = "#8fd0ff"
+/** 击退把敌方单位往外推几格（离领主的曼哈顿距离多几格，D-206） */
+export const REPEL_PUSH = 3
 /** 击退往外推的时候，最多沿路走几步去找落脚的空格（找不到就不推） */
-const REPEL_SEARCH = 24
+const REPEL_SEARCH = 9
 
 /** 领主的技能：点金（弑君拓荒）或者击退（弑君歼灭） */
 export type LordSkill = "goldmine" | "repel"
@@ -41,7 +44,7 @@ export function lordType(troops: string[], skill: LordSkill = "goldmine"): TypeS
             name: "击退",
             cooldown: LORD_REPEL_COOLDOWN,
             situational: true,
-            desc: "把领主视野（8 格）内的敌方单位推到视野外（各自沿能走的路推到最近的空格，建筑和野怪不推）",
+            desc: `把领主视野（8 格）内的敌方单位各自往外推 ${REPEL_PUSH} 格（沿能走的路推到离领主远 ${REPEL_PUSH} 格的最近空格，建筑和野怪不推）`,
           },
     ],
     auras: [{ name: "领主光环", radius: -1, affects: "own", types: troops, damagePct: 20, defensePct: 20 }],
@@ -161,8 +164,8 @@ export function regicideCast(ctx: RuleContext, c: CastInfo): string | null {
 
 /**
  * 击退（D-197）：领主视野内（曼哈顿距离不超过视野）的敌方单位一个个往外推，先推离领主远的（免得挡住后面的）：
- * 从它站的格子沿能走的路（地形、建筑、资源点挡路，单位不挡）往外找，离它最近的、离领主超过视野的空格（没有任何实体，
- * 也没被这次推过去的占着）；同样近的选离领主远的，再一样随机挑。走 24 步（REPEL_SEARCH）都找不到（被墙堵死）就不推。
+ * 从它站的格子沿能走的路（地形、建筑、资源点挡路，单位不挡）往外找，离它最近的、离领主比原来远 3 格以上（REPEL_PUSH，D-206）的空格
+ * （没有任何实体，也没被这次推过去的占着）；同样近的选离领主远的，再一样随机挑。走 9 步（REPEL_SEARCH）都找不到（被墙堵死）就不推。
  * 返回推走了几个；视野里一个敌方单位都没有返回 -1
  */
 export function repel(ctx: RuleContext, lord: { x: number; y: number; def: { sight: number } }, player: number): number {
@@ -189,6 +192,7 @@ export function repel(ctx: RuleContext, lord: { x: number; y: number; def: { sig
   let mark = 0
   for (const f of foes) {
     mark++
+    const want = far(f.y * W + f.x) + REPEL_PUSH
     let level = [f.y * W + f.x]
     seen[level[0]] = mark
     let spot = -1
@@ -202,12 +206,12 @@ export function repel(ctx: RuleContext, lord: { x: number; y: number; def: { sig
           next.push(n)
         }
       }
-      // 这一圈里能落脚的：离领主超过视野、空着；挑离领主最远的，一样远随机
+      // 这一圈里能落脚的：离领主远了 3 格以上、空着；挑离领主最远的，一样远随机
       let best = -1
       let bestFar = -1
       let bestR = 0
       for (const n of next) {
-        if (!free[n] || far(n) <= R) continue
+        if (!free[n] || far(n) < want) continue
         const r = ctx.rng.next()
         if (far(n) > bestFar || (far(n) === bestFar && r < bestR)) {
           best = n
