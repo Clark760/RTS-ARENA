@@ -1,4 +1,4 @@
-// 守家反击：兵守在家门口、领主在旁边给光环，不主动出击；挡住一波进攻（守的时候杀了 4 个以上）就趁对方兵少反攻，快到时间上限还不领先就出击。
+// 守家反击：兵守在家门口、领主在旁边给光环，不主动进攻，但兵够 8 个、家里没事就去清最近的野怪营地（参考 bot 里清野最多的）；挡住一波进攻（守的时候杀了 4 个以上）就趁对方兵少反攻，快到时间上限还不领先就出击。
 // - 集结点离兵营只有 3 格（在家里的领主光环范围内）；家里或领主附近来敌人全军回防，领主跟着守军。
 // - 其余（经济、建造、点金、挑目标、撤退）和基准一样。
 const ATTACK_AT = 60
@@ -395,7 +395,7 @@ function mainTick(view: View, cmd: Commands): void {
 
   if (mode === "defend") {
     // 清野（D-189）：兵够 8 个、家里没事时去打离家最近的野怪营地，一只 150 金赏金
-    const camp = army.length >= 8 ? view.objectives.creepCamps.filter((c) => c.alive > 0).sort((a, b) => dist(a, base) - dist(b, base))[0] : undefined
+    const camp = army.length >= 8 ? view.objectives.creepCamps.filter((c) => c.alive > 0).sort((a, b) => dist(a, base) - dist(b, base) || campSide(a, base) - campSide(b, base))[0] : undefined
     if (camp) {
       const creeps = view.entities.filter((e) => e.type === "creep")
       for (const u of army) {
@@ -441,4 +441,9 @@ export function onTick(view: View, cmd: Commands): void {
     for (const k of creeps) if (dist(k, u) <= reach && (!c || dist(k, u) < dist(c, u))) c = k
     if (c && !(u.order?.kind === "attack" && u.order.target === c.id)) cmd.attack(u, c)
   }
+}
+
+/** 选营地时距离打平：按自己这边看（右下那家把坐标镜像过来）先挑靠下的，两家各去自己那一侧的营地（D-191） */
+function campSide(c: { x: number; y: number }, base: { x: number }): number {
+  return base.x > game.width / 2 ? c.y : -c.y
 }

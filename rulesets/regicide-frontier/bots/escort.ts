@@ -1,4 +1,4 @@
-// 领主随军：拓荒的基准打法，领主跟在军队后面 3 格，团战时兵吃满光环（伤害 +25%、减伤 25%）；8 个兵就出击，冷却好了先回家点金再追上。
+// 领主随军：拓荒的基准打法，领主跟在军队后面 3 格，团战时兵吃满光环（伤害 +20%、减伤 20%）；6、7 个兵时去清最近的野怪营地，8 个兵就出击，冷却好了先回家点金再追上。
 // - 领主：出击时站在军队中心往家退 3 格的地方，身边 4 格内有敌兵就不跟、7 格内有敌兵就往家撤；在家时在矿边点金。
 // - 其余（建造、经济、回防、挑目标）和基准一样，看得见对方领主就先打领主。
 const ATTACK_AT = 8
@@ -388,7 +388,7 @@ function mainTick(view: View, cmd: Commands): void {
 
   if (mode === "defend") {
     // 清野（D-189）：兵够 6 个、家里没事时去打离家最近的野怪营地，一只 150 金赏金
-    const camp = army.length >= 6 ? view.objectives.creepCamps.filter((c) => c.alive > 0).sort((a, b) => dist(a, base) - dist(b, base))[0] : undefined
+    const camp = army.length >= 6 ? view.objectives.creepCamps.filter((c) => c.alive > 0).sort((a, b) => dist(a, base) - dist(b, base) || campSide(a, base) - campSide(b, base))[0] : undefined
     if (camp) {
       const creeps = view.entities.filter((e) => e.type === "creep")
       for (const u of army) {
@@ -434,4 +434,9 @@ export function onTick(view: View, cmd: Commands): void {
     for (const k of creeps) if (dist(k, u) <= reach && (!c || dist(k, u) < dist(c, u))) c = k
     if (c && !(u.order?.kind === "attack" && u.order.target === c.id)) cmd.attack(u, c)
   }
+}
+
+/** 选营地时距离打平：按自己这边看（右下那家把坐标镜像过来）先挑靠下的，两家各去自己那一侧的营地（D-191） */
+function campSide(c: { x: number; y: number }, base: { x: number }): number {
+  return base.x > game.width / 2 ? c.y : -c.y
 }

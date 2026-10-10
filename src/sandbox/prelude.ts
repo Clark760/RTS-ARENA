@@ -50,7 +50,11 @@ export function preludeSource(maxCommands: number, maxLines: number, maxLine: nu
   var cmd = Object.freeze({
     move: function (u, x, y) { push({ kind: "move", unit: idOf(u), x: num(x), y: num(y) }); },
     attack: function (u, t) { push({ kind: "attack", unit: idOf(u), target: idOf(t) }); },
-    attackMove: function (u, x, y) { push({ kind: "attackMove", unit: idOf(u), x: num(x), y: num(y) }); },
+    attackMove: function (u, x, y, o) {
+      var c = { kind: "attackMove", unit: idOf(u), x: num(x), y: num(y) };
+      if (o !== null && typeof o === "object" && o.neutral === true) c.neutral = true;
+      push(c);
+    },
     gather: function (u, t) { push({ kind: "gather", unit: idOf(u), target: idOf(t) }); },
     stop: function (u) { push({ kind: "stop", unit: idOf(u) }); },
     produce: function (b, type) { push({ kind: "produce", building: idOf(b), type: typeof type === "string" ? type : null }); },

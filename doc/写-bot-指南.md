@@ -70,7 +70,7 @@ export function onTick(view: View, cmd: Commands): void {
 |---|---|
 | `cmd.move(u, x, y)` | 走过去，路上不还手 |
 | `cmd.attack(u, target)` | 追着打一个目标，直到它死或看不见 |
-| `cmd.attackMove(u, x, y)` | 边走边打：射程内有敌人就打，视野里有敌人就追 |
+| `cmd.attackMove(u, x, y)` | 边走边打：射程内有敌人就打，视野里有敌人就追。写成 `cmd.attackMove(u, x, y, { neutral: true })` 时野怪这类中立单位也打（对手的优先） |
 | `cmd.gather(u, resource)` | 循环采集：采满自动回最近的交货点，交完再回来 |
 | `cmd.stop(u)` | 停下 |
 | `cmd.produce(b, type)` | 建筑排队生产，立即扣钱 |
@@ -83,7 +83,7 @@ export function onTick(view: View, cmd: Commands): void {
 - **命令会一直执行**，直到完成、失效或被新命令替换。只在需要改变时下命令，不用每次给每个单位重下。给单位下和它现在完全一样的命令没有任何影响。
 - **`view` 是调用开始时的快照**。同一次调用里 `produce` 之后，`view.resources` 不会变少，要自己记账。
 - **所有人同时下命令、同时结算**，没有先手后手。你在第 t tick 下的命令，推进到第 t+1 tick 时最先执行。
-- **自动攻击**：`idle` 和 `attackMove` 状态、能攻击的单位会打射程内最近的敌人；`move`、`gather`、`build` 状态的不还手。中立实体（野怪之类）不会被自动攻击，要 `cmd.attack` 点名打。
+- **自动攻击**：`idle` 和 `attackMove` 状态、能攻击的单位会打射程内最近的敌人；`move`、`gather`、`build` 状态的不还手。中立实体（野怪之类）不会被自动攻击，要 `cmd.attack` 点名打，或者 `attackMove` 加 `{ neutral: true }`。`attack` 状态的单位只打自己的目标，清野怪时对手的兵来了也不还手；一边清一边防偷袭用 `attackMove` 加 `{ neutral: true }`。
 - **不合法的命令不会让 bot 崩溃**，只会被拒，下次在 `view.events` 里看到 `rejected` 和原因。
 
 每条命令什么时候被拒，PROMPT.md 的「命令」一节有完整的表。

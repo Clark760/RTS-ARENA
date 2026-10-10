@@ -103,6 +103,7 @@ league 的选项：
                       每个 bot 拿所在队的名次分），--partners same 每队由同一个 bot 组成（bot 不够一局的人数时默认）
         --focus       只打第一个 bot（在 bot 目录里就是你的 bot）对其余每个，参考 bot 之间不打；两人局用。
                       比较两个版本：各跑一次 league <规则包> <版本> <对手...> --focus --seed 同一个数，对每个对手的种子一样
+        --quiet       每局不打一行（每 10 局报一次进度），也不列精彩对局，只看最后的排名、对阵和统计
         --seed、--out、--no-check、--no-replays、--json 同 run
                       名次分：第一名 1 分、最后一名 0 分、中间平分（两人局就是胜 1 平 0.5）；
                       等级分（1500 起）把名次拆成两两比较，按全部对局一起算，和打的先后顺序无关
@@ -156,7 +157,7 @@ function say(msg: string): void {
 const OPTIONS: Record<string, Record<string, boolean>> = {
   docs: { out: false },
   run: { seed: false, games: false, out: false, teams: false, "no-check": true, json: true, quiet: true, ticks: false, "no-replays": true },
-  league: { seed: false, size: false, teams: false, partners: false, "per-table": false, "per-pair": false, tables: false, out: false, "no-check": true, json: true, focus: true, "no-replays": true },
+  league: { seed: false, size: false, teams: false, partners: false, "per-table": false, "per-pair": false, tables: false, out: false, "no-check": true, json: true, focus: true, "no-replays": true, quiet: true },
   check: { ticks: false },
   compare: { seed: false, "per-pair": false, out: false, "no-check": true, "no-replays": true },
   view: { port: false, open: true },
@@ -631,6 +632,8 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
   // --focus：只打第一个 bot 对其余每个（参考 bot 之间不打）。对序号照原来的算，种子不变：
   // 换一个候选、用同一个 --seed 再跑，对每个对手用的种子都一样，可以直接比两个候选
   const focus = opt.focus === true
+  // --quiet：每局不打一行，每 10 局报一次进度，不列精彩对局（D-191，试写反馈：60 局每局一行再加精彩对局，信息太多）
+  const quiet = opt.quiet === true
   if (focus && (players !== 2 || sizes)) fail("--focus 只用于两人对打的联赛")
   const tableList = schedule.tables.map((table, ti) => ({ table, ti })).filter((x) => !focus || x.table.includes(0))
   const tables = tableList.map((x) => x.table)
@@ -734,7 +737,9 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
         const winTeams = [...new Set(won.map((p) => teams![p]))]
         outcome = winTeams.length === 1 ? `队${winTeams[0] + 1} 赢` : "平局"
       }
-      say(`第 ${index}/${total} 局  ${lineup}  种子 ${seed}：${outcome}（第 ${replay.result.tick} tick，${replay.result.reason}）  用时 ${(ms / 1000).toFixed(1)} 秒${noReplays ? "" : `  ${basename(file)}`}`)
+      if (quiet) {
+        if (index % 10 === 0 || index === total) say(`已打 ${index}/${total} 局`)
+      } else say(`第 ${index}/${total} 局  ${lineup}  种子 ${seed}：${outcome}（第 ${replay.result.tick} tick，${replay.result.reason}）  用时 ${(ms / 1000).toFixed(1)} 秒${noReplays ? "" : `  ${basename(file)}`}`)
       const entry = {
         type: "game",
         index,
@@ -785,7 +790,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
   if (!jsonMode) {
     console.log("\n" + standingsText(labels, st, { multi: sides > 2 || mode === "mixed", teams: mode === "mixed" }))
     console.log("\n" + statsText(stats.toJSON(), st))
-    console.log("\n" + highlightsText(highlights))
+    if (!quiet) console.log("\n" + highlightsText(highlights))
     // 第一个 bot 对每个对手一行（D-175，选手反馈：比较两个版本时直接对这一行）
     if ((mine || focus) && players === 2 && !sizes)
       console.log(

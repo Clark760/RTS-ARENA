@@ -265,8 +265,37 @@ test("格式检查：技能、光环、被动写错会报出来；有技能没�
   assert.doesNotMatch(checkRulesetData({ ...base, types }, [...fns, "onCast"]).join("\n"), /要导出 onCast/)
 })
 
+test("attackMove 写 { neutral: true } 也打中立单位，射程里有对手的先打对手的；不写就不打中立的（D-191）", () => {
+  const hpOf = (v: View, owner: number) => v.entities.find((e) => e.owner === owner && e.type === "grunt")?.hp
+  // 不写 neutral：从中立的旁边走过去，一下都不打它
+  let neutralHp: (number | undefined)[] = []
+  play(mini([["grunt", 0, 1, 2], ["grunt", -1, 2, 3]], { maxTicks: 12 }), (v, cmd) => {
+    if (v.tick === 0) cmd.attackMove(mine(v, "grunt")[0], 11, 2)
+    neutralHp.push(hpOf(v, -1))
+  })
+  assert.ok(neutralHp.every((h) => h === 100))
+  // 写了 neutral：停下来打旁边的中立单位
+  neutralHp = []
+  let order: Entity["order"] | undefined
+  play(mini([["grunt", 0, 2, 2], ["grunt", -1, 2, 3]], { maxTicks: 12 }), (v, cmd) => {
+    if (v.tick === 0) cmd.attackMove(mine(v, "grunt")[0], 11, 2, { neutral: true })
+    neutralHp.push(hpOf(v, -1))
+    order = mine(v, "grunt")[0]?.order
+  })
+  assert.ok(neutralHp[neutralHp.length - 1]! < 100)
+  assert.deepEqual(order, { kind: "attackMove", x: 11, y: 2, neutral: true })
+  // 中立单位和对手的兵都在射程里：先打对手的
+  let hp: { neutral?: number; foe?: number } = {}
+  play(mini([["grunt", 0, 2, 2], ["grunt", -1, 2, 3], ["grunt", 1, 3, 2]], { maxTicks: 10 }), (v, cmd) => {
+    if (v.tick === 0) cmd.attackMove(mine(v, "grunt")[0], 11, 2, { neutral: true })
+    hp = { neutral: hpOf(v, -1), foe: hpOf(v, 1) }
+  })
+  assert.equal(hp.neutral, 100)
+  assert.ok(hp.foe! < 100)
+})
+
 test("野怪营地（D-189）：两两中心对称；打死一只给最后一击的玩家 150 金，清空后记下 900 tick 后刷新", async () => {
-  const { campInfo, creepTick, creepType, setupCamps, CREEP_BOUNTY, CREEP_RESPAWN } = await import("../rulesets/common/creeps.ts")
+  const { campInfo, creepBounty, creepTick, creepTimeUp, creepType, setupCamps, CREEP_BOUNTY, CREEP_RESPAWN } = await import("../rulesets/common/creeps.ts")
   const W = 30
   const H = 20
   const rules = mini([], {
@@ -282,10 +311,12 @@ test("野怪营地（D-189）：两两中心对称；打死一只给最后一击
     },
     onTick: (ctx) => creepTick(ctx),
     objectives: () => campInfo(),
+    // 到时间：原来的判法是平局，比野怪赏金（D-191）
+    timeUp: (ctx) => creepTimeUp(ctx, { winner: null, reason: "时间到，平局" }),
   })
   let last: View | null = null
   let gold0 = 0
-  play(rules, (v, cmd) => {
+  const replay = play(rules, (v, cmd) => {
     if (v.tick === 0) gold0 = v.resources.gold
     last = v
     // 只打第一个营地的
@@ -308,4 +339,13 @@ test("野怪营地（D-189）：两两中心对称；打死一只给最后一击
   assert.equal(last!.resources.gold - gold0, 3 * CREEP_BOUNTY)
   assert.ok(camps[0].respawnAt !== null && camps[0].respawnAt > CREEP_RESPAWN && camps[0].respawnAt <= 60 + CREEP_RESPAWN)
   assert.ok(camps.slice(1).every((c) => c.alive === c.size && c.respawnAt === null))
+  // 每个营地的格子（D-191）：第一格就是 x、y，中心对称的营地格子也是镜像
+  assert.deepEqual(camps.map((c) => c.cells.length), [3, 3, 2, 2])
+  assert.deepEqual(camps[0].cells[0], { x: camps[0].x, y: camps[0].y })
+  assert.deepEqual(camps[1].cells, camps[0].cells.map((p) => ({ x: W - 1 - p.x, y: H - 1 - p.y })))
+  assert.ok(camps.slice(1).every((c) => c.angry === false))
+  assert.deepEqual(creepBounty(2), [3 * CREEP_BOUNTY, 0])
+  // 到时间平局时赏金多的赢
+  assert.deepEqual(replay.result.winners, [0])
+  assert.match(replay.result.reason, /野怪赏金 450 : 0/)
 })

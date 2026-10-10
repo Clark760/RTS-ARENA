@@ -122,7 +122,8 @@ export type Order =
   | { kind: "idle" }
   | { kind: "move"; x: number; y: number }
   | { kind: "attack"; target: number }
-  | { kind: "attackMove"; x: number; y: number }
+  /** neutral 为 true：也打中立实体（野怪这类），对手的单位和建筑优先 */
+  | { kind: "attackMove"; x: number; y: number; neutral?: boolean }
   /** returning 为 true 表示正带着资源回交货点 */
   | { kind: "gather"; target: number; returning: boolean }
   /** 去建 target 这个没建好的建筑（走到贴着它，然后每 tick 干 1 份活） */
@@ -192,7 +193,7 @@ export interface PlayerInfo {
 export type Command =
   | { kind: "move"; unit: number; x: number; y: number }
   | { kind: "attack"; unit: number; target: number }
-  | { kind: "attackMove"; unit: number; x: number; y: number }
+  | { kind: "attackMove"; unit: number; x: number; y: number; neutral?: boolean }
   | { kind: "gather"; unit: number; target: number }
   | { kind: "stop"; unit: number }
   | { kind: "produce"; building: number; type: TypeName }
@@ -265,8 +266,11 @@ export interface Commands {
   move(unit: Entity | number, x: number, y: number): void
   /** 追着打 target，直到它死掉、你看不见它或走不到它（不能移动的实体：目标出了射程也结束） */
   attack(unit: Entity | number, target: Entity | number): void
-  /** 走向 (x, y)，路上射程内有敌人就打、视野内有敌人就追（走不过去的不追） */
-  attackMove(unit: Entity | number, x: number, y: number): void
+  /**
+   * 走向 (x, y)，路上射程内有敌人就打、视野内有敌人就追（走不过去的不追）。
+   * 写 `{ neutral: true }` 时中立实体（野怪这类）也打：射程里有对手的东西先打对手的，没有才打射程里中立的；追视野里的也是先追对手的
+   */
+  attackMove(unit: Entity | number, x: number, y: number, options?: { neutral?: boolean }): void
   /** 循环采集：采满后自动回最近的交货点交货，再回来采；资源点采完后交完手上的就停下 */
   gather(unit: Entity | number, resource: Entity | number): void
   /** 停下。停着的单位会打射程内的敌人，但不追 */

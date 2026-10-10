@@ -4,7 +4,7 @@ import type { Ruleset } from "../../src/core/types.ts"
 import { STANDARD_TERRAIN } from "../common/standard.ts"
 import { enemyBasesOf, FRONTIER_H, FRONTIER_W, frontierSetup, frontierTimeUp, frontierTypes, scoreKills } from "../common/frontier.ts"
 import { regicideCast, regicideResult, spawnLords, withLord } from "../common/regicide.ts"
-import { campInfo, creepStats, creepTick, creepType, setupCamps } from "../common/creeps.ts"
+import { campInfo, creepBounty, creepTick, creepTimeUp, creepType, setupCamps } from "../common/creeps.ts"
 import type { Objectives } from "./objectives.ts"
 
 const types = withLord(frontierTypes(), ["soldier", "archer"])
@@ -43,12 +43,13 @@ const ruleset: Ruleset = {
       enemyBases: enemyBasesOf(player),
       killValue: ctx.players.map((p) => p.score),
       creepCamps: campInfo(),
+      creepBounty: creepBounty(ctx.playerCount),
     }
   },
 
   onCast: regicideCast,
   result: regicideResult,
-  timeUp: (ctx) => ({ ...frontierTimeUp(ctx), stats: creepStats(ctx.playerCount) }),
+  timeUp: (ctx) => creepTimeUp(ctx, frontierTimeUp(ctx)),
 }
 
 export default ruleset

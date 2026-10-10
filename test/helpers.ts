@@ -12,7 +12,7 @@ export function fnBot(onTick: (view: View, cmd: Commands) => void): BotRunner {
       const cmd: Commands = {
         move: (u, x, y) => out.push({ kind: "move", unit: idOf(u), x, y }),
         attack: (u, t) => out.push({ kind: "attack", unit: idOf(u), target: idOf(t) }),
-        attackMove: (u, x, y) => out.push({ kind: "attackMove", unit: idOf(u), x, y }),
+        attackMove: (u, x, y, o) => out.push(o?.neutral === true ? { kind: "attackMove", unit: idOf(u), x, y, neutral: true } : { kind: "attackMove", unit: idOf(u), x, y }),
         gather: (u, t) => out.push({ kind: "gather", unit: idOf(u), target: idOf(t) }),
         stop: (u) => out.push({ kind: "stop", unit: idOf(u) }),
         produce: (b, type) => out.push({ kind: "produce", building: idOf(b), type }),

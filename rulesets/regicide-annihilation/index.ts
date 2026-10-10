@@ -4,7 +4,7 @@ import type { Ruleset } from "../../src/core/types.ts"
 import { STANDARD_TERRAIN, standardTypes } from "../common/standard.ts"
 import { ANNIHILATION_H, ANNIHILATION_W, annihilationEnemyBases, annihilationSetup, annihilationTimeUp, scoreAnnihilationKills } from "../common/annihilation.ts"
 import { regicideCast, regicideResult, spawnLords, withLord } from "../common/regicide.ts"
-import { campInfo, creepStats, creepTick, creepType, setupCamps } from "../common/creeps.ts"
+import { campInfo, creepBounty, creepTick, creepTimeUp, creepType, setupCamps } from "../common/creeps.ts"
 import type { Objectives } from "./objectives.ts"
 
 const types = withLord(standardTypes(), ["soldier", "archer"])
@@ -42,12 +42,13 @@ const ruleset: Ruleset = {
       enemyBases: annihilationEnemyBases(player),
       killValue: ctx.players.map((p) => p.score),
       creepCamps: campInfo(),
+      creepBounty: creepBounty(ctx.playerCount),
     }
   },
 
   onCast: regicideCast,
   result: regicideResult,
-  timeUp: (ctx) => ({ ...annihilationTimeUp(ctx), stats: creepStats(ctx.playerCount) }),
+  timeUp: (ctx) => creepTimeUp(ctx, annihilationTimeUp(ctx)),
 }
 
 export default ruleset

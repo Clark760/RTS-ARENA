@@ -70,7 +70,7 @@ function applyOne(w: World, p: number, c: unknown): string | null {
       if (!e.def.attack) return `#${e.id}（${e.type}）不能攻击，请用 move`
       const err = checkXY(w, cmd.x, cmd.y)
       if (err) return err
-      resetOrder(e, { kind: "attackMove", x: cmd.x as number, y: cmd.y as number })
+      resetOrder(e, cmd.neutral === true ? { kind: "attackMove", x: cmd.x as number, y: cmd.y as number, neutral: true } : { kind: "attackMove", x: cmd.x as number, y: cmd.y as number })
       return null
     }
     case "attack": {

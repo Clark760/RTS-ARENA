@@ -132,10 +132,15 @@ export function canHit(w: World, e: EntityState, o: EntityState): boolean {
   return o.owner !== e.owner && !w.isAlly(e.owner, o.owner) && attackable(o)
 }
 
-/** radius 内最好打的敌人：最近 → 血最少 → id 最小（id 是随机分配的，所以最后这条等于随机） */
-function bestEnemyWithin(w: World, e: EntityState, radius: number): EntityState | null {
+/**
+ * radius 内最好打的敌人：最近 → 血最少 → id 最小（id 是随机分配的，所以最后这条等于随机）。
+ * neutral：也算中立实体（attackMove 的 neutral 选项，D-191），但有对手的东西就先打对手的
+ */
+function bestEnemyWithin(w: World, e: EntityState, radius: number, neutral = false): EntityState | null {
   let best: EntityState | null = null
   let bestD = 0
+  let side: EntityState | null = null
+  let sideD = 0
   const W = w.width
   const y0 = Math.max(0, e.y - radius)
   const y1 = Math.min(w.height - 1, e.y + e.h - 1 + radius)
@@ -149,16 +154,22 @@ function bestEnemyWithin(w: World, e: EntityState, radius: number): EntityState 
       const id = w.unitOcc[i] || w.staticOcc[i]
       if (id === 0) continue
       const o = w.ents.get(id)!
-      if (!isEnemy(w, e, o)) continue
+      const foe = isEnemy(w, e, o)
+      if (!foe && !(neutral && o.owner < 0 && attackable(o))) continue
       const d = rectDist(e, o)
       if (d > radius) continue
-      if (!best || d < bestD || (d === bestD && (o.hp < best.hp || (o.hp === best.hp && o.id < best.id)))) {
-        best = o
-        bestD = d
+      if (foe) {
+        if (!best || d < bestD || (d === bestD && (o.hp < best.hp || (o.hp === best.hp && o.id < best.id)))) {
+          best = o
+          bestD = d
+        }
+      } else if (!side || d < sideD || (d === sideD && (o.hp < side.hp || (o.hp === side.hp && o.id < side.id)))) {
+        side = o
+        sideD = d
       }
     }
   }
-  return best
+  return best ?? side
 }
 
 function attackTarget(w: World, e: EntityState): EntityState | null {
@@ -175,8 +186,9 @@ function attackTarget(w: World, e: EntityState): EntityState | null {
       return rectDist(e, t) <= range ? t : null
     }
     case "idle":
-    case "attackMove":
       return bestEnemyWithin(w, e, range)
+    case "attackMove":
+      return bestEnemyWithin(w, e, range, o.neutral === true)
     default:
       return null
   }
@@ -277,8 +289,8 @@ function moveGoal(w: World, e: EntityState): Goal | null {
     }
     case "attackMove": {
       const range = e.def.attack!.range
-      if (bestEnemyWithin(w, e, range)) return null
-      const seen = bestEnemyWithin(w, e, e.def.sight)
+      if (bestEnemyWithin(w, e, range, o.neutral === true)) return null
+      const seen = bestEnemyWithin(w, e, e.def.sight, o.neutral === true)
       if (seen) return nearGoal(w, seen, range)
       if (e.x === o.x && e.y === o.y) {
         setIdle(e)

@@ -13,7 +13,7 @@ export function orderText(e: EntityState): string {
     case "attack":
       return `attack #${o.target}`
     case "attackMove":
-      return `attackMove (${o.x},${o.y})`
+      return `attackMove (${o.x},${o.y})${o.neutral ? " 含中立" : ""}`
     case "gather":
       return o.returning ? `gather #${o.target} 回程` : `gather #${o.target}`
     case "build":

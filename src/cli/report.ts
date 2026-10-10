@@ -89,6 +89,9 @@ function countList(m: Map<string, number>): string {
 /** 闲着超过这么久的工人单独列出来 */
 const LONG_IDLE = 300
 
+/** 技能冷却好了这么久还没放，算晚放 */
+const SKILL_LATE = 100
+
 export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   const types = replay.types
   const n = replay.players.length
@@ -158,8 +161,30 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   let firstContact = -1
   /** 每个实体最后一次被哪个玩家打 */
   const lastHit = new Map<number, number>()
-  /** 最后一击的攻击者：类型和当时的位置 */
-  const lastHitter = new Map<number, { type: string; x: number; y: number }>()
+  /** 最后一击的攻击者：id、类型和当时的位置 */
+  const lastHitter = new Map<number, { id: number; type: string; x: number; y: number }>()
+  // 中立单位（野怪这类）按出生的地方分组：谁打死了几只、什么时候清空、它们打死了谁（D-191，试写反馈：战报看不出营地被谁清了、野怪打死了自己多少工人）
+  const neutralGroups: { x: number; y: number; size: number; alive: number; kills: number[]; clears: { t: number; by: number }[]; slain: Map<number, Map<string, number>> }[] = []
+  const groupOf = new Map<number, number>()
+  const addNeutral = (e: EntSnap) => {
+    if (e.owner >= 0 || groupOf.has(e.id) || kind(e.type) !== "unit" || !types[e.type]?.attack) return
+    let g = neutralGroups.findIndex((x) => Math.abs(x.x - e.x) + Math.abs(x.y - e.y) <= 3)
+    if (g < 0) {
+      neutralGroups.push({ x: e.x, y: e.y, size: 0, alive: 0, kills: new Array<number>(n).fill(0), clears: [], slain: new Map() })
+      g = neutralGroups.length - 1
+    }
+    groupOf.set(e.id, g)
+    const grp = neutralGroups[g]
+    grp.alive++
+    grp.size = Math.max(grp.size, grp.alive)
+  }
+  for (const e of s.ents.values()) addNeutral(e)
+  // 有技能的实体：什么时候出生、死掉，放技能的时间（「可能的问题」里看冷却好了多久才放）
+  const skillOwners = new Map<number, { owner: number; type: string; born: number; died: number | null; casts: { t: number; s: string }[] }>()
+  const trackSkills = (e: EntSnap, t: number) => {
+    if (e.owner >= 0 && types[e.type]?.skills?.length && !skillOwners.has(e.id)) skillOwners.set(e.id, { owner: e.owner, type: e.type, born: t, died: null, casts: [] })
+  }
+  for (const e of s.ents.values()) trackSkills(e, 0)
   /** 工人闲着的开始时间 */
   const idleFrom = new Map<number, number>()
   const idleSpans: IdleSpan[] = []
@@ -260,7 +285,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       if (!a || !tg) continue
       // 最后一击：玩家编号；中立实体打的记 -2
       lastHit.set(tg.id, a.owner >= 0 ? a.owner : -2)
-      lastHitter.set(tg.id, { type: a.type, x: a.x, y: a.y })
+      lastHitter.set(tg.id, { id: a.id, type: a.type, x: a.x, y: a.y })
       if (!enemies(a.owner, tg.owner)) continue
       if (firstContact < 0 && !isFree(a.type) && !isFree(tg.type)) {
         firstContact = f.t
@@ -298,6 +323,21 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       deaths.push({ t: f.t, owner: e.owner, type: e.type, x: e.x, y: e.y, by, ord: e.ord })
       // 最后一击是谁的什么单位、在哪（D-188，试写反馈：只写玩家编号看不出领主是被塔还是兵打死的）
       const hitter = lastHitter.get(id)
+      const so = skillOwners.get(id)
+      if (so) so.died = f.t
+      const ng = groupOf.get(id)
+      if (ng !== undefined) {
+        const grp = neutralGroups[ng]
+        grp.alive--
+        if (by >= 0 && by < n) grp.kills[by]++
+        if (grp.alive === 0) grp.clears.push({ t: f.t, by })
+      }
+      const killerGroup = by === -2 && hitter ? groupOf.get(hitter.id) : undefined
+      if (killerGroup !== undefined && e.owner >= 0) {
+        const m = neutralGroups[killerGroup].slain.get(e.owner) ?? new Map<string, number>()
+        m.set(e.type, (m.get(e.type) ?? 0) + 1)
+        neutralGroups[killerGroup].slain.set(e.owner, m)
+      }
       const byText = by >= 0 ? `，最后一击是 P${by}${hitter ? ` 的 ${hitter.type} ${at(hitter)}` : ""}` : by === -2 ? (hitter ? `，被中立的 ${hitter.type} 打死` : "，被中立实体打死") : ""
       if (e.owner < 0) events.push({ t: f.t, p: -1, text: `中立的 ${e.type} 死了 ${at(e)}${byText}` })
       else if (isFree(e.type)) events.push({ t: f.t, p: e.owner, text: `${who(e.owner)}失去 ${e.type}（这种单位造不出来，丢了就没了）${at(e)}${byText}`, cat: "key" })
@@ -327,7 +367,10 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
         events.push({ t: f.t, p: -1, text: `${from}的 ${g.ents.length} 个实体（${countList(m)}）换主人，归了${to}`, cat: "key" })
       }
     }
+    for (const c of f.casts ?? []) skillOwners.get(c.u)?.casts.push({ t: f.t, s: c.s })
     for (const e of f.spawn ?? []) {
+      addNeutral(e)
+      trackSkills(e, f.t)
       if (initialIds.has(e.id) || e.owner < 0 || e.owner >= n) continue
       // 玩家放的地基一出来就有建造进度；直接是建好的建筑，是规则包放的
       if (kind(e.type) === "building" && e.bp === undefined) {
@@ -657,6 +700,9 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     out.push(`${who0(p)}：采集约 ${income}（估算：结束时剩的 − 开局的 + 造东西花掉的），花掉 ${spentText}，抽样时平均手上留着 ${bank}；整局损失 ${countList(lost)}；整局击杀 ${countList(killed)}`)
     if (castsBy[p].size) out.push(`  放技能：${[...castsBy[p]].map(([k, v]) => `${k} ×${v}`).join("、")}`)
     else if (Object.values(replay.types).some((t) => t.skills?.length)) out.push("  放技能：一次都没放（规则包里有技能，见说明书单位表下面）")
+    const byNeutral = new Map<string, number>()
+    for (const d of deaths) if (d.owner === p && d.by === -2) byNeutral.set(d.type, (byNeutral.get(d.type) ?? 0) + 1)
+    if (byNeutral.size) out.push(`  被中立单位打死：${countList(byNeutral)}${neutralGroups.length ? "（在哪儿见「中立单位」一节）" : ""}`)
     // 出兵顺序（连着出同一种的合成一个，比如 spearman×2）：看对手按什么规律出兵
     if (armyOrder[p].length) {
       const runs: string[] = []
@@ -672,6 +718,18 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     }
   }
   out.push("")
+  if (neutralGroups.length) {
+    out.push("## 中立单位（按出生的地方分组：谁打死了几只、什么时候被清空、它们打死了谁）")
+    const named = (p: number) => (p === -2 ? "中立" : p < 0 ? "没人" : who0(p))
+    for (const g of neutralGroups) {
+      const kills = g.kills.map((k, p) => (k ? `${who(p)}打死 ${k} 只` : "")).filter(Boolean)
+      const clears = g.clears.map((c) => `t${c.t} ${named(c.by)}`)
+      const slain = [...g.slain].sort((a, b) => a[0] - b[0]).map(([p, m]) => `打死${p === me ? "你" : ` ${who0(p)} `}的 ${countList(m)}`)
+      const parts = [kills.length ? kills.join("、") : "没人打死过", clears.length ? `清空 ${clears.length} 次：${clears.slice(0, 6).join("、")}${clears.length > 6 ? "……" : ""}` : "", ...slain].filter(Boolean)
+      out.push(`(${g.x}, ${g.y}) 一带（${g.size} 只）：${parts.join("；")}`)
+    }
+    out.push("")
+  }
   if (mining.size) {
     out.push(
       "## 采矿（每个矿：交了几次货；采一次来回平均几 tick，交货点离矿越近越短；最多同时派了几个工人 / 矿旁边站得下几个；排队是工人站在矿附近等空位的总时间，站满了不会自己换矿）",
@@ -850,6 +908,48 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
             : "敌人打过来时可以让工人躲开，或者在采集的地方留兵"
         hints.push(`工人被卷进战斗：${where.join("；")}${bad.length > 3 ? `，另有 ${bad.length - 3} 场` : ""}。${advice}`)
       }
+    }
+    // 工人被中立单位（野怪这类）打死（D-191，试写反馈：只写"工人被卷进战斗"，看不出是野怪打的）
+    const workersByNeutral = deaths.filter((d) => d.owner === p && d.by === -2 && isWorker(d.type))
+    if (workersByNeutral.length >= 3) {
+      const where = neutralGroups
+        .map((g) => ({ g, k: [...(g.slain.get(p) ?? [])].filter(([t]) => isWorker(t)).reduce((a, [, c]) => a + c, 0) }))
+        .filter((x) => x.k > 0)
+        .sort((a, b) => b.k - a.k)
+        .map((x) => `(${x.g.x}, ${x.g.y}) 一带 ${x.k} 个`)
+      hints.push(
+        `工人被中立单位打死 ${workersByNeutral.length} 个${where.length ? `（${where.slice(0, 3).join("、")}）` : ""}：多半是采矿、交货的路线贴着营地走，或者营地打起来时在它附近采矿。工人的路线绕开营地，别人在旁边清野时把工人挪开（见「中立单位」一节）`,
+      )
+    }
+    // 技能冷却好了很久没放（D-191，试写反馈：领主被挡在路上，点金每次晚一百多 tick，被拒命令、报错里都看不出来）
+    {
+      const late: { name: string; type: string; n: number; total: number; worst: { from: number; to: number } | null }[] = []
+      for (const so of skillOwners.values()) {
+        if (so.owner !== p) continue
+        for (const sk of types[so.type]?.skills ?? []) {
+          const end = so.died ?? last
+          let ready = so.born + (sk.initialCooldown ?? 0)
+          let row: (typeof late)[number] | null = null
+          const note = (from: number, to: number) => {
+            if (to - from < SKILL_LATE) return
+            row ??= { name: sk.name, type: so.type, n: 0, total: 0, worst: null }
+            row.n++
+            row.total += to - from
+            if (!row.worst || to - from > row.worst.to - row.worst.from) row.worst = { from, to }
+          }
+          for (const c of so.casts) {
+            if (c.s !== sk.id) continue
+            note(ready, c.t)
+            ready = c.t + sk.cooldown
+          }
+          if (ready < end) note(ready, end)
+          if (row) late.push(row)
+        }
+      }
+      for (const r of late.sort((a, b) => b.total - a.total).slice(0, 2))
+        hints.push(
+          `${r.type} 的技能「${r.name}」冷却好了没马上放：${r.n} 次等了 ${SKILL_LATE} tick 以上，一共 ${r.total} tick（最长一次 t${r.worst!.from}～t${r.worst!.to}）。不是故意留着的话，看看是不是想放的位置走不到（在采矿、建造的自己人不让路）、或者放的条件写得太严`,
+        )
     }
     if (hasArmy) {
       if (firstArmy[p] < 0 && firstHitTaken[p] >= 0) hints.push(`整局没有兵（只有工人），第 ${firstHitTaken[p]} tick 起挨打`)

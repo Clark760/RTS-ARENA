@@ -1,4 +1,4 @@
-// 基准（均衡）：拓荒的基准打法加上领主：领主守在家门口的矿边点金，冷却一好就放；凑够 10 个兵进攻，家里或领主附近来敌人全军回防。
+// 基准（均衡）：拓荒的基准打法加上领主：领主守在家门口的矿边点金，冷却一好就放；6～9 个兵时家里没事就去清最近的野怪营地，凑够 10 个兵进攻，家里或领主附近来敌人全军回防。
 // 用来衡量新 bot 的标准对手。
 // - 领主：在家门口金矿附近找一格四周都空着的地方站着点金（金矿出现在身边，工人就近采）；7 格内出现敌方的兵就跑回开局的角落。出击时不跟。
 // - 建造：先建兵营，再建箭塔守家、派工人去分矿建仓库、建第二座兵营；地基四周和金矿、别的建筑留出一格空。
@@ -383,7 +383,7 @@ function mainTick(view: View, cmd: Commands): void {
 
   if (mode === "defend") {
     // 清野（D-189）：兵够 6 个、家里没事时去打离家最近的野怪营地，一只 150 金赏金
-    const camp = army.length >= 6 ? view.objectives.creepCamps.filter((c) => c.alive > 0).sort((a, b) => dist(a, base) - dist(b, base))[0] : undefined
+    const camp = army.length >= 6 ? view.objectives.creepCamps.filter((c) => c.alive > 0).sort((a, b) => dist(a, base) - dist(b, base) || campSide(a, base) - campSide(b, base))[0] : undefined
     if (camp) {
       const creeps = view.entities.filter((e) => e.type === "creep")
       for (const u of army) {
@@ -429,4 +429,9 @@ export function onTick(view: View, cmd: Commands): void {
     for (const k of creeps) if (dist(k, u) <= reach && (!c || dist(k, u) < dist(c, u))) c = k
     if (c && !(u.order?.kind === "attack" && u.order.target === c.id)) cmd.attack(u, c)
   }
+}
+
+/** 选营地时距离打平：按自己这边看（右下那家把坐标镜像过来）先挑靠下的，两家各去自己那一侧的营地（D-191） */
+function campSide(c: { x: number; y: number }, base: { x: number }): number {
+  return base.x > game.width / 2 ? c.y : -c.y
 }
