@@ -76,6 +76,8 @@ export interface SkillDef {
   target: "none" | "point" | "unit"
   /** 目标离释放者最远几格（曼哈顿距离，从占地最近的格子算）；target 是 none 时没有意义 */
   range: number
+  /** 每放一次要花的资源（比如 { gold: 500 }）；放成功才扣，不够被拒。空对象是不要钱 */
+  cost: Partial<Record<ResourceName, number>>
   /** 效果说明 */
   desc: string
 }

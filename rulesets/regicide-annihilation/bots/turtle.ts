@@ -1,11 +1,17 @@
-// 守家反击：兵守在家门口、领主在旁边给光环，不主动进攻，但兵够 8 个、家里没事就去清最近的野怪营地（参考 bot 里清野最多的）；挡住一波进攻（守的时候杀了 4 个以上）就趁对方兵少反攻，快到时间上限还不领先就出击。
+// 守家反击：兵守在家门口、领主在旁边给光环，兵够 6 个就停下出兵攒钱、在集结点召唤箭塔（最多 5 座），不主动进攻，但兵够 8 个、家里没事就去清最近的野怪营地（参考 bot 里清野最多的）；挡住一波进攻（守的时候杀了 4 个以上）就趁对方兵少反攻，快到时间上限还不领先就出击。
 // - 集结点离兵营只有 3 格（在家里的领主光环范围内）；家里或领主附近来敌人全军回防，领主跟着守军。
-// - 其余（经济、点金、挑目标、撤退）和基准一样。
+// - 其余（经济、挑目标、撤退）和基准一样。
 const ATTACK_AT = 60
 const REINFORCE_AT = 3
 const RETREAT_BELOW = 4
 const MAX_WORKERS = 12
 const MAX_PER_MINE = 3
+/** 召唤箭塔（D-192）：一座 500 金，最多放几座，放完手上至少还留多少钱 */
+const TOWER_COST = 500
+const MAX_TOWERS = 5
+/** 兵到这么多、冷却好了、家里没事就先不出兵，攒够 500 放塔（不到这么多兵时钱要多出 TOWER_RESERVE 才放） */
+const SAVE_AT = 6
+const TOWER_RESERVE = 100
 const ECO_FIRST = 10
 const PLAN: TypeName[] = ["soldier", "archer"]
 const enemySeen = new Map<number, number>()
@@ -19,7 +25,6 @@ let repelledAt = -1000
 let produced = 0
 let rally: Pos | null = null
 let lordHome: Pos | null = null
-let post: Pos | null = null
 
 const isCombat = (e: Entity) => e.type === "soldier" || e.type === "archer"
 
@@ -46,37 +51,6 @@ function pointToward(p: Pos, toward: Pos, steps: number): Pos {
     for (let ox = -r; ox <= r; ox++)
       for (const oy of [r - Math.abs(ox), -(r - Math.abs(ox))]) if (walkable(c.x + ox, c.y + oy)) return { x: c.x + ox, y: c.y + oy }
   return c
-}
-
-/** 建筑、资源点占着的格子 */
-function staticCells(view: View): Set<number> {
-  const s = new Set<number>()
-  for (const e of view.entities) {
-    if (game.types[e.type].kind === "unit") continue
-    for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) s.add(y * game.width + x)
-  }
-  return s
-}
-
-/** 这一格和上下左右都能走、没有建筑和资源点：领主站这里点金，金矿出现在旁边也不会把它围住 */
-function openCell(x: number, y: number, occ: Set<number>): boolean {
-  for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
-    const nx = x + dx
-    const ny = y + dy
-    if (!walkable(nx, ny) || occ.has(ny * game.width + nx)) return false
-  }
-  return true
-}
-
-function findPost(anchor: Pos, occ: Set<number>): Pos | null {
-  for (let r = 0; r <= 10; r++)
-    for (let ox = -r; ox <= r; ox++)
-      for (const oy of r === Math.abs(ox) ? [0] : [r - Math.abs(ox), -(r - Math.abs(ox))]) {
-        const x = anchor.x + ox
-        const y = anchor.y + oy
-        if (openCell(x, y, occ)) return { x, y }
-      }
-  return null
 }
 
 function pickTarget(u: Entity, enemies: Entity[]): Entity | undefined {
@@ -137,26 +111,21 @@ function mainTick(view: View, cmd: Commands): void {
   rally ??= pointToward(barracks ?? base, enemyBaseCenter, 3)
 
   // ---------- 领主 ----------
+  let towerGold = 0
+  const wantTower = lord !== undefined && mine.filter((e) => e.type === "tower").length < MAX_TOWERS && (lord.skillCooldowns?.tower ?? 1) === 0
   if (lord) {
     lordHome ??= { x: lord.x, y: lord.y }
+    const towerReady = wantTower && view.resources.gold >= TOWER_COST + (army.length >= SAVE_AT ? 0 : TOWER_RESERVE)
     const danger = enemyUnits.some((e) => game.types[e.type].attack !== null && e.type !== "worker" && dist(e, lord) <= 7)
     if (danger) {
       moveTo(cmd, lord, lordHome)
-      post = null
-    } else {
-      const occ = staticCells(view)
-      if (!post || !openCell(post.x, post.y, occ)) {
-        const home = goldmines.filter((m) => dist(m, base) <= 12)
-        post = findPost(home.length ? centroid(home) : { x: base.x + 1, y: base.y + 1 }, occ)
-      }
-      if (post) {
-        if (lord.x !== post.x || lord.y !== post.y) moveTo(cmd, lord, post)
-        else if ((lord.skillCooldowns?.goldmine ?? 1) === 0) {
-          cmd.cast(lord, "goldmine")
-          post = null
-        }
-      }
-    }
+    } else if (towerReady) {
+      // 召唤箭塔（D-192）：走到集结点 3 格内，在集结点放一座（那格被占就放在旁边最近的空地）
+      if (Math.abs(lord.x - rally.x) + Math.abs(lord.y - rally.y) <= 3) {
+        cmd.cast(lord, "tower", rally)
+        towerGold = TOWER_COST
+      } else moveTo(cmd, lord, rally)
+    } else moveTo(cmd, lord, lordHome)
   }
 
   // ---------- 威胁 ----------
@@ -169,13 +138,15 @@ function mainTick(view: View, cmd: Commands): void {
   )
 
   // ---------- 生产 ----------
-  let gold = view.resources.gold
+  let gold = view.resources.gold - towerGold
   const baseIdle = (base.queue?.length ?? 0) === 0
   if (baseIdle && workers.length < ECO_FIRST && gold >= 50) {
     room-- > 0 && cmd.produce(base, "worker")
     gold -= 50
   }
-  if (barracks && (barracks.queue?.length ?? 0) === 0 && (workers.length >= ECO_FIRST || !baseIdle || gold >= 125)) {
+  // 攒钱放塔（D-192）：兵够 SAVE_AT 个、家里没事、领主冷却好了，先不出兵
+  const saving = wantTower && army.length >= SAVE_AT && threats.length === 0
+  if (barracks && !saving && (barracks.queue?.length ?? 0) === 0 && (workers.length >= ECO_FIRST || !baseIdle || gold >= 125)) {
     const type = PLAN[produced % PLAN.length]
     const cost = game.types[type].cost.gold ?? 0
     if (gold >= cost) {

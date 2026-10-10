@@ -157,7 +157,7 @@ function applyOne(w: World, p: number, c: unknown): string | null {
 }
 
 /**
- * 放技能（D-186）：平台检查技能、冷却、目标，效果交给规则包的 onCast；onCast 返回 null 才算放成功、开始冷却。
+ * 放技能（D-186）：平台检查技能、冷却、目标、造价（D-192），效果交给规则包的 onCast；onCast 返回 null 才算放成功、扣钱、开始冷却。
  * 看不见的目标和不存在的目标用同一句话拒绝（不泄露迷雾里的东西）
  */
 function castSkill(w: World, p: number, e: EntityState, cmd: Record<string, unknown>): string | null {
@@ -185,9 +185,12 @@ function castSkill(w: World, p: number, e: EntityState, cmd: Record<string, unkn
     if (d > sk.range) return `#${t.id} 离 #${e.id} ${d} 格，${sk.name} 最远 ${sk.range} 格`
     info.target = t.id
   }
+  const res = w.players[p].resources
+  for (const [r, n] of Object.entries(sk.cost)) if ((res[r] ?? 0) < (n ?? 0)) return `${r} 不够：${sk.name}要 ${n}，现有 ${res[r] ?? 0}`
   if (!w.rules.onCast) return `规则包没有实现技能的效果（onCast），${sk.name} 放不了`
   const veto = w.rules.onCast(w, info)
   if (veto) return veto
+  for (const [r, n] of Object.entries(sk.cost)) res[r] -= n ?? 0
   // onCast 里实体可能已经没了（比如技能是自爆）
   if (e.alive) e.skillCooldowns[sk.id] = sk.cooldown
   w.casts.push(info)

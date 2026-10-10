@@ -45,7 +45,7 @@ export function resolveType(name: string, s: TypeSpec): TypeDef {
     produces: s.produces ?? [],
     builds: s.kind === "unit" ? (s.builds ?? []) : [],
     resource: s.resource ?? null,
-    skills: (s.skills ?? []).map((k) => ({ id: k.id, name: k.name, cooldown: k.cooldown, initialCooldown: k.initialCooldown ?? 0, target: k.target ?? "none", range: k.range ?? 0, desc: k.desc })),
+    skills: (s.skills ?? []).map((k) => ({ id: k.id, name: k.name, cooldown: k.cooldown, initialCooldown: k.initialCooldown ?? 0, target: k.target ?? "none", range: k.range ?? 0, cost: { ...(k.cost ?? {}) }, desc: k.desc })),
     auras: (s.auras ?? []).map((a) => ({
       name: a.name,
       radius: a.radius ?? -1,

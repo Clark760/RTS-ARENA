@@ -927,6 +927,8 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       for (const so of skillOwners.values()) {
         if (so.owner !== p) continue
         for (const sk of types[so.type]?.skills ?? []) {
+          // 要花钱的技能（D-192）：没钱放不了、攒着钱不放都可能是故意的，不算晚放
+          if (Object.values(sk.cost ?? {}).some((c) => (c ?? 0) > 0)) continue
           const end = so.died ?? last
           let ready = so.born + (sk.initialCooldown ?? 0)
           let row: (typeof late)[number] | null = null

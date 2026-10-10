@@ -105,7 +105,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
         if (!Array.isArray(list) || list.some((x) => typeof x !== "string" || !names.has(x))) bad(`${at}.${k} 要是已定义的类型名数组`)
         else if (k === "builds" && list.some((x) => (types[x as string] as Obj | undefined)?.kind !== "building")) bad(`${at}.builds 里只能是建筑类型`)
       }
-      checkAbilities(s, at, names, kind, bad)
+      checkAbilities(s, at, names, kind, resSet, bad)
       if (kind === "resource" && (typeof s.resource !== "string" || !resSet.has(s.resource))) bad(`${at}.resource：资源点要写产出的资源名（在 resources 里）`)
       if (kind !== "resource" && s.resource !== undefined && s.resource !== null) bad(`${at}.resource：只有资源点能写`)
       const look = s.look
@@ -126,7 +126,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
 }
 
 /** 技能、光环、被动（D-186） */
-function checkAbilities(s: Obj, at: string, names: Set<string>, kind: string, bad: (msg: string) => void): void {
+function checkAbilities(s: Obj, at: string, names: Set<string>, kind: string, resSet: Set<string>, bad: (msg: string) => void): void {
   const short = (v: unknown, max: number) => typeof v === "string" && [...v].length >= 1 && [...v].length <= max
   if (s.skills !== undefined) {
     if (!Array.isArray(s.skills) || s.skills.length > 8) bad(`${at}.skills 要是数组，最多 8 个`)
@@ -146,6 +146,10 @@ function checkAbilities(s: Obj, at: string, names: Set<string>, kind: string, ba
         if (k.target !== undefined && !["none", "point", "unit"].includes(k.target as string)) bad(`${w}.target 要是 none、point、unit 之一`)
         if (k.range !== undefined && !isInt(k.range, 0, 64)) bad(`${w}.range 要是 0～64 的整数`)
         if ((k.target === "point" || k.target === "unit") && !isInt(k.range, 1, 64)) bad(`${w}：target 是 ${k.target} 时要写 range（1～64）`)
+        if (k.cost !== undefined) {
+          if (!isObj(k.cost)) bad(`${w}.cost 要写成 { 资源名: 数量 }`)
+          else for (const [r, n] of Object.entries(k.cost)) if (!resSet.has(r) || !isInt(n, 0)) bad(`${w}.cost.${r}：资源要在 resources 里，数量是非负整数`)
+        }
       })
     }
   }

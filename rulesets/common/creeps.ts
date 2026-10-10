@@ -10,7 +10,7 @@ import type { MatchResult, RuleContext, SetupContext, TypeSpec } from "../../src
 import { STANDARD_TERRAIN } from "./standard.ts"
 
 /** 每只野怪的赏金（金） */
-export const CREEP_BOUNTY = 150
+export const CREEP_BOUNTY = 100
 /** 营地清空后多少 tick 刷新 */
 export const CREEP_RESPAWN = 900
 /** 追打范围：离营地这么多格以内 */

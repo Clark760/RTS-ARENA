@@ -1,4 +1,4 @@
-// 大模型试写（Sonnet 测试员第二轮 60 分钟交的 v7，偏强）：领主挑好站位点金让金矿贴着主基地，兵在家门口吃光环守住；600～2600 tick 兵够 16 个就带着领主去清最近的野怪营地（集火，附近来了敌兵马上转去迎战）；击杀价值领先 600、兵够 20 个就反推。
+// 大模型试写（Sonnet 测试员第二轮 60 分钟交的 v7，偏强）：兵在家门口吃光环守住，领主在家时用造完兵剩下的钱在集结点召唤箭塔（钱够 600、最多 4 座；收录时把原来的点金换成了这个）；600～2600 tick 兵够 16 个就带着领主去清最近的野怪营地（集火，附近来了敌兵马上转去迎战）；击杀价值领先 600、兵够 20 个就反推。
 // 参数集中在顶部，方便每版改
 
 const WORKERS_WANT = 9
@@ -104,82 +104,6 @@ function centroid(us: Entity[]): Pos {
     sy += u.y
   }
   return { x: Math.round(sx / us.length), y: Math.round(sy / us.length) }
-}
-
-// 点金落点模拟：领主站在 L，落点是 1～3 格里最近的空格，同距选离图中心近的
-function simulateMine(occ: Set<number>, L: Pos): Pos[] {
-  const cx = (game.width - 1) / 2
-  const cy = (game.height - 1) / 2
-  let bd = 99
-  let bc = 1e9
-  let res: Pos[] = []
-  for (let dx = -3; dx <= 3; dx++) {
-    for (let dy = -3; dy <= 3; dy++) {
-      const d = Math.abs(dx) + Math.abs(dy)
-      if (d < 1 || d > 3) continue
-      const x = L.x + dx
-      const y = L.y + dy
-      if (!isWalk(x, y) || occ.has(y * game.width + x)) continue
-      const c = Math.abs(x - cx) + Math.abs(y - cy)
-      if (d < bd || (d === bd && c < bc - 1e-9)) {
-        bd = d
-        bc = c
-        res = [{ x, y }]
-      } else if (d === bd && Math.abs(c - bc) < 1e-9) res.push({ x, y })
-    }
-  }
-  return res
-}
-
-function evalSpot(occ: Set<number>, L: Pos, bar: Entity | undefined): number {
-  if (!baseE) return 1e9
-  const res = simulateMine(occ, L)
-  if (res.length === 0) return 1e9
-  let worst = 0
-  for (const m of res) {
-    let s = dist(m, baseE) * 3
-    if (bar && dist(m, bar) <= 1) s += 10
-    let blocked = 0
-    for (const [ax, ay] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nx = m.x + ax
-      const ny = m.y + ay
-      if (!isWalk(nx, ny) || occ.has(ny * game.width + nx)) blocked++
-    }
-    if (blocked >= 3) s += 6
-    if (s > worst) worst = s
-  }
-  return worst
-}
-
-function planMine(view: View, lord: Entity, bar: Entity | undefined): { pos: Pos; score: number; cur: number } | null {
-  if (!baseE) return null
-  const occ = new Set<number>()
-  for (const e of view.entities) {
-    if (e.id === lord.id) continue
-    if (e.type === "lord" || e.type === "worker" || e.type === "soldier" || e.type === "archer" || e.type === "creep") continue
-    for (let x = e.x; x < e.x + e.w; x++) for (let y = e.y; y < e.y + e.h; y++) occ.add(y * game.width + x)
-  }
-  const dl = pathDistances(view, lord)
-  let best: Pos | null = null
-  let bestS = 1e9
-  let bestRaw = 1e9
-  for (let y = Math.max(0, baseE.y - 6); y < Math.min(game.height, baseE.y + 9); y++) {
-    for (let x = Math.max(0, baseE.x - 6); x < Math.min(game.width, baseE.x + 9); x++) {
-      if (!isWalk(x, y) || occ.has(y * game.width + x)) continue
-      const li = dl[y * game.width + x]
-      if (li < 0 || li > 14) continue
-      const raw = evalSpot(occ, { x, y }, bar)
-      if (raw >= 1e9) continue
-      const total = raw + li * 0.3
-      if (total < bestS) {
-        bestS = total
-        bestRaw = raw
-        best = { x, y }
-      }
-    }
-  }
-  if (!best) return null
-  return { pos: best, score: bestRaw, cur: evalSpot(occ, { x: lord.x, y: lord.y }, bar) }
 }
 
 export function onTick(view: View, cmd: Commands): void {
@@ -331,16 +255,16 @@ export function onTick(view: View, cmd: Commands): void {
 
   // ---------- 领主 ----------
   if (lord) {
-    const cd = lord.skillCooldowns?.goldmine ?? 0
+    const cd = lord.skillCooldowns?.tower ?? 1
     let lordTarget: Pos | null = null
-    if (mode === "home" && cd === 0 && t - lastCast > 20 && !homeThreat) {
-      const plan = planMine(view, lord, bar)
-      if (plan) {
-        if ((lord.x === plan.pos.x && lord.y === plan.pos.y) || plan.cur <= plan.score + 3) {
-          cmd.cast(lord, "goldmine")
-          lastCast = t
-        } else lordTarget = plan.pos
-      }
+    // 召唤箭塔（D-192 收录时改）：在家、没威胁、造完兵还剩 600 以上就走到步兵集结点 3 格内，在集结点放一座，最多 4 座
+    const towers = my.filter((e) => e.type === "tower").length
+    if (mode === "home" && cd === 0 && t - lastCast > 20 && !homeThreat && gold >= 600 && towers < 4) {
+      if (Math.abs(lord.x - rally.x) + Math.abs(lord.y - rally.y) <= 3) {
+        cmd.cast(lord, "tower", rally)
+        gold -= 500
+        lastCast = t
+      } else lordTarget = rally
     }
     if (!lordTarget) {
       if (mode === "home") {
@@ -449,6 +373,6 @@ export function onTick(view: View, cmd: Commands): void {
   }
 
   if (t % 500 === 0) {
-    console.log(`t=${t} mode=${mode} army=${army.length} workers=${workers.length} gold=${view.resources.gold} lordCD=${lord?.skillCooldowns?.goldmine} score=${view.players[me].score}`)
+    console.log(`t=${t} mode=${mode} army=${army.length} workers=${workers.length} gold=${view.resources.gold} lordCD=${lord?.skillCooldowns?.tower} score=${view.players[me].score}`)
   }
 }

@@ -1,19 +1,19 @@
 // 弑君歼灭（D-187）：歼灭的地图、兵种和击杀价值，开局每家送 1 个领主；主基地被拆或领主阵亡就输
-// 地图和开局在 ../common/annihilation.ts，领主、点金和胜负在 ../common/regicide.ts
+// 地图和开局在 ../common/annihilation.ts，领主、召唤箭塔和胜负在 ../common/regicide.ts（D-192：歼灭的领主不点金，花 500 金召唤箭塔）
 import type { Ruleset } from "../../src/core/types.ts"
 import { STANDARD_TERRAIN, standardTypes } from "../common/standard.ts"
 import { ANNIHILATION_H, ANNIHILATION_W, annihilationEnemyBases, annihilationSetup, annihilationTimeUp, scoreAnnihilationKills } from "../common/annihilation.ts"
-import { regicideCast, regicideResult, spawnLords, withLord } from "../common/regicide.ts"
+import { regicideCast, regicideResult, regicideStats, spawnLords, withLord } from "../common/regicide.ts"
 import { campInfo, creepBounty, creepTick, creepTimeUp, creepType, setupCamps } from "../common/creeps.ts"
 import type { Objectives } from "./objectives.ts"
 
-const types = withLord(standardTypes(), ["soldier", "archer"])
+const types = withLord(standardTypes(), ["soldier", "archer"], "tower")
 types.creep = creepType()
 
 const ruleset: Ruleset = {
   id: "regicide-annihilation",
   name: "弑君歼灭",
-  summary: "两人对战，开局送一个领主（光环加攻防、能造金矿），地图上有刷新的野怪赏金，主基地被拆或领主阵亡就输",
+  summary: "两人对战，开局送一个领主（光环加攻防、能花钱召唤箭塔），地图上有刷新的野怪赏金，主基地被拆或领主阵亡就输",
   players: { min: 2, max: 2 },
   maxTicks: 6000,
   tickRate: 10,
@@ -48,7 +48,7 @@ const ruleset: Ruleset = {
 
   onCast: regicideCast,
   result: regicideResult,
-  timeUp: (ctx) => creepTimeUp(ctx, annihilationTimeUp(ctx)),
+  timeUp: (ctx) => ({ ...creepTimeUp(ctx, annihilationTimeUp(ctx)), stats: regicideStats(ctx.playerCount) }),
 }
 
 export default ruleset

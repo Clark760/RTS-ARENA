@@ -51,7 +51,7 @@ export function onTick(view: View, cmd: Commands): void {
 | `cmd.produce(b, type)` | 排进生产队列，立即扣资源。 | 不是你的；建筑还没建好；不能生产这种类型；队列已满（5 个）；单位数（现有 + 所有队列里的）已到 `game.unitCap`；资源不够（同一次调用里的 produce 按顺序扣钱） |
 | `cmd.cancel(b)` | 取消队列里最后一个，全额退款。对没建好的建筑：拆掉它，退还造价的 75%（向下取整）。 | 不是你的；队列是空的 |
 | `cmd.build(u, type, x, y)` | 在左上角 (x, y) 放下 type 的地基、立即扣钱，u 走过去建（见下面「建造」）。对自己没建好的同类地基（左上角正好是 (x, y)）下，就是去接着建或者帮忙，不扣钱。 | 不是你的；u 不能建造这种类型（`game.types[u.type].builds`）；按这个顺序查：占地超出地图；地形不可走或压着资源点（这两样整局都看得见）；有格子不在你方视野里；有别的实体（单位也算，包括 u 自己）；资源不够（和 produce 一起按顺序扣钱） |
-| `cmd.cast(u, skill, target?)` | 释放技能（规则包里有技能时，见下面「技能、光环、被动」）：立即生效，不打断 u 当前的命令，放成功就开始冷却。target 按技能的 `target` 写：none 不写，point 写 `{ x, y }`，unit 写实体或 id。 | 不是你的；没有这个技能；还在冷却；没建好；目标不对或超出 `range`；看不到目标；规则包按玩法拒绝（原因原样给你，不进冷却） |
+| `cmd.cast(u, skill, target?)` | 释放技能（规则包里有技能时，见下面「技能、光环、被动」）：立即生效，不打断 u 当前的命令，放成功就开始冷却、扣掉技能的造价（`cost`，有的话）。target 按技能的 `target` 写：none 不写，point 写 `{ x, y }`，unit 写实体或 id。 | 不是你的；没有这个技能；还在冷却；没建好；目标不对或超出 `range`；看不到目标；资源不够技能的 `cost`；规则包按玩法拒绝（原因原样给你，不扣钱、不进冷却） |
 
 另外，参数类型不对、一次调用超过 2000 条命令都会被拒。实体不是你的和已经死了，拒绝原因是同一句话（"你没有 #id 这个实体"）。
 
@@ -63,7 +63,7 @@ export function onTick(view: View, cmd: Commands): void {
 
 有的规则包给某些类型写了技能、光环、被动（D-186），都在 `game.types[类型]` 里，没有就是空数组；说明书的单位表下面会逐个列出来。
 
-- **技能** `skills`：每个是 `{ id, name, cooldown, initialCooldown, target, range, desc }`。用 `cmd.cast(实体, id, 目标)` 释放，效果看 `desc` 和玩法说明。自己实体的 `skillCooldowns` 是每个技能还要等几 tick（0 是现在就能放），放成功就变成 `cooldown`；开局（或实体刚出现时）是 `initialCooldown`。冷却好了也可能被规则包按玩法拒绝（比如"身边没有空地"），这时不进冷却，`rejected` 事件里有原因。
+- **技能** `skills`：每个是 `{ id, name, cooldown, initialCooldown, target, range, cost, desc }`。用 `cmd.cast(实体, id, 目标)` 释放，效果看 `desc` 和玩法说明。`cost` 是每放一次要花的资源（`{}` 是不要钱），放成功那一刻扣，和 `produce` 一样按命令顺序扣：同一次调用里先放技能再 `produce`，造东西能用的钱就少了。自己实体的 `skillCooldowns` 是每个技能还要等几 tick（0 是现在就能放），放成功就变成 `cooldown`；开局（或实体刚出现时）是 `initialCooldown`。冷却好了也可能被规则包按玩法拒绝（比如"身边没有空地"），这时不进冷却，`rejected` 事件里有原因。
 - **光环** `auras`：带光环的实体周围 `radius` 格（-1 是它的视野）内、符合 `affects`（own 自己的、allies 自己和盟友的、enemies 敌人的）和 `types`（空是所有单位和建筑）的实体，打出的伤害加 `damagePct`%、受到的伤害减 `defensePct`%。每 tick 重新算，出了范围马上就没有；同名的光环不叠加（几个同类实体的光环只算一份），不同名的相加。
 - **被动** `passives`：现在只有脱战回血 `{ kind: "regen", delay, every, amount }`：`delay` 个 tick 没出手、也没挨打以后，每 `every` 个 tick 回 `amount` 生命，一出手或挨打就重新计时。
 - **增益** `buffs`：实体身上现在生效的加成（光环给的、技能给的），`{ name, damagePct, defensePct, ticksLeft? }`，看得见这个实体就看得见（对手的也是）；没有就没有这个字段。打出的伤害 = 原伤害 ×（1 + 攻击方各项 `damagePct` 之和 / 100）×（1 − 挨打方各项 `defensePct` 之和 / 100），四舍五入；减伤合计最多 90%。

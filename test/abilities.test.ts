@@ -211,6 +211,90 @@ test("技能：目标超出 range 被拒；增益 addBuff 限时，到期自动�
   assert.equal(seen[4], undefined)
 })
 
+test("技能造价（D-192）：放成功才扣，不够被拒，规则包拒绝时不扣；bot 在 game.types 里看得到 cost", () => {
+  const events: GameEvent[] = []
+  const gold: number[] = []
+  const banker: TypeSpec = {
+    kind: "unit",
+    maxHp: 100,
+    moveTicks: 1,
+    sight: 4,
+    skills: [
+      { id: "buy", name: "花钱", cooldown: 2, cost: { gold: 20 }, desc: "花 20 金" },
+      { id: "nope", name: "不行", cooldown: 2, cost: { gold: 5 }, desc: "规则包总是拒绝" },
+    ],
+    look,
+  }
+  const replay = play(
+    mini([["banker", 0, 1, 1], ["grunt", 1, 10, 4]], {
+      maxTicks: 6,
+      types: { ...TYPES, banker },
+      setup(ctx) {
+        ctx.setTerrain(Array(6).fill(".".repeat(12)))
+        ctx.spawn("banker", 0, 1, 1)
+        ctx.spawn("grunt", 1, 10, 4)
+        ctx.setResources(0, { gold: 30 })
+      },
+    }),
+    (v, cmd) => {
+      events.push(...v.events)
+      gold[v.tick] = v.resources.gold
+      const b = mine(v, "banker")[0]
+      if (v.tick === 0) cmd.cast(b, "buy")
+      if (v.tick === 1) cmd.cast(b, "nope")
+      if (v.tick === 3) cmd.cast(b, "buy")
+    },
+  )
+  assert.deepEqual(replay.types.banker.skills?.[0].cost, { gold: 20 })
+  assert.equal(gold[1], 10)
+  assert.equal(gold[2], 10)
+  assert.equal(gold[4], 10)
+  const rejected = events.filter((e) => e.kind === "rejected").map((e) => (e as { reason: string }).reason)
+  assert.ok(rejected.some((r) => r === "就是不让放"), rejected.join("\n"))
+  assert.ok(rejected.some((r) => /gold 不够：花钱要 20，现有 10/.test(r)), rejected.join("\n"))
+})
+
+test("召唤箭塔（D-192）：花 500 金在目标格放一座造好的箭塔，目标格被占就放在旁边，钱不够被拒", async () => {
+  const { lordType, regicideCast, summonedTowerType } = await import("../rulesets/common/regicide.ts")
+  const events: GameEvent[] = []
+  const gold: number[] = []
+  let towers: Entity[] = []
+  const types = { ...TYPES, lord: lordType(["grunt"], "tower"), tower: summonedTowerType(), base: { kind: "building" as const, w: 2, h: 2, maxHp: 500, look } }
+  play(
+    mini([], {
+      maxTicks: 4,
+      types,
+      setup(ctx) {
+        ctx.setTerrain(Array(6).fill(".".repeat(12)))
+        ctx.spawn("base", 0, 0, 0)
+        ctx.spawn("lord", 0, 4, 2)
+        ctx.spawn("grunt", 0, 6, 2)
+        ctx.spawn("lord", 1, 10, 4)
+        ctx.setResources(0, { gold: 600 })
+        ctx.setResources(1, { gold: 400 })
+      },
+      onCast: regicideCast,
+    }),
+    (v, cmd) => {
+      events.push(...v.events)
+      gold[v.tick] = v.resources.gold
+      towers = v.entities.filter((e) => e.type === "tower")
+      // 目标格 (6, 2) 站着自己的兵：放在离它最近的空格
+      if (v.tick === 0) cmd.cast(mine(v, "lord")[0], "tower", { x: 6, y: 2 })
+    },
+    (v, cmd) => {
+      events.push(...v.events)
+      if (v.tick === 0) cmd.cast(mine(v, "lord")[0], "tower", { x: 9, y: 4 })
+    },
+  )
+  assert.equal(gold[1], 100)
+  assert.equal(towers.length, 1)
+  assert.equal(towers[0].owner, 0)
+  assert.equal(Math.abs(towers[0].x - 6) + Math.abs(towers[0].y - 2), 1)
+  assert.equal(towers[0].construction, undefined)
+  assert.ok(events.some((e) => e.kind === "rejected" && /gold 不够：召唤箭塔要 500，现有 400/.test(e.reason)))
+})
+
 test("技能：规则包没导出 onCast 时都被拒", () => {
   const events: GameEvent[] = []
   play(
@@ -294,7 +378,7 @@ test("attackMove 写 { neutral: true } 也打中立单位，射程里有对手�
   assert.ok(hp.foe! < 100)
 })
 
-test("野怪营地（D-189）：两两中心对称；打死一只给最后一击的玩家 150 金，清空后记下 900 tick 后刷新", async () => {
+test("野怪营地（D-189）：两两中心对称；打死一只给最后一击的玩家赏金，清空后记下 900 tick 后刷新", async () => {
   const { campInfo, creepBounty, creepTick, creepTimeUp, creepType, setupCamps, CREEP_BOUNTY, CREEP_RESPAWN } = await import("../rulesets/common/creeps.ts")
   const W = 30
   const H = 20
@@ -347,5 +431,5 @@ test("野怪营地（D-189）：两两中心对称；打死一只给最后一击
   assert.deepEqual(creepBounty(2), [3 * CREEP_BOUNTY, 0])
   // 到时间平局时赏金多的赢
   assert.deepEqual(replay.result.winners, [0])
-  assert.match(replay.result.reason, /野怪赏金 450 : 0/)
+  assert.match(replay.result.reason, new RegExp(`野怪赏金 ${3 * CREEP_BOUNTY} : 0`))
 })

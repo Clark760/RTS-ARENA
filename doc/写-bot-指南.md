@@ -76,7 +76,7 @@ export function onTick(view: View, cmd: Commands): void {
 | `cmd.produce(b, type)` | 建筑排队生产，立即扣钱 |
 | `cmd.cancel(b)` | 取消队列里最后一个（全额退款），或拆掉没建好的地基（退 75%） |
 | `cmd.build(u, type, x, y)` | 在左上角 (x, y) 放地基、立即扣钱，单位走过去建（有建造的规则包才有用） |
-| `cmd.cast(u, skill, target?)` | 释放技能，冷却好了才能放（有技能的规则包才有用，比如弑君的领主点金：`cmd.cast(领主, "goldmine")`） |
+| `cmd.cast(u, skill, target?)` | 释放技能，冷却好了才能放，有的技能要花钱（有技能的规则包才有用，比如弑君拓荒的领主点金：`cmd.cast(领主, "goldmine")`，弑君歼灭的领主召唤箭塔：`cmd.cast(领主, "tower", { x, y })`） |
 
 几条最重要的规则：
 

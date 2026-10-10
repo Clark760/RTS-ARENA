@@ -133,7 +133,9 @@ export function abilityText(defs: ReturnType<typeof resolveType>[]): string {
             : `cmd.cast(${d.name}, "${k.id}", 目标)`
       const range = k.target === "none" ? "" : `，目标最远 ${k.range} 格`
       const first = k.initialCooldown ? `，开局要等 ${k.initialCooldown} tick 才能第一次放` : "，开局就能放"
-      lines.push(`- ${code(d.name)} 的技能「${k.name}」（${code(k.id)}）：${k.desc}。用 ${code(how)} 释放${range}，冷却 ${k.cooldown} tick${first}。`)
+      const price = Object.entries(k.cost ?? {}).filter(([, n]) => (n ?? 0) > 0)
+      const cost = price.length ? `，**每放一次花 ${price.map(([r, n]) => `${n} ${r}`).join("、")}**（放成功才扣，不够被拒）` : ""
+      lines.push(`- ${code(d.name)} 的技能「${k.name}」（${code(k.id)}）：${k.desc}。用 ${code(how)} 释放${range}，冷却 ${k.cooldown} tick${first}${cost}。`)
     }
     for (const a of d.auras) {
       const who = a.affects === "own" ? "自己的" : a.affects === "allies" ? "自己和盟友的" : "敌方的"

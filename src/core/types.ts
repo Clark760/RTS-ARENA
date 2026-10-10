@@ -63,7 +63,7 @@ export interface TypeSpec {
 }
 
 /** 规则包写的技能：id、name、cooldown、desc 必写，其余有默认值（见 SkillDef） */
-export type SkillSpec = Pick<SkillDef, "id" | "name" | "cooldown" | "desc"> & Partial<Pick<SkillDef, "initialCooldown" | "target" | "range">>
+export type SkillSpec = Pick<SkillDef, "id" | "name" | "cooldown" | "desc"> & Partial<Pick<SkillDef, "initialCooldown" | "target" | "range" | "cost">>
 
 /** 规则包写的光环：name 必写；radius 默认 -1（等于视野）、affects 默认 own、types 默认全部、self 默认 false、两项加成默认 0 */
 export type AuraSpec = Pick<AuraDef, "name"> & Partial<Omit<AuraDef, "name">>
