@@ -239,6 +239,8 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   const armyOrder = Array.from({ length: n }, () => [] as string[])
   // 兵营利用率（前 UTIL_T tick）：能出兵的建筑建好后在场的时间，和造出来的兵的生产用时之和
   const UTIL_T = Math.min(last, 3000)
+  /** 有能同时造好几个的建筑（D-196）：利用率按生产位算 */
+  const multiSlot = Object.values(types).some((t) => (t.parallel ?? 1) > 1)
   const makesArmy = (type: string) => kind(type) === "building" && (types[type]?.produces ?? []).some(isArmy)
   const producerSince = new Map<number, number>()
   const producerTime = new Array<number>(n).fill(0)
@@ -247,7 +249,9 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     const since = producerSince.get(id)
     if (since === undefined) return
     producerSince.delete(id)
-    if (owner >= 0 && owner < n) producerTime[owner] += Math.max(0, Math.min(t, UTIL_T) - since)
+    // 能同时造几个就算几个生产位（D-196）
+    const slots = types[s.ents.get(id)?.type ?? ""]?.parallel ?? 1
+    if (owner >= 0 && owner < n) producerTime[owner] += Math.max(0, Math.min(t, UTIL_T) - since) * slots
   }
   for (const e of s.ents.values()) if (e.owner >= 0 && e.owner < n && makesArmy(e.type) && e.bp === undefined) producerSince.set(e.id, 0)
   // 家里挨打：被兵打在自己建筑 10 格内的（派出去侦察的单位在对方家门口挨打、对方侦察兵路过戳一下都不算）
@@ -749,7 +753,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
         runs.push(j - i > 1 ? `${list[i]}×${j - i}` : list[i])
         i = j
       }
-      if (producerTime[p] > 0) out.push(`  兵营利用率：前 ${UTIL_T} tick 里能出兵的建筑大约 ${Math.round((100 * armyBuildTime[p]) / producerTime[p])}% 的时间在出兵`)
+      if (producerTime[p] > 0) out.push(`  兵营利用率：前 ${UTIL_T} tick 里能出兵的建筑大约 ${Math.round((100 * armyBuildTime[p]) / producerTime[p])}% 的时间在出兵${multiSlot ? "（能同时造几个就按几个生产位算）" : ""}`)
       out.push(`  出兵顺序（前 ${list.length} 个${armyOrder[p].length > list.length ? `，一共 ${armyOrder[p].length} 个` : ""}）：${runs.join("、")}`)
     }
   }
@@ -816,7 +820,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     // 兵营空着：前 UTIL_T tick 里，能出兵的建筑在场的时间里有多少在出兵
     if (producerTime[p] >= 1000 && armyBuildTime[p] / producerTime[p] < 0.35)
       hints.push(
-        `前 ${UTIL_T} tick 里能出兵的建筑大约只有 ${Math.round((100 * armyBuildTime[p]) / producerTime[p])}% 的时间在出兵（造出来的兵生产用时加起来 ${armyBuildTime[p]} tick，兵营建好后在场的时间加起来 ${producerTime[p]} tick）：兵营空着的时候钱去哪了（先补了工人、攒着没花，还是钱不够）`,
+        `前 ${UTIL_T} tick 里能出兵的建筑大约只有 ${Math.round((100 * armyBuildTime[p]) / producerTime[p])}% 的时间在出兵（造出来的兵生产用时加起来 ${armyBuildTime[p]} tick，兵营建好后在场的时间加起来 ${producerTime[p]} tick${multiSlot ? "，能同时造几个就乘几" : ""}）：兵营空着的时候钱去哪了（先补了工人、攒着没花，还是钱不够）`,
       )
     // 工人挤在一个矿上排队（站满了不会自己换矿）
     const queued = [...mining.values()].filter((r) => r.owner === p && r.waiting >= 300).sort((a, b) => b.waiting - a.waiting)

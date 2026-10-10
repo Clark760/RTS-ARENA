@@ -388,6 +388,33 @@ test("野怪定时刷新（D-193）：每 900 tick 把死掉的野怪补满，�
   assert.equal(last.respawnAt, null)
 })
 
+test("并行生产（D-196）：parallel 3 的建筑，队列里前 3 个同时造，第 4 个等前面的造完才开始", () => {
+  const rax: TypeSpec = { kind: "building", w: 2, h: 2, maxHp: 500, produces: ["trooper"], parallel: 3, look }
+  const trooper: TypeSpec = { ...TYPES.grunt, cost: { gold: 10 }, buildTicks: 10 }
+  const count: number[] = []
+  play(
+    mini([], {
+      maxTicks: 25,
+      types: { ...TYPES, rax, trooper },
+      setup(ctx) {
+        ctx.setTerrain(Array(6).fill(".".repeat(12)))
+        ctx.spawn("rax", 0, 4, 2)
+        ctx.spawn("grunt", 1, 11, 5)
+        ctx.setResources(0, { gold: 100 })
+      },
+    }),
+    (v, cmd) => {
+      if (v.tick === 0) for (let i = 0; i < 4; i++) cmd.produce(mine(v, "rax")[0], "trooper")
+      count[v.tick] = mine(v, "trooper").length
+    },
+  )
+  // 前 3 个第 10 tick 一起出来，第 4 个再等 10 tick
+  assert.equal(count[9], 0)
+  assert.equal(count[11], 3)
+  assert.equal(count[19], 3)
+  assert.equal(count[21], 4)
+})
+
 test("attackMove 写 { neutral: true } 也打中立单位，射程里有对手的先打对手的；不写就不打中立的（D-191）", () => {
   const hpOf = (v: View, owner: number) => v.entities.find((e) => e.owner === owner && e.type === "grunt")?.hp
   // 不写 neutral：从中立的旁边走过去，一下都不打它

@@ -47,6 +47,8 @@ export interface TypeDef {
   dropOff: boolean
   /** 能生产的类型 */
   produces: TypeName[]
+  /** 生产队列里前几个同时造（各自倒计时）；1 是一次造一个、造完再造下一个 */
+  parallel: number
   /** 能建造的建筑类型（用 build 命令）；空数组表示不能建造 */
   builds: TypeName[]
   /** 资源点产出的资源；不是资源点为 null */

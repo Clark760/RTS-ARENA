@@ -105,6 +105,7 @@ export function checkRulesetData(d: unknown, callbacks: string[]): string[] {
         if (!Array.isArray(list) || list.some((x) => typeof x !== "string" || !names.has(x))) bad(`${at}.${k} 要是已定义的类型名数组`)
         else if (k === "builds" && list.some((x) => (types[x as string] as Obj | undefined)?.kind !== "building")) bad(`${at}.builds 里只能是建筑类型`)
       }
+      if (s.parallel !== undefined && (!isInt(s.parallel, 1, 5) || !Array.isArray(s.produces) || s.produces.length === 0)) bad(`${at}.parallel 要是 1～5 的整数（同时造几个，生产队列最多 5 个），而且要有 produces`)
       checkAbilities(s, at, names, kind, resSet, bad)
       if (kind === "resource" && (typeof s.resource !== "string" || !resSet.has(s.resource))) bad(`${at}.resource：资源点要写产出的资源名（在 resources 里）`)
       if (kind !== "resource" && s.resource !== undefined && s.resource !== null) bad(`${at}.resource：只有资源点能写`)

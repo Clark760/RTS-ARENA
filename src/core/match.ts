@@ -174,7 +174,7 @@ function play(opts: MatchOptions, w: World): Replay {
   }
   const types: Replay["types"] = {}
   for (const [name, def] of Object.entries(w.types))
-    types[name] = { kind: def.kind, w: def.w, h: def.h, maxHp: def.maxHp, moveTicks: def.moveTicks, sight: def.sight, cost: def.cost, worker: def.gather !== null || def.builds.length > 0, gather: def.gather !== null, builds: def.builds.length ? def.builds : undefined, attack: def.attack ?? undefined, buildTicks: def.buildTicks || undefined, produces: def.produces.length ? def.produces : undefined, skills: def.skills.length ? def.skills : undefined, auras: def.auras.length ? def.auras : undefined, passives: def.passives.length ? def.passives : undefined, look: rules.types[name].look }
+    types[name] = { kind: def.kind, w: def.w, h: def.h, maxHp: def.maxHp, moveTicks: def.moveTicks, sight: def.sight, cost: def.cost, worker: def.gather !== null || def.builds.length > 0, gather: def.gather !== null, builds: def.builds.length ? def.builds : undefined, attack: def.attack ?? undefined, buildTicks: def.buildTicks || undefined, produces: def.produces.length ? def.produces : undefined, parallel: def.parallel !== 1 ? def.parallel : undefined, skills: def.skills.length ? def.skills : undefined, auras: def.auras.length ? def.auras : undefined, passives: def.passives.length ? def.passives : undefined, look: rules.types[name].look }
   const colors: Record<string, string> = {}
   const walkable: Record<string, boolean> = {}
   for (const [ch, t] of Object.entries(rules.terrain)) {

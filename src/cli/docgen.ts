@@ -99,7 +99,7 @@ export function unitTable(rules: Ruleset): string {
         d.attack ? `${d.attack.damage} / ${d.attack.range} / ${d.attack.cooldown}${vsText(d.attack.vs)}` : "—",
         d.gather ? `${d.gather.amount} / ${d.gather.ticks} / ${d.gather.capacity}` : "—",
         d.dropOff ? "是" : "—",
-        d.produces.length ? d.produces.join("、") : "—",
+        d.produces.length ? `${d.produces.join("、")}${d.parallel > 1 ? `（同时造 ${d.parallel} 个）` : ""}` : "—",
         ...(building ? [d.builds.length ? d.builds.join("、") : "—"] : []),
         "",
       ].join(" | ").trim(),

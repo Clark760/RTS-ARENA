@@ -109,14 +109,20 @@ function setIdle(e: EntityState): void {
 function production(w: World): void {
   for (const b of w.ents.values()) {
     if (b.queue.length === 0 || b.construction) continue
-    const q = b.queue[0]
-    if (q.ticksLeft > 0) q.ticksLeft--
-    if (q.ticksLeft > 0) continue
-    const def = w.types[q.type]
-    const spot = w.findSpotAround(def, b, SPAWN_RING)
-    if (!spot) continue // 周围满了，等有空位
-    b.queue.shift()
-    w.spawnLive(q.type, b.owner, spot.x, spot.y)
+    // 队列里前 parallel 个同时倒计时（D-196；大多数建筑是 1：一次造一个）
+    const slots = b.def.parallel
+    for (let i = 0; i < Math.min(slots, b.queue.length); i++) if (b.queue[i].ticksLeft > 0) b.queue[i].ticksLeft--
+    for (let i = 0; i < Math.min(slots, b.queue.length); ) {
+      const q = b.queue[i]
+      const spot = q.ticksLeft > 0 ? null : w.findSpotAround(w.types[q.type], b, SPAWN_RING)
+      // 没造好，或者周围满了（等有空位）
+      if (!spot) {
+        i++
+        continue
+      }
+      b.queue.splice(i, 1)
+      w.spawnLive(q.type, b.owner, spot.x, spot.y)
+    }
   }
 }
 

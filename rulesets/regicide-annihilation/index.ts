@@ -9,6 +9,8 @@ import type { Objectives } from "./objectives.ts"
 
 const types = withLord(standardTypes(), ["soldier", "archer"], "tower")
 types.creep = creepType()
+// D-196（用户：钱没处花，又不想加建造把歼灭弄复杂）：兵营排进队列的 5 个同时造，出兵快慢看钱
+types.barracks.parallel = 5
 
 const ruleset: Ruleset = {
   id: "regicide-annihilation",

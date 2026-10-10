@@ -77,6 +77,19 @@ function attackMove(cmd: Commands, u: Entity, p: Pos): void {
   if (u.order?.kind !== "attackMove" || u.order.x !== p.x || u.order.y !== p.y) cmd.attackMove(u, p.x, p.y)
 }
 
+/** 领主 3 格内有没有空格能放塔（地形能走、没有任何实体）；集结点挤满兵时没有，放了会被拒（D-196） */
+function towerRoom(view: View, lord: Entity): boolean {
+  const taken = new Set<number>()
+  for (const e of view.entities) for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) taken.add(y * game.width + x)
+  for (let dy = -3; dy <= 3; dy++)
+    for (let dx = -3; dx <= 3; dx++) {
+      const x = lord.x + dx
+      const y = lord.y + dy
+      if (Math.abs(dx) + Math.abs(dy) <= 3 && (dx || dy) && walkable(x, y) && !taken.has(y * game.width + x)) return true
+    }
+  return false
+}
+
 /** attackMove 加 neutral：野怪也打，射程里有敌人先打敌人（D-191） */
 function attackMoveNeutral(cmd: Commands, u: Entity, p: Pos): void {
   if (u.order?.kind !== "attackMove" || u.order.x !== p.x || u.order.y !== p.y || u.order.neutral !== true) cmd.attackMove(u, p.x, p.y, { neutral: true })
@@ -122,7 +135,7 @@ function mainTick(view: View, cmd: Commands): void {
   const wantTower = lord !== undefined && mine.filter((e) => e.type === "tower").length < MAX_TOWERS && (lord.skillCooldowns?.tower ?? 1) === 0
   if (lord) {
     lordHome ??= { x: lord.x, y: lord.y }
-    const towerReady = wantTower && view.resources.gold >= TOWER_COST + TOWER_RESERVE
+    const towerReady = wantTower && view.resources.gold >= TOWER_COST + TOWER_RESERVE && towerRoom(view, lord)
     const outArmy = army.filter((u) => dist(u, base) > 12)
     const close = enemyUnits.some((e) => game.types[e.type].attack !== null && e.type !== "worker" && dist(e, lord) <= 4)
     const danger = enemyUnits.some((e) => game.types[e.type].attack !== null && e.type !== "worker" && dist(e, lord) <= 7)
@@ -156,11 +169,14 @@ function mainTick(view: View, cmd: Commands): void {
     room-- > 0 && cmd.produce(base, "worker")
     gold -= 50
   }
-  if (barracks && (barracks.queue?.length ?? 0) === 0 && (workers.length >= ECO_FIRST || !baseIdle || gold >= 125)) {
-    const type = PLAN[produced % PLAN.length]
-    const cost = game.types[type].cost.gold ?? 0
-    if (gold >= cost) {
-      room-- > 0 && cmd.produce(barracks, type)
+  if (barracks && (workers.length >= ECO_FIRST || !baseIdle || gold >= 125)) {
+    // 兵营排进队列的同时造（D-196，弑君歼灭是 5 个）：钱够就把队列排满
+    for (let q = barracks.queue?.length ?? 0; q < game.types.barracks.parallel; q++) {
+      const type = PLAN[produced % PLAN.length]
+      const cost = game.types[type].cost.gold ?? 0
+      if (gold < cost || room <= 0) break
+      cmd.produce(barracks, type)
+      room--
       gold -= cost
       produced++
     }

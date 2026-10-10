@@ -144,19 +144,21 @@ export function onTick(view: View, cmd: Commands): void {
   const wTotal = workers.length + wQ
   let cap = game.unitCap - unitCount
   if (bar && bar.queue !== undefined) {
-    const qlen = bar.queue.length
-    const wantQ = gold >= 300 ? 3 : 2
+    // D-196 收录时改：兵营同时造 5 个，钱够就把队列排满（原来一次只排一个、队列留 2～3 个）
+    let qlen = bar.queue.length
+    const wantQ = game.types.barracks.parallel
     const soldiersN = army.filter((e) => e.type === "soldier").length
     const archersN = army.filter((e) => e.type === "archer").length
-    if (qlen < wantQ && cap > 0) {
-      const archersQ = bar.queue.filter((q) => q.type === "archer").length
-      const type: TypeName = archersN + archersQ < (soldiersN + archersN + bar.queue.length) * ARCHER_RATIO ? "archer" : "soldier"
+    let archersQ = bar.queue.filter((q) => q.type === "archer").length
+    while (qlen < wantQ && cap > 0) {
+      const type: TypeName = archersN + archersQ < (soldiersN + archersN + qlen) * ARCHER_RATIO ? "archer" : "soldier"
       const c = game.types[type].cost.gold ?? 0
-      if (gold >= c) {
-        cmd.produce(bar, type)
-        gold -= c
-        cap--
-      }
+      if (gold < c) break
+      cmd.produce(bar, type)
+      gold -= c
+      cap--
+      qlen++
+      if (type === "archer") archersQ++
     }
   }
   if (base.queue !== undefined && wTotal < WORKERS_WANT && cap > 0 && (base.queue?.length ?? 0) < 2 && gold >= 50) {

@@ -73,7 +73,7 @@ export function onTick(view: View, cmd: Commands): void {
 | `cmd.attackMove(u, x, y)` | 边走边打：射程内有敌人就打，视野里有敌人就追。写成 `cmd.attackMove(u, x, y, { neutral: true })` 时野怪这类中立单位也打（对手的优先） |
 | `cmd.gather(u, resource)` | 循环采集：采满自动回最近的交货点，交完再回来 |
 | `cmd.stop(u)` | 停下 |
-| `cmd.produce(b, type)` | 建筑排队生产，立即扣钱 |
+| `cmd.produce(b, type)` | 建筑排队生产，立即扣钱。一般一次造一个；`game.types[建筑].parallel` 大于 1 的能同时造几个（比如弑君歼灭的兵营同时造 5 个，排满就五倍出兵） |
 | `cmd.cancel(b)` | 取消队列里最后一个（全额退款），或拆掉没建好的地基（退 75%） |
 | `cmd.build(u, type, x, y)` | 在左上角 (x, y) 放地基、立即扣钱，单位走过去建（有建造的规则包才有用） |
 | `cmd.cast(u, skill, target?)` | 释放技能，冷却好了才能放，有的技能要花钱（有技能的规则包才有用，比如弑君拓荒的领主点金：`cmd.cast(领主, "goldmine")`，弑君歼灭的领主召唤箭塔：`cmd.cast(领主, "tower", { x, y })`） |
