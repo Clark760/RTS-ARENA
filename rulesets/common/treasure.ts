@@ -4,7 +4,8 @@
 // （原来打算在正中刷金矿，算下来工人从正中走回主基地交货一趟 200 tick 出头、只带 5 金，10 个工人采完 600 金要 2700 tick，没人会去抢）
 // - 正中那块 2×2（宽高都是偶数的地图，正中 2×2 刚好中心对称）被墙、水、资源点挡住时（约一成的随机地图），
 //   改在离正中最近、中心对称的两处各放一个，各值一半
-// - 上一个宝箱还在（没被打掉）就不刷新，不叠加；刷新那一刻宝箱的位置站着单位，就等它们走开再刷
+// - 上一个宝箱还在（没被打掉）就不刷新，不叠加；刷新那一刻宝箱的位置站着单位，把它们挤到旁边最近的空格，照样按时刷
+//   （D-204，第七轮试写：原来是等单位走开再刷，晚刷了好几十 tick，站几个兵就能一直挡住）
 import type { RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
 import { STANDARD_TERRAIN } from "./standard.ts"
 
@@ -81,8 +82,11 @@ export function treasureTick(ctx: RuleContext): void {
   let waiting = false
   let spawned = 0
   for (const s of spots) {
-    const here = ctx.entitiesIn(s.x, s.y, 2, 2)
+    let here = ctx.entitiesIn(s.x, s.y, 2, 2)
     if (here.some((e) => e.type === "treasure")) continue
+    // 站在这儿的单位挤到旁边最近的空格
+    for (const u of here) if (u.def.kind === "unit") nudge(ctx, u, s)
+    here = ctx.entitiesIn(s.x, s.y, 2, 2)
     if (here.length) {
       waiting = true
       continue
@@ -91,6 +95,21 @@ export function treasureTick(ctx: RuleContext): void {
   }
   if (!waiting) pending = false
   if (spawned) ctx.note("地图正中刷出了宝箱")
+}
+
+/** 把站在宝箱位置上的单位挪到 2×2 外面最近的空格（地形能走、没有实体）；附近都满了就不动（等下一 tick） */
+function nudge(ctx: RuleContext, u: { id: number; x: number; y: number }, s: { x: number; y: number }): void {
+  const inside = (x: number, y: number) => x >= s.x && x < s.x + 2 && y >= s.y && y < s.y + 2
+  for (let r = 1; r <= 6; r++)
+    for (let dy = -r; dy <= r; dy++)
+      for (const dx of [r - Math.abs(dy), -(r - Math.abs(dy))]) {
+        const x = u.x + dx
+        const y = u.y + dy
+        if (inside(x, y) || x < 0 || y < 0 || x >= ctx.width || y >= ctx.height) continue
+        if (STANDARD_TERRAIN[ctx.terrain[y][x]]?.walkable !== true || ctx.entitiesIn(x, y, 1, 1).length) continue
+        ctx.teleport(u.id, x, y)
+        return
+      }
 }
 
 /** 给 bot 看的宝箱信息（位置公开，和金矿一样） */

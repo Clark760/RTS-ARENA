@@ -45,7 +45,7 @@ const HELP = `用法：rts-arena <命令> [参数]
   run [对手...] [选项]                  自己的 bot 打对手（不写就打 baseline），回放和日志写到 ./replays；
                                         想让两个别的 bot 互相打，写 run <规则包> a.ts b.ts（比如自己打自己查座位偏不偏：run <规则包> bot.ts bot.ts --games 30）
   league [对手...] [选项]               联赛：自己的 bot 和对手循环对打，出排行榜（不写对手就和所有现成的 bot 打）；
-                                        写的文件是另外加进来的对手（比如 versions/v3.ts），自己现在的 bot.ts 总在里面
+                                        写了对手就只和写的这些打（自己现在的 bot.ts 总在里面）；要连参考 bot 一起打，把名字也写上，比如 league versions/v3.ts baseline llm
   clean [--all]                         清掉 ./replays 里的回放和日志（每局一个 JSON、每个 bot 一份日志），留着 *.series.json 汇总；
                                         --all 连汇总一起清（联赛视频要用回放，做视频前别清）
   compare <另一个版本> [对手...] [选项]  两个版本比强弱：你现在的 bot 和另一个版本（比如 versions/v3.ts）对每个对手用同一批种子、
@@ -156,6 +156,7 @@ function say(msg: string): void {
 /** 各命令接受的选项；值为 true 的是开关，不带值 */
 const OPTIONS: Record<string, Record<string, boolean>> = {
   docs: { out: false },
+  clean: { all: true },
   run: { seed: false, games: false, out: false, teams: false, "no-check": true, json: true, quiet: true, ticks: false, "no-replays": true },
   league: { seed: false, size: false, teams: false, partners: false, "per-table": false, "per-pair": false, tables: false, out: false, "no-check": true, json: true, focus: true, "no-replays": true, quiet: true },
   check: { ticks: false },
@@ -823,7 +824,7 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
   // D-201（试写反馈：输出很长，用 tail 看会截掉排名）：最后一行再写一遍你的 bot 的总成绩
   if (mine && !jsonMode) {
     const row = st.table.find((r) => r.index === 0)
-    if (row) console.log(`\n你的 bot（${row.name}）：第 ${row.rank} 名，得分率 ${Math.round(row.rate * 100)}% ±${Math.round(row.rateCi * 100)}（${row.wins} 胜 ${row.draws} 平 ${row.losses} 负，${row.games} 局）`)
+    if (row) console.log(`\n你的 bot（${row.name}）：第 ${row.rank} 名，得分率 ${Math.round(row.rate * 100)}% ±${Math.round(row.rateCi * 100)}（${row.wins} 胜 ${row.draws} 平 ${row.losses} 负，${row.games} 局；种子从 ${baseSeed} 起，要用同一批种子再比就加 --seed ${baseSeed}）`)
   }
   say(
     noReplays

@@ -467,6 +467,31 @@ test("中央宝箱（D-202）：第 900 tick 在正中刷出，打掉它的玩�
   assert.deepEqual([b.x, b.y], [W - 2 - a.x, H - 2 - a.y])
 })
 
+test("中央宝箱（D-204）：刷新那一刻站在宝箱位置上的单位被挤到旁边，宝箱按时刷出", async () => {
+  const { setupTreasure, treasureTick, treasureType, TREASURE_EVERY } = await import("../rulesets/common/treasure.ts")
+  const seen: { tick: number; box: boolean; grunt: { x: number; y: number } }[] = []
+  play(
+    mini([], {
+      maxTicks: TREASURE_EVERY + 2,
+      types: { ...TYPES, treasure: treasureType() },
+      setup(ctx) {
+        ctx.setTerrain(Array(10).fill(".".repeat(20)))
+        ctx.spawn("grunt", 0, 9, 4)
+        ctx.spawn("grunt", 1, 19, 9)
+        setupTreasure(ctx, 20, 10)
+      },
+      onTick: (ctx) => treasureTick(ctx),
+    }),
+    (v) => {
+      const g = mine(v, "grunt")[0]
+      seen.push({ tick: v.tick, box: v.entities.some((e) => e.type === "treasure"), grunt: { x: g.x, y: g.y } })
+    },
+  )
+  const after = seen.find((s) => s.tick === TREASURE_EVERY + 1)!
+  assert.equal(after.box, true)
+  assert.ok(!(after.grunt.x >= 9 && after.grunt.x <= 10 && after.grunt.y >= 4 && after.grunt.y <= 5), JSON.stringify(after.grunt))
+})
+
 test("死亡事件带 killerType（D-203）：最后一击的实体类型，规则包据此可以让某些实体打死的不算分", () => {
   const died: RuleEvent[] = []
   const turret: TypeSpec = { kind: "building", w: 1, h: 1, maxHp: 500, attack: { damage: 50, range: 3, cooldown: 2 }, look }
