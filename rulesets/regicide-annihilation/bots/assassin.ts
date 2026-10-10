@@ -165,15 +165,19 @@ function mainTick(view: View, cmd: Commands): void {
       defenders.add(w.id)
     }
   }
+  // 离活着的野怪营地 8 格内（野怪追击的范围）的矿不去（D-202：营地一打起来，矿边的工人整批被野怪打死，经济就崩了）
+  // 对面那一侧的矿也不去：走过去要横穿地图、路过营地
+  const risky = (m: Entity) => dist(m, base) > dist(m, eb) || view.objectives.creepCamps.some((c) => c.alive > 0 && c.cells.some((p) => dist(m, p) <= 8))
   const load = new Map<number, number>()
   for (const w of workers) if (w.order?.kind === "gather") load.set(w.order.target, (load.get(w.order.target) ?? 0) + 1)
   for (const w of workers) {
     if (defenders.has(w.id)) continue
     const o = w.order
-    if (o?.kind === "gather" && goldmines.some((m) => m.id === o.target)) continue
+    if (o?.kind === "gather" && goldmines.some((m) => m.id === o.target && !risky(m))) continue
     let best: Entity | undefined
     let bestScore = Infinity
     for (const m of goldmines) {
+      if (risky(m)) continue
       const n = load.get(m.id) ?? 0
       if (n >= MAX_PER_MINE) continue
       const score = dist(base, m) + n * 3
@@ -214,6 +218,17 @@ function mainTick(view: View, cmd: Commands): void {
 
   if (mode === "defend") {
     // 清野（D-189）：兵够 6 个、家里没事时去打离家最近的野怪营地，一只 150 金赏金
+    // 中央宝箱（D-202）：兵够 6 个、家里没事就先去打离家近的那个宝箱，打掉得 600 金（路上碰到对手的兵先打兵）
+    const chest = army.length >= 6 ? [...view.objectives.treasure.chests].sort((a, b) => dist(a, base) - dist(b, base))[0] : undefined
+    if (chest) {
+      // 路上用普通 attackMove（只打对手，不惹路边的野怪），到了宝箱 6 格内再点名打宝箱
+      const box = view.entities.find((e) => e.type === "treasure" && e.x === chest.x && e.y === chest.y)
+      for (const u of army) {
+        if (box && dist(u, box) <= 6) attack(cmd, u, box)
+        else attackMove(cmd, u, { x: chest.x, y: chest.y })
+      }
+      return
+    }
     const camp = army.length >= 6 ? view.objectives.creepCamps.filter((c) => c.alive > 0).sort((a, b) => dist(a, base) - dist(b, base) || campSide(a, base) - campSide(b, base))[0] : undefined
     if (camp) {
       // D-194（第四轮试写：一个个跑过去会被野怪逐个吃掉）：先在营地外 5 步聚齐（八成到了，或者等了 250 tick），

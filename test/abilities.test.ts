@@ -420,6 +420,53 @@ test("并行生产（D-196）：parallel 3 的建筑，队列里前 3 个同时�
   assert.equal(count[21], 4)
 })
 
+test("中央宝箱（D-202）：第 900 tick 在正中刷出，打掉它的玩家得 600 金；正中被挡就在中心对称的两处各放一个", async () => {
+  const { setupTreasure, treasureInfo, treasureTick, treasureType, TREASURE_EVERY, TREASURE_GOLD } = await import("../rulesets/common/treasure.ts")
+  const W = 20
+  const H = 10
+  const brute: TypeSpec = { kind: "unit", maxHp: 5000, moveTicks: 1, sight: 6, attack: { damage: 300, range: 1, cooldown: 2 }, look }
+  const play2 = (terrain: string[]) => {
+    const gold: number[] = []
+    let info: ReturnType<typeof treasureInfo> | null = null
+    play(
+      mini([], {
+        maxTicks: TREASURE_EVERY + 20,
+        types: { ...TYPES, treasure: treasureType(), brute },
+        setup(ctx) {
+          ctx.setTerrain(terrain)
+          ctx.spawn("brute", 0, 0, 0)
+          ctx.spawn("grunt", 1, W - 1, H - 1)
+          setupTreasure(ctx, W, H)
+        },
+        onTick: (ctx) => treasureTick(ctx),
+        objectives: (ctx) => treasureInfo(ctx),
+      }),
+      (v, cmd) => {
+        gold[v.tick] = v.resources.gold
+        info = v.objectives as ReturnType<typeof treasureInfo>
+        // 宝箱出来就过去打
+        const box = v.entities.find((e) => e.type === "treasure")
+        const u = mine(v, "brute")[0]
+        if (box && u && u.order?.kind !== "attack") cmd.attack(u, box)
+      },
+    )
+    return { gold, info: info! }
+  }
+  // 正中能放：一个，打掉得 600
+  const open = play2(Array(H).fill(".".repeat(W)))
+  assert.deepEqual(open.info.spots, [{ x: W / 2 - 1, y: H / 2 - 1 }])
+  assert.equal(open.gold[TREASURE_EVERY - 1], 0)
+  assert.equal(open.gold[TREASURE_EVERY + 19], TREASURE_GOLD)
+  // 正中是墙：中心对称的两处各一个
+  const rows = Array(H).fill(".".repeat(W))
+  rows[4] = ".".repeat(8) + "####" + ".".repeat(8)
+  rows[5] = ".".repeat(8) + "####" + ".".repeat(8)
+  const walled = play2(rows)
+  assert.equal(walled.info.spots.length, 2)
+  const [a, b] = walled.info.spots
+  assert.deepEqual([b.x, b.y], [W - 2 - a.x, H - 2 - a.y])
+})
+
 test("attackMove 写 { neutral: true } 也打中立单位，射程里有对手的先打对手的；不写就不打中立的（D-191）", () => {
   const hpOf = (v: View, owner: number) => v.entities.find((e) => e.owner === owner && e.type === "grunt")?.hp
   // 不写 neutral：从中立的旁边走过去，一下都不打它

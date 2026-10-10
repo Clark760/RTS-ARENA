@@ -15,8 +15,8 @@ export const LORD_MINE_AMOUNT = 300
 /** 点金的金矿最远放在离领主几格 */
 export const LORD_MINE_RANGE = 3
 
-/** 击退的冷却（tick）；D-198 用户：600 → 300，团战里能多放一次 */
-export const LORD_REPEL_COOLDOWN = 300
+/** 击退的冷却（tick）；D-198 用户：600 → 300；D-202 第六轮试写说偏弱（推走 30 tick 就回来），用户：300 → 150 */
+export const LORD_REPEL_COOLDOWN = 150
 /** 击退往外推的时候，最多沿路走几步去找落脚的空格（找不到就不推） */
 const REPEL_SEARCH = 24
 

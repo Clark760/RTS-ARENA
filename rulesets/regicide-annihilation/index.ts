@@ -5,10 +5,13 @@ import { STANDARD_TERRAIN, standardTypes } from "../common/standard.ts"
 import { ANNIHILATION_H, ANNIHILATION_W, annihilationEnemyBases, annihilationSetup, annihilationTimeUp, scoreAnnihilationKills } from "../common/annihilation.ts"
 import { regicideCast, regicideResult, regicideStats, spawnLords, withLord } from "../common/regicide.ts"
 import { campInfo, creepBounty, creepTick, creepTimeUp, creepType, setupCamps } from "../common/creeps.ts"
+import { setupTreasure, treasureInfo, treasureStats, treasureTick, treasureType } from "../common/treasure.ts"
 import type { Objectives } from "./objectives.ts"
 
 const types = withLord(standardTypes(), ["soldier", "archer"], "repel")
 types.creep = creepType()
+// D-202（用户：希望大模型更灵活地去打仗而不是龟缩）：每 900 tick 在地图正中刷一个宝箱，打掉得 600 金
+types.treasure = treasureType()
 // D-196（用户：钱没处花，又不想加建造把歼灭弄复杂）：兵营排进队列的 5 个同时造，出兵快慢看钱
 types.barracks.parallel = 5
 // D-198（用户：想让两边打得更焦灼、时间更长）：战士 120 → 180 血（实测势均力敌的团战从 136 tick 打到 228 tick）；
@@ -23,7 +26,7 @@ types.lord.maxHp = 1500
 const ruleset: Ruleset = {
   id: "regicide-annihilation",
   name: "弑君歼灭",
-  summary: "两人对战，开局送一个领主（光环加攻防、能把周围的敌人击退），地图上有刷新的野怪赏金，主基地被拆或领主阵亡就输",
+  summary: "两人对战，开局送一个领主（光环加攻防、能把周围的敌人击退），地图上有刷新的野怪赏金和中央宝箱，主基地被拆或领主阵亡就输",
   players: { min: 2, max: 2 },
   maxTicks: 6000,
   tickRate: 10,
@@ -41,11 +44,13 @@ const ruleset: Ruleset = {
     // 野怪营地（D-189）：内圈、外圈各一对，都在离两家主基地一样远的斜线上
     // D-193（用户）：赏金 150，死了的野怪每 900 tick 定时补满（拓荒是 100、营地清空后才刷新）
     setupCamps(ctx, ANNIHILATION_W, ANNIHILATION_H, { x: 20, y: 19 }, { x: 14, y: 25 }, { bounty: 150, respawn: "periodic" })
+    setupTreasure(ctx, ANNIHILATION_W, ANNIHILATION_H)
   },
 
   onTick(ctx) {
     scoreAnnihilationKills(ctx, types)
     creepTick(ctx)
+    treasureTick(ctx)
   },
 
   objectives(ctx, player): Objectives {
@@ -54,12 +59,16 @@ const ruleset: Ruleset = {
       killValue: ctx.players.map((p) => p.score),
       creepCamps: campInfo(),
       creepBounty: creepBounty(ctx.playerCount),
+      treasure: treasureInfo(ctx),
     }
   },
 
   onCast: regicideCast,
-  result: regicideResult,
-  timeUp: (ctx) => ({ ...creepTimeUp(ctx, annihilationTimeUp(ctx)), stats: regicideStats(ctx.playerCount) }),
+  result(ctx) {
+    const r = regicideResult(ctx)
+    return r && { ...r, stats: { ...r.stats, ...treasureStats(ctx.playerCount) } }
+  },
+  timeUp: (ctx) => ({ ...creepTimeUp(ctx, annihilationTimeUp(ctx)), stats: { ...regicideStats(ctx.playerCount), ...treasureStats(ctx.playerCount) } }),
 }
 
 export default ruleset
