@@ -36,6 +36,8 @@ let spots: { x: number; y: number }[] = []
 let todo: number[] = []
 /** 这一轮已经直接捡过的玩家 */
 let took = new Set<number>()
+/** 这一轮已经说过「等它走开」的格子 */
+let told = new Set<number>()
 let opened: number[] = []
 let gold: number[] = []
 
@@ -49,6 +51,7 @@ export function setupTreasure(ctx: SetupContext, W: number, H: number): void {
   spots = []
   todo = []
   took = new Set()
+  told = new Set()
   opened = []
   gold = []
   const ents = ctx.entities()
@@ -88,6 +91,7 @@ export function treasureTick(ctx: RuleContext): void {
     // 新的一轮：宝箱还在的格子不刷
     todo = spots.map((_, i) => i).filter((i) => !ctx.entitiesIn(spots[i].x, spots[i].y, 1, 1).some((e) => e.type === "treasure"))
     took = new Set()
+    told = new Set()
   }
   if (todo.length === 0) return
   let spawned = 0
@@ -101,7 +105,11 @@ export function treasureTick(ctx: RuleContext): void {
       ctx.note(`P${who.owner} 的 ${who.type} #${who.id} 占住了 (${s.x}, ${s.y}) 的宝箱格子，直接捡到宝箱，得 ${n} 金`)
       return false
     }
-    // 站着野怪、或者这一轮已经捡过一个的玩家：等它走开
+    // 站着野怪、或者这一轮已经捡过一个的玩家：等它走开（D-208：捡过的那一方站着时说一次，战报里看得出第二格为什么没刷）
+    if (who && !told.has(i)) {
+      told.add(i)
+      ctx.note(`P${who.owner} 这一轮已经捡过一个宝箱，(${s.x}, ${s.y}) 的宝箱等它的 ${who.type} #${who.id} 走开再刷出来`)
+    }
     if (here.length) return true
     if (ctx.spawnNear("treasure", -1, s.x, s.y) === null) return true
     spawned++

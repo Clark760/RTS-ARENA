@@ -491,6 +491,14 @@ async function cmdRun(rules: Ruleset, src: RulesetRef, args: string[], opt: Reco
       )
     }
     console.log(`按座位：${seatWins.map((w, p) => `P${p} 赢 ${w}`).join("，")}${mirror ? "（自己打自己时这一行就是看地图和规则包偏不偏向某一边）" : ""}`)
+    // D-208（第九轮试写：v4 自己打自己左上角赢 65%，是集合点「一样近取第一个」没按座位镜像）：两人自己打自己、偏得超出 95% 区间时提示
+    const decided = seatWins.length === 2 ? seatWins[0] + seatWins[1] : 0
+    if (mirror && decided >= 10 && Math.abs(seatWins[0] / decided - 0.5) > rateCi(seatWins[0], decided)) {
+      const hi = seatWins[0] > seatWins[1] ? 0 : 1
+      console.log(
+        `  P${hi} 赢了 ${Math.round((seatWins[hi] / decided) * 100)}%，超出 95% 区间：同一个 bot 坐两个座位强弱不一样。参考 bot 自己打自己都不偏的话，多半是代码里「一样近就取第一个」这类地方没按座位镜像（右下角的座位要从后往前找，或者按离自己家的距离挑）`,
+      )
+    }
   }
 }
 

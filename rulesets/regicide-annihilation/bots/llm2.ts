@@ -1,24 +1,27 @@
-// 大模型试写（Sonnet 测试员第八轮 60 分钟交的 v4，困难陪练）：一整团兵带着领主轮流清野、抢宝箱，记着看到的敌兵、打不过就退回家门口；兵够 22 个（或者 16 个且击杀价值领先 600）先在对方家外聚齐再推。
-// 外部大模型试写的 bot（2026-10-10，D-207）：子代理只读了 PROMPT.md、看不到平台源码和参考 bot 的源码，写到第 4 版交卷，
-// 当时（D-206 的规则：宝箱每方不限捡几个、击退不眩晕）对 baseline、assassin、escort 各 20 局全胜，llm 19-1，turtle 15-5。原样收录，只改了开头的说明。
+// 大模型试写（Sonnet 测试员第八、九轮各 60 分钟写的 v8，困难陪练）：一整团兵带着领主轮流清野、抢宝箱，记着看到的敌兵、明显打不过才退回家门口；兵够 22 个（或者 16 个且击杀价值领先 600）先在对方家外聚齐再推。
+// 外部大模型试写的 bot（2026-10-10，D-207 收录第八轮的 v4，D-208 换成第九轮的 v8）：子代理只读了 PROMPT.md、看不到平台源码和参考 bot 的源码。
+// v8 在 v4 上改了座位镜像（v4 坐右下角时弱很多，同版本互打左上角赢 62%～65%）、眩晕中的敌兵不算战力、更敢打；
+// 当时对 baseline、assassin、llm 各 20 局全胜，escort、turtle 19-1，对 v4 共 88-52。原样收录，只改了开头的说明。
 //
 // 打法：
-// 1. 经济：10 个工人采家门口的矿（每矿最多 4 人），家门口矿快采完（<40）后改去离我家近、不挨着野怪营地的中间矿；
-//    工人被发怒的营地追就回家。兵营一直排满（弓手约占 1/3），钱是唯一的限制。
-// 2. 兵不单独行动：兵凑到 6 个就带着领主出门清最近的野怪营地。先在营地外 4～5 格的集合点聚齐（前面的兵等后面的），
-//    再一起 attackMove(neutral) 进营地；开打后这个营地不打完不换事（commitCamp）。领主站在团里靠家的一侧，
-//    离活着的营地 3 格内会自动挪开，被野怪咬或敌人贴脸会躲开并叫兵回头。后来造出的兵 4 个一批去和领主会合。
-// 3. 宝箱：每次刷新前 150 tick 全团到正中，刷新前 45 tick 让离格子最近的两个兵 move 上去站着（站格子直接捡），
-//    其余的 attackMove(neutral) 守着；宝箱出来了就一起打。
-// 4. 对手兵力记忆（seen）：看到的敌兵记 80 tick。折算后（有领主光环算 1.5 倍）对手比我强 15% 以上就退回集合点打，
-//    弱到 80% 以下再出来。对手到家附近 16 格内全军回防。
-// 5. 推家：兵 >= 22（或 >= 16 且击杀价值领先 600）才推，先在对方家 11～13 格外集合。看到对方领主且它周围守兵不多，
-//    附近 5 个兵专打领主（attack）。
-// 6. 击退：领主 3 格内有 >= 2 个敌兵、或 8 格内有 >= 3 个敌兵且比我方多、或领主血量低于 60% 且有敌兵贴脸时放
-//    （消融实测：从不放、这样放、见 2 个敌兵就放，三种对每个参考 bot 的胜负完全一样，所以不是这个打法的关键）。
-// 所有坐标都按当局地图算（pathDistances / creepCamps / treasure.spots），右下角座位用同一套规则（平局时按座位取镜像）。
+// 1. 经济：10 个工人采家门口的矿（每矿最多 4 人），家门口矿快采完（<40）后改去离我家近、不贴着发怒营地的中间矿
+//    （现在营地离每个矿至少 5 格，在矿边采矿惊动不了野怪）；工人被发怒的营地追就回家。兵营一直排满（弓手约 1/3）。
+// 2. 兵不单独行动：兵凑到 6 个就带着领主出门清最近的野怪营地：先在营地外 4～5 格聚齐（前面的兵等后面的），
+//    再一起 attackMove(neutral) 进营地；一个营地开打后不打完不换事。后造出的兵 4 个一批去和领主会合。
+//    领主站在团里靠家的一侧；离活着的营地 3 格内会挪开；被野怪咬或敌人贴脸会躲开并叫兵回头。
+// 3. 宝箱（每方每轮最多直接捡一个）：刷新前 150 tick 全团到正中，刷新前 45 tick 让离两个格子最近的两个兵 move 上去站着，
+//    其余的守在旁边；站着的第一个直接捡，另一个格子要等我方的兵走开才刷出宝箱，刷出来全团一起打。
+// 4. 对手兵力记忆（seen）：看到的敌兵记 80 tick，眩晕中的不算战力。折算后（带领主光环算 1.5 倍）对手比我强 40% 以上
+//    才退回集合点打（v6 是 15%，放宽后对 llm2 从 63% 升到 72%），弱到 110% 以下再出来；发现我方兵被击退眩晕过，150 tick 内对手放不了第二次，按 0.8 折算。
+// 5. 推家：兵 >= 22（或 >= 16 且击杀价值领先 600）才推，先在对方家 11～13 格外集合；看到对方领主、周围没有能动的守兵，
+//    附近 5 个兵专打领主。
+// 6. 击退（现在会眩晕 20 tick）：领主 3 格内有 >= 2 个敌兵、或 8 格内敌兵 >= 3 个且比我方多、或领主血量低于 60% 且有敌兵贴脸、
+//    或兵已接上火且大半个敌军都在视野里、或正在撤退且视野里有 >= 2 个敌兵时放。
+// 7. 座位对称：所有“平局时取第一个”的地方，右下角的座位从后往前找（镜像），两个座位用同一套规则。
+//    （v4 曾因为集合点没镜像，坐右下角时比坐左上角弱很多：同版本互打时左上角赢 62%～65%。）
 //
 const WORKER_TARGET = 10
+const REPEL_ENGAGE = true // 兵接上火、对手大部分兵都在领主视野里就放击退（击退现在带 20 tick 眩晕）
 const CAMP_GO_MIN = 6 // 兵凑到几个就出门清野
 const PUSH_MIN = 22 // 兵凑到几个就推对方的家
 const ARCHER_SHARE = 0.34 // 弓手占比
@@ -34,6 +37,7 @@ let homeBase: Pos = { x: 0, y: 0 }
 let enemyBase: Pos = { x: 0, y: 0 }
 let pushStage: Pos = { x: 0, y: 0 }
 let inited = false
+let mySeat = 0
 let defendUntil = 0
 let campStaging: Pos[] = []
 let lastLogMission = ""
@@ -43,7 +47,8 @@ let retreating = false
 let lordPanicUntil = 0
 const deployed = new Set<number>()
 const joining = new Set<number>()
-const seen = new Map<number, { tick: number; x: number; y: number; lord: boolean }>()
+const seen = new Map<number, { tick: number; x: number; y: number; lord: boolean; stunUntil: number }>()
+let enemyRepelAt = -9999 // 最近一次发现我方兵被击退（眩晕）的时刻：对手领主 150 tick 内放不了第二次
 const pdCache = new Map<string, number[]>()
 
 function isWalk(x: number, y: number): boolean {
@@ -74,6 +79,7 @@ function pdFrom(p: Pos): number[] {
 function init(view: View): void {
   W = game.width
   H = game.height
+  mySeat = view.me
   const base = view.entities.find((e) => e.owner === view.me && e.type === "base")!
   homeBase = { x: base.x + 1, y: base.y + 1 }
   const eb = view.objectives.enemyBases[0]
@@ -82,8 +88,10 @@ function init(view: View): void {
   pdEnemy = pathDistances(null, { x: eb.x, y: eb.y })
   // 集结点：离家 9～11 步、离地图中心最近的格子
   let best = -1
-  for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++) {
+  for (let k = 0; k < W * H; k++) {
+    const i = view.me === 0 ? k : W * H - 1 - k // 右下角的座位从后往前扫，平局时取镜像的格子
+    const x = i % W
+    const y = Math.floor(i / W)
       const p = pdAt(x, y)
       if (p < 9 || p > 11) continue
       const score = Math.abs(x - W / 2) + Math.abs(y - H / 2)
@@ -96,8 +104,10 @@ function init(view: View): void {
   for (const c of view.objectives.creepCamps) {
     let bp: Pos = { x: c.x, y: c.y }
     let bd = 1e9
-    for (let y = 0; y < H; y++)
-      for (let x = 0; x < W; x++) {
+    for (let k = 0; k < W * H; k++) {
+      const i = view.me === 0 ? k : W * H - 1 - k // 右下角的座位从后往前扫，平局时取镜像的格子
+      const x = i % W
+      const y = Math.floor(i / W)
         if (!isWalk(x, y)) continue
         const p = pdAt(x, y)
         if (p < 0) continue
@@ -115,8 +125,10 @@ function init(view: View): void {
   // 推家的集合点：离对方主基地 11～13 格、离我家走路最近
   let bd = 1e9
   pushStage = rally
-  for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++) {
+  for (let k = 0; k < W * H; k++) {
+    const i = view.me === 0 ? k : W * H - 1 - k // 右下角的座位从后往前扫，平局时取镜像的格子
+    const x = i % W
+    const y = Math.floor(i / W)
       if (!isWalk(x, y)) continue
       const p = pdAt(x, y)
       if (p < 0) continue
@@ -156,7 +168,7 @@ export function onTick(view: View, cmd: Commands): void {
   for (const id of deployed) if (!armyIds.has(id)) deployed.delete(id)
   for (const id of joining) if (!armyIds.has(id)) joining.delete(id)
   for (const ev of view.events) if (ev.kind === "died") seen.delete(ev.id)
-  for (const e of enemyMil) seen.set(e.id, { tick, x: e.x, y: e.y, lord: e.type === "lord" })
+  for (const e of enemyMil) seen.set(e.id, { tick, x: e.x, y: e.y, lord: e.type === "lord", stunUntil: tick + (e.stunned ?? 0) })
   for (const [id, s] of seen) if (tick - s.tick > 80) seen.delete(id)
 
   // ---------------- 工人矿点：营地附近的矿 ----------------
@@ -165,7 +177,7 @@ export function onTick(view: View, cmd: Commands): void {
       if (c.alive <= 0) continue
       for (const cell of c.cells) {
         const dd = d2(cell, p)
-        if (dd <= 3) return true
+        if (dd <= 2) return true
         if (c.angry && dd <= 9) return true
       }
     }
@@ -283,13 +295,14 @@ export function onTick(view: View, cmd: Commands): void {
   for (const [, s] of seen) {
     if (d2(s, centroid) > 16) continue
     if (s.lord) seenLordNear = true
-    else seenCnt++
+    else if (s.stunUntil <= tick + 4) seenCnt++ // 马上要眩晕结束的才算战力
   }
   const bodyN = Math.max(1, bodyBase.length)
   const mineEff = bodyN * (lord && d2(lord, centroid) <= 8 ? 1.5 : 1)
-  const enemyEff = seenCnt * (seenLordNear ? 1.5 : 1.25)
-  if (!retreating && seenCnt >= 3 && enemyEff > mineEff * 1.15) retreating = true
-  if (retreating && (seenCnt === 0 || enemyEff < mineEff * 0.8)) retreating = false
+  if (army.some((u) => (u.stunned ?? 0) > 0)) enemyRepelAt = tick
+  const enemyEff = seenCnt * (seenLordNear ? 1.5 : 1.25) * (tick - enemyRepelAt < 140 ? 0.8 : 1)
+  if (!retreating && seenCnt >= 3 && enemyEff > mineEff * 1.4) retreating = true
+  if (retreating && (seenCnt === 0 || enemyEff < mineEff * 1.1)) retreating = false
 
   const threats = enemyMil.filter((e) => d2(e, homeBase) <= 16)
   if (threats.length > 0) defendUntil = tick + 40
@@ -315,7 +328,7 @@ export function onTick(view: View, cmd: Commands): void {
       let contested = 0
       for (const [, s] of seen) if (!s.lord && d2(s, { x: c.x, y: c.y }) <= 10) contested++
       if (contested >= 3) return
-      const s = p - c.alive * 4
+      const s = p - c.alive * 4 + d2(homeBase, sp) * 0.001 // 平局时取离自己家近的（两个座位镜像一致）
       if (s < bs) {
         bs = s
         campIdx = i
@@ -462,7 +475,7 @@ export function onTick(view: View, cmd: Commands): void {
 
   // 敌方领主在眼前、周围敌兵不多：附近的几个兵专打它
   if (enemyLord && army.length >= 4 && m !== "retreat") {
-    const guards = enemyArmy.filter((e) => d2(e, enemyLord) <= 4).length
+    const guards = enemyArmy.filter((e) => d2(e, enemyLord) <= 4 && (e.stunned ?? 0) <= 4).length
     if (guards <= 2) {
       const close = army.filter((u) => d2(u, enemyLord) <= 7).sort((a, b) => d2(a, enemyLord) - d2(b, enemyLord)).slice(0, 5)
       if (close.length >= 3) for (const u of close) cmd.attack(u, enemyLord)
@@ -495,11 +508,12 @@ export function onTick(view: View, cmd: Commands): void {
       const goalP = body.length > 0 ? centroid : rally
       let bestC: Pos | null = null
       let bsc = 1e9
+      const sg = mySeat === 0 ? 1 : -1
       for (let dy = -8; dy <= 8; dy++)
         for (let dx = -8; dx <= 8; dx++) {
           if (Math.abs(dx) + Math.abs(dy) > 8) continue
-          const x = lord.x + dx
-          const y = lord.y + dy
+          const x = lord.x + dx * sg
+          const y = lord.y + dy * sg
           if (!isWalk(x, y)) continue
           let md = 99
           for (const t of threatsNear) md = Math.min(md, Math.abs(t.x - x) + Math.abs(t.y - y))
@@ -520,10 +534,20 @@ export function onTick(view: View, cmd: Commands): void {
     // 击退：身边敌兵 >= 2 贴脸，或 8 格内 >= 3 个而自己这边兵不占优
     const cd = lord.skillCooldowns?.repel ?? 0
     if (cd === 0) {
-      const close = enemyMil.filter((e) => d2(e, lord) <= 3).length
-      const wide = enemyMil.filter((e) => d2(e, lord) <= 8)
+      const live = enemyMil.filter((e) => (e.stunned ?? 0) <= 4)
+      const close = live.filter((e) => d2(e, lord) <= 3).length
+      const wide = live.filter((e) => d2(e, lord) <= 8)
       const mineNear = army.filter((u) => d2(u, lord) <= 8).length
-      if (close >= 2 || (wide.length >= 3 && wide.length > mineNear) || (lord.hp < lord.maxHp * 0.6 && close >= 1)) {
+      const wideArmy = wide.filter(isArmy).length
+      const engaged = REPEL_ENGAGE && wideArmy >= 3 && mineNear >= 3 && enemyArmy.some((e) => army.some((u) => d2(u, e) <= 3))
+      const mostly = wideArmy * 2 >= seenCnt
+      if (
+        close >= 2 ||
+        (wide.length >= 3 && wide.length > mineNear) ||
+        (lord.hp < lord.maxHp * 0.6 && close >= 1) ||
+        (engaged && mostly) ||
+        (REPEL_ENGAGE && retreating && wide.length >= 2)
+      ) {
         cmd.cast(lord, "repel")
       }
     }
@@ -542,10 +566,11 @@ function safeSpot(p: Pos, camps: { cells: Pos[]; alive: number }[]): Pos {
   if (!bad(p.x, p.y)) return p
   let best: Pos = p
   let bs = 1e9
+  const sg = mySeat === 0 ? 1 : -1
   for (let dy = -6; dy <= 6; dy++)
     for (let dx = -6; dx <= 6; dx++) {
-      const x = p.x + dx
-      const y = p.y + dy
+      const x = p.x + dx * sg
+      const y = p.y + dy * sg
       if (!isWalk(x, y) || bad(x, y)) continue
       const sc = Math.abs(dx) + Math.abs(dy)
       if (sc < bs) {
