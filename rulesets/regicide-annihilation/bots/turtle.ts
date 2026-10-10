@@ -1,4 +1,4 @@
-// 守家反击：兵守在家门口、领主在旁边给光环，兵够 6 个就停下出兵攒钱、在集结点召唤箭塔（最多 5 座），不主动进攻，但兵够 8 个、家里没事就去清最近的野怪营地（参考 bot 里清野最多的）；挡住一波进攻（守的时候杀了 4 个以上）就趁对方兵少反攻，快到时间上限还不领先就出击。
+// 守家反击：兵守在家门口、领主在旁边给光环，手上有 350 金就在集结点召唤箭塔（最多 5 座），不主动进攻，但兵够 8 个、家里没事就去清最近的野怪营地（先聚齐再集火）；挡住一波进攻（守的时候杀了 4 个以上）就趁对方兵少反攻，快到时间上限还不领先就出击。
 // - 集结点离兵营只有 3 格（在家里的领主光环范围内）；家里或领主附近来敌人全军回防，领主跟着守军。
 // - 其余（经济、挑目标、撤退）和基准一样。
 const ATTACK_AT = 60
@@ -6,11 +6,9 @@ const REINFORCE_AT = 3
 const RETREAT_BELOW = 4
 const MAX_WORKERS = 12
 const MAX_PER_MINE = 3
-/** 召唤箭塔（D-192）：一座 500 金，最多放几座，放完手上至少还留多少钱 */
-const TOWER_COST = 500
+/** 召唤箭塔（D-192；D-194 降到 250 金）：一座多少金，最多放几座，放完手上至少还留多少钱 */
+const TOWER_COST = 250
 const MAX_TOWERS = 5
-/** 兵到这么多、冷却好了、家里没事就先不出兵，攒够 500 放塔（不到这么多兵时钱要多出 TOWER_RESERVE 才放） */
-const SAVE_AT = 6
 const TOWER_RESERVE = 100
 const ECO_FIRST = 10
 const PLAN: TypeName[] = ["soldier", "archer"]
@@ -25,6 +23,9 @@ let repelledAt = -1000
 let produced = 0
 let rally: Pos | null = null
 let lordHome: Pos | null = null
+/** 正在清的营地（"x,y"）和开始去清它的 tick */
+let farmCamp = ""
+let farmSince = 0
 
 const isCombat = (e: Entity) => e.type === "soldier" || e.type === "archer"
 
@@ -77,6 +78,11 @@ function attackMove(cmd: Commands, u: Entity, p: Pos): void {
   if (u.order?.kind !== "attackMove" || u.order.x !== p.x || u.order.y !== p.y) cmd.attackMove(u, p.x, p.y)
 }
 
+/** attackMove 加 neutral：野怪也打，射程里有敌人先打敌人（D-191） */
+function attackMoveNeutral(cmd: Commands, u: Entity, p: Pos): void {
+  if (u.order?.kind !== "attackMove" || u.order.x !== p.x || u.order.y !== p.y || u.order.neutral !== true) cmd.attackMove(u, p.x, p.y, { neutral: true })
+}
+
 function moveTo(cmd: Commands, u: Entity, p: Pos): void {
   if (u.x === p.x && u.y === p.y) return
   if (u.order?.kind !== "move" || u.order.x !== p.x || u.order.y !== p.y) cmd.move(u, p.x, p.y)
@@ -115,7 +121,7 @@ function mainTick(view: View, cmd: Commands): void {
   const wantTower = lord !== undefined && mine.filter((e) => e.type === "tower").length < MAX_TOWERS && (lord.skillCooldowns?.tower ?? 1) === 0
   if (lord) {
     lordHome ??= { x: lord.x, y: lord.y }
-    const towerReady = wantTower && view.resources.gold >= TOWER_COST + (army.length >= SAVE_AT ? 0 : TOWER_RESERVE)
+    const towerReady = wantTower && view.resources.gold >= TOWER_COST + TOWER_RESERVE
     const danger = enemyUnits.some((e) => game.types[e.type].attack !== null && e.type !== "worker" && dist(e, lord) <= 7)
     if (danger) {
       moveTo(cmd, lord, lordHome)
@@ -144,9 +150,7 @@ function mainTick(view: View, cmd: Commands): void {
     room-- > 0 && cmd.produce(base, "worker")
     gold -= 50
   }
-  // 攒钱放塔（D-192）：兵够 SAVE_AT 个、家里没事、领主冷却好了，先不出兵
-  const saving = wantTower && army.length >= SAVE_AT && threats.length === 0
-  if (barracks && !saving && (barracks.queue?.length ?? 0) === 0 && (workers.length >= ECO_FIRST || !baseIdle || gold >= 125)) {
+  if (barracks && (barracks.queue?.length ?? 0) === 0 && (workers.length >= ECO_FIRST || !baseIdle || gold >= 125)) {
     const type = PLAN[produced % PLAN.length]
     const cost = game.types[type].cost.gold ?? 0
     if (gold >= cost) {
@@ -233,12 +237,23 @@ function mainTick(view: View, cmd: Commands): void {
     // 清野（D-189）：兵够 8 个、家里没事时去打离家最近的野怪营地，一只 150 金赏金
     const camp = army.length >= 8 ? view.objectives.creepCamps.filter((c) => c.alive > 0).sort((a, b) => dist(a, base) - dist(b, base) || campSide(a, base) - campSide(b, base))[0] : undefined
     if (camp) {
-      const creeps = view.entities.filter((e) => e.type === "creep")
-      for (const u of army) {
-        let c: Entity | undefined
-        for (const k of creeps) if (dist(k, u) <= 8 && (!c || dist(k, u) < dist(c, u))) c = k
-        if (c) attack(cmd, u, c)
-        else attackMove(cmd, u, camp)
+      // D-194（第四轮试写：一个个跑过去会被野怪逐个吃掉）：先在营地外 5 步聚齐（八成到了，或者等了 250 tick），
+      // 再一起集火血最少的那只；附近 8 格有敌兵就改 attackMove 加 neutral（射程里先打敌兵）
+      const key = `${camp.x},${camp.y}`
+      if (farmCamp !== key) {
+        farmCamp = key
+        farmSince = view.tick
+      }
+      const stage = pointToward(camp, base, 5)
+      const creeps = view.entities.filter((e) => e.type === "creep" && dist(e, camp) <= 8)
+      const engaged = army.some((u) => creeps.some((k) => dist(k, u) <= 2))
+      const gathered = army.filter((u) => dist(u, stage) <= 3).length >= army.length * 0.8
+      const foes = enemyUnits.some((e) => isCombat(e) && army.some((u) => dist(e, u) <= 8))
+      if (!engaged && !gathered && view.tick - farmSince < 250) for (const u of army) attackMove(cmd, u, stage)
+      else if (foes || creeps.length === 0) for (const u of army) attackMoveNeutral(cmd, u, camp)
+      else {
+        const target = creeps.reduce((x, y) => (y.hp < x.hp ? y : x))
+        for (const u of army) attack(cmd, u, target)
       }
       return
     }

@@ -3,8 +3,9 @@
 // - 光环「领主光环」：视野（8 格）内自己的战士、弓手打出的伤害 +20%、受到的伤害 −20%（D-188：试写反馈光环太强，25% 降到 20%）
 // - 被动「休养生息」：100 tick 没出手、没挨打以后，每 10 tick 回 10 生命
 // - 技能「点金」（goldmine，弑君拓荒）：在领主 3 格内的空地上造一座 300 金的中立金矿，冷却 600 tick（落点见 mineSpot）
-// - 技能「召唤箭塔」（tower，弑君歼灭，D-192）：花 500 金，在领主 3 格内指定的空地上立刻造好一座拓荒的箭塔，冷却 600 tick
-//   （用户：歼灭的点金换成召唤箭塔；为了防止克制拓荒里 GPT 那种只造箭塔的打法成了最优解，要额外花 500 金）
+// - 技能「召唤箭塔」（tower，弑君歼灭，D-192）：花 250 金，在领主 3 格内指定的空地上立刻造好一座拓荒的箭塔，冷却 600 tick
+//   （用户：歼灭的点金换成召唤箭塔；为了防止克制拓荒里 GPT 那种只造箭塔的打法成了最优解，要额外花钱。
+//   原来 500 金，第四轮试写测出来塔基本没用、略亏，按用户交代降到 250，D-194）
 // 领主的移速、视野、攻击和克制规则包的侦察兵一样（走一格 1 tick、视野 8、攻击 1），生命 500（主基地 1500 的三分之一）
 import type { CastInfo, MatchResult, RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
 import { spawnMirrored, STANDARD_TERRAIN } from "./standard.ts"
@@ -17,7 +18,7 @@ export const LORD_MINE_AMOUNT = 300
 export const LORD_MINE_RANGE = 3
 
 /** 召唤箭塔要花多少金 */
-export const LORD_TOWER_COST = 500
+export const LORD_TOWER_COST = 250
 /** 召唤箭塔：目标格离领主最远几格 */
 export const LORD_TOWER_RANGE = 3
 
@@ -168,7 +169,7 @@ function placeCheck(ctx: RuleContext, lord: { x: number; y: number }, player: nu
   return { free, reachable }
 }
 
-/** 点金：在领主 3 格内找空地放一座中立金矿；召唤箭塔：在目标格（或离它最近的空地）放一座造好的箭塔（500 金是技能的造价，平台查、平台扣）。放不下就拒绝（不扣钱、不进冷却） */
+/** 点金：在领主 3 格内找空地放一座中立金矿；召唤箭塔：在目标格（或离它最近的空地）放一座造好的箭塔（250 金是技能的造价，平台查、平台扣）。放不下就拒绝（不扣钱、不进冷却） */
 export function regicideCast(ctx: RuleContext, c: CastInfo): string | null {
   const lord = ctx.get(c.unit)
   if (!lord) return "领主不在了"

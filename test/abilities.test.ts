@@ -254,8 +254,8 @@ test("技能造价（D-192）：放成功才扣，不够被拒，规则包拒绝
   assert.ok(rejected.some((r) => /gold 不够：花钱要 20，现有 10/.test(r)), rejected.join("\n"))
 })
 
-test("召唤箭塔（D-192）：花 500 金在目标格放一座造好的箭塔，目标格被占就放在旁边，钱不够被拒", async () => {
-  const { lordType, regicideCast, summonedTowerType } = await import("../rulesets/common/regicide.ts")
+test("召唤箭塔（D-192）：花钱在目标格放一座造好的箭塔，目标格被占就放在旁边，钱不够被拒", async () => {
+  const { LORD_TOWER_COST, lordType, regicideCast, summonedTowerType } = await import("../rulesets/common/regicide.ts")
   const events: GameEvent[] = []
   const gold: number[] = []
   let towers: Entity[] = []
@@ -271,7 +271,7 @@ test("召唤箭塔（D-192）：花 500 金在目标格放一座造好的箭塔�
         ctx.spawn("grunt", 0, 6, 2)
         ctx.spawn("lord", 1, 10, 4)
         ctx.setResources(0, { gold: 600 })
-        ctx.setResources(1, { gold: 400 })
+        ctx.setResources(1, { gold: 200 })
       },
       onCast: regicideCast,
     }),
@@ -287,12 +287,12 @@ test("召唤箭塔（D-192）：花 500 金在目标格放一座造好的箭塔�
       if (v.tick === 0) cmd.cast(mine(v, "lord")[0], "tower", { x: 9, y: 4 })
     },
   )
-  assert.equal(gold[1], 100)
+  assert.equal(gold[1], 600 - LORD_TOWER_COST)
   assert.equal(towers.length, 1)
   assert.equal(towers[0].owner, 0)
   assert.equal(Math.abs(towers[0].x - 6) + Math.abs(towers[0].y - 2), 1)
   assert.equal(towers[0].construction, undefined)
-  assert.ok(events.some((e) => e.kind === "rejected" && /gold 不够：召唤箭塔要 500，现有 400/.test(e.reason)))
+  assert.ok(events.some((e) => e.kind === "rejected" && new RegExp(`gold 不够：召唤箭塔要 ${LORD_TOWER_COST}，现有 200`).test(e.reason)))
 })
 
 test("技能：规则包没导出 onCast 时都被拒", () => {

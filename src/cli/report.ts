@@ -185,6 +185,12 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     if (e.owner >= 0 && types[e.type]?.skills?.length && !skillOwners.has(e.id)) skillOwners.set(e.id, { owner: e.owner, type: e.type, born: t, died: null, casts: [] })
   }
   for (const e of s.ents.values()) trackSkills(e, 0)
+  // 玩家的能攻击的建筑（箭塔这类）：开火几次、打死几个、被拆没有（D-194，试写反馈：塔的账要自己解析回放才算得出来）
+  const armed = new Map<number, { owner: number; type: string; shots: number; kills: number; died: boolean }>()
+  const trackArmed = (e: EntSnap) => {
+    if (e.owner >= 0 && e.owner < n && kind(e.type) === "building" && types[e.type]?.attack && !armed.has(e.id)) armed.set(e.id, { owner: e.owner, type: e.type, shots: 0, kills: 0, died: false })
+  }
+  for (const e of s.ents.values()) trackArmed(e)
   /** 工人闲着的开始时间 */
   const idleFrom = new Map<number, number>()
   const idleSpans: IdleSpan[] = []
@@ -286,6 +292,8 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       // 最后一击：玩家编号；中立实体打的记 -2
       lastHit.set(tg.id, a.owner >= 0 ? a.owner : -2)
       lastHitter.set(tg.id, { id: a.id, type: a.type, x: a.x, y: a.y })
+      const ab = armed.get(a.id)
+      if (ab) ab.shots++
       if (!enemies(a.owner, tg.owner)) continue
       if (firstContact < 0 && !isFree(a.type) && !isFree(tg.type)) {
         firstContact = f.t
@@ -323,6 +331,10 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       deaths.push({ t: f.t, owner: e.owner, type: e.type, x: e.x, y: e.y, by, ord: e.ord })
       // 最后一击是谁的什么单位、在哪（D-188，试写反馈：只写玩家编号看不出领主是被塔还是兵打死的）
       const hitter = lastHitter.get(id)
+      const killer = hitter ? armed.get(hitter.id) : undefined
+      if (killer) killer.kills++
+      const dead = armed.get(id)
+      if (dead) dead.died = true
       const so = skillOwners.get(id)
       if (so) so.died = f.t
       const ng = groupOf.get(id)
@@ -371,6 +383,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     for (const e of f.spawn ?? []) {
       addNeutral(e)
       trackSkills(e, f.t)
+      trackArmed(e)
       if (initialIds.has(e.id) || e.owner < 0 || e.owner >= n) continue
       // 玩家放的地基一出来就有建造进度；直接是建好的建筑，是规则包放的
       if (kind(e.type) === "building" && e.bp === undefined) {
@@ -703,6 +716,17 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     const byNeutral = new Map<string, number>()
     for (const d of deaths) if (d.owner === p && d.by === -2) byNeutral.set(d.type, (byNeutral.get(d.type) ?? 0) + 1)
     if (byNeutral.size) out.push(`  被中立单位打死：${countList(byNeutral)}${neutralGroups.length ? "（在哪儿见「中立单位」一节）" : ""}`)
+    const towers = [...armed.values()].filter((b) => b.owner === p)
+    if (towers.length) {
+      const m = new Map<string, number>()
+      for (const b of towers) m.set(b.type, (m.get(b.type) ?? 0) + 1)
+      const shots = towers.reduce((a, b) => a + b.shots, 0)
+      const kills = towers.reduce((a, b) => a + b.kills, 0)
+      const idle = towers.filter((b) => b.shots === 0).length
+      out.push(
+        `  能攻击的建筑：${countList(m)}，被拆 ${towers.filter((b) => b.died).length} 座；一共开火 ${shots} 次、最后一击打死 ${kills} 个（平均每座开火 ${(shots / towers.length).toFixed(1)} 次）${idle ? `；${idle} 座一次都没开火` : ""}`,
+      )
+    }
     // 出兵顺序（连着出同一种的合成一个，比如 spearman×2）：看对手按什么规律出兵
     if (armyOrder[p].length) {
       const runs: string[] = []
@@ -857,7 +881,15 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     const cheapest = Math.min(...Object.values(types).map((t) => Object.values(t.cost ?? {}).reduce((a: number, c) => a + (c ?? 0), 0)).filter((c) => c > 0))
     const inGame = after.filter((smp) => smp.players[p].alive)
     const avgBank = inGame.reduce((a, smp) => a + sum(smp.players[p].res), 0) / Math.max(1, inGame.length)
-    if (Number.isFinite(cheapest) && avgBank >= cheapest * 4) hints.push(`钱囤着没花：抽样时平均手上留着 ${Math.round(avgBank)}（最便宜的东西才 ${cheapest}）`)
+    if (Number.isFinite(cheapest) && avgBank >= cheapest * 4) {
+      // 兵营差不多满负荷时钱多是出兵的瓶颈，不是不会花（D-194，试写反馈：这条在兵营利用率 83% 时也出，会误导）
+      const util = producerTime[p] >= 1000 ? armyBuildTime[p] / producerTime[p] : 0
+      hints.push(
+        util >= 0.7
+          ? `手上钱多：抽样时平均留着 ${Math.round(avgBank)}，但能出兵的建筑大约 ${Math.round(util * 100)}% 的时间在出兵，已经差不多满负荷，多的钱只能花在别处（多造能出兵的建筑、技能这些，看规则包有什么）`
+          : `钱囤着没花：抽样时平均手上留着 ${Math.round(avgBank)}（最便宜的东西才 ${cheapest}）`,
+      )
+    }
     if (firstHitDealt[p] < 0 && firstHitTaken[p] >= 0) hints.push("整局没打到过敌人，只挨了打")
     // 同一个位置的建筑反复被拆
     const razed = new Map<string, { type: string; x: number; y: number; n: number }>()

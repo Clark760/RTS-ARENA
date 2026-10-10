@@ -109,7 +109,7 @@ league 的选项：
                       等级分（1500 起）把名次拆成两两比较，按全部对局一起算，和打的先后顺序无关
 compare 的选项：
         --per-pair N  每个对手打几组（默认 10：5 个种子 × 换边）；一组是两个版本各一局，所以一共打 2 × 对手数 × N 局
-        --seed、--out、--no-check 同 run；回放只存两个版本结果不一样的组，--no-replays 一局都不存
+        --seed、--out、--no-check 同 run；回放只存两个版本胜负不一样的组，--all-replays 每组都存（想自己统计别的数据时用），--no-replays 一局都不存
 `
 
 /** HELP 里某个命令的那几行（命令行和续行、"xx 的选项"那一段）；没有这个命令返回 null */
@@ -159,7 +159,7 @@ const OPTIONS: Record<string, Record<string, boolean>> = {
   run: { seed: false, games: false, out: false, teams: false, "no-check": true, json: true, quiet: true, ticks: false, "no-replays": true },
   league: { seed: false, size: false, teams: false, partners: false, "per-table": false, "per-pair": false, tables: false, out: false, "no-check": true, json: true, focus: true, "no-replays": true, quiet: true },
   check: { ticks: false },
-  compare: { seed: false, "per-pair": false, out: false, "no-check": true, "no-replays": true },
+  compare: { seed: false, "per-pair": false, out: false, "no-check": true, "no-replays": true, "all-replays": true },
   view: { port: false, open: true },
   report: { player: false, every: false, full: true, at: false },
   map: { seed: false },
@@ -858,6 +858,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
   if (!Number.isInteger(baseSeed)) fail("--seed 要是整数")
   const outDir = typeof opt.out === "string" ? opt.out : "replays"
   const noReplays = opt["no-replays"] === true
+  const allReplays = opt["all-replays"] === true
   const total = foes.length * perPair * 2
   if (total > 5000) fail(`一共要打 ${total} 局，太多了；少带几个对手或者减小 --per-pair`)
   const runId = randomBytes(3).toString("hex")
@@ -896,7 +897,8 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
       diffs.push(sb - sa)
       if (sb > sa) row.better++
       if (sb < sa) row.worse++
-      if (sa !== sb && !noReplays) {
+      // --all-replays（D-194，试写反馈：只存胜负不同的组，没法汇总塔这类全局统计）：每组都存
+      if ((sa !== sb || allReplays) && !noReplays) {
         const stem = join(outDir, `${rules.id}-${startStamp}-${runId}-cmp-s${seed}-P${seat}-${safeName(row.name)}`)
         const fileA = `${stem}-${safeName(la)}.json`
         const fileB = `${stem}-${safeName(lb)}.json`
@@ -909,7 +911,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
     const same = perPair - row.better - row.worse
     say(
       `对 ${row.name}（${perPair} 组）：${la} ${wdl(row.a)}，${lb} ${wdl(row.b)}；` +
-        (same === perPair ? "每组结果都一样" : `结果不同的 ${perPair - same} 组里 ${lb} 好 ${row.better}、${la} 好 ${row.worse}`) +
+        (same === perPair ? "每组胜负都一样" : `胜负不同的 ${perPair - same} 组里 ${lb} 好 ${row.better}、${la} 好 ${row.worse}`) +
         `  用时 ${((performance.now() - t0) / 1000).toFixed(0)} 秒`,
     )
   }
@@ -929,7 +931,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
   const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - textWidth(s)))
   const col = Math.max(10, textWidth(la) + 2, textWidth(lb) + 2)
   console.log(`\n## 对比：${la} → ${lb}（每组两个版本用同一个种子、坐同一个位置各打一局）`)
-  console.log(`${pad("对手", width)}  ${pad(la, col)}${pad(lb, col)}结果不同的组（${lb} 好 / ${la} 好）`)
+  console.log(`${pad("对手", width)}  ${pad(la, col)}${pad(lb, col)}胜负不同的组（${lb} 好 / ${la} 好）`)
   for (const r of rows) console.log(`${pad(r.name, width)}  ${pad(wdl(r.a), col)}${pad(wdl(r.b), col)}${r.better} / ${r.worse}`)
   const better = rows.reduce((x, r) => x + r.better, 0)
   const worse = rows.reduce((x, r) => x + r.worse, 0)
@@ -937,7 +939,7 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
   const pct = (x: number) => Math.round(x * 100)
   console.log(`\n得分率（胜 1 平 0.5）：${la} ${pct(rateOf(ta))}%，${lb} ${pct(rateOf(tb))}%`)
   const gap = pct(Math.abs(mean))
-  if (better + worse === 0) console.log(`→ ${groups} 组里两个版本的结果全一样：这批对手上分不出高下，换打得不稳的对手再比`)
+  if (better + worse === 0) console.log(`→ ${groups} 组里两个版本的胜负全一样（局面不一定一样）：这批对手上分不出高下，换打得不稳的对手再比`)
   else if (Math.abs(mean) <= ci)
     console.log(
       `→ 分不出高下：${lb} ${mean >= 0 ? "高" : "低"} ${gap} 个百分点，按组配对算的 95% 区间是 ±${pct(ci)}，盖住了 0。` +
@@ -945,10 +947,10 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
     )
   else console.log(`→ ${lb} 比 ${la} ${mean > 0 ? "强" : "弱"}：${mean > 0 ? "高" : "低"} ${gap} 个百分点（按组配对算的 95% 区间 ±${pct(ci)}），差距在误差之外`)
   const flat = rows.filter((r) => r.better + r.worse === 0)
-  if (flat.length && flat.length < rows.length) console.log(`对 ${flat.map((r) => r.name).join("、")} 两个版本每组结果都一样，再比的时候可以不带（省时间）`)
+  if (flat.length && flat.length < rows.length) console.log(`对 ${flat.map((r) => r.name).join("、")} 两个版本每组胜负都一样，再比的时候可以不带（省时间）`)
   if (noReplays) console.log("\n（--no-replays：没存回放）")
   else if (saved.length) {
-    console.log(`\n结果不同的组存了回放（每组两个版本各一局，在 ${outDir}；同一个种子同一个位置，对着看哪里不一样）：`)
+    console.log(`\n${allReplays ? "每组都" : "胜负不同的组"}存了回放（每组两个版本各一局，在 ${outDir}；同一个种子同一个位置，对着看哪里不一样）：`)
     for (const x of saved.slice(0, 12))
       console.log(`  对 ${x.foe} 种子 ${x.seed}（坐 P${x.seat}）：${la} ${outcome(x.sa)}、${lb} ${outcome(x.sb)}  ${x.files.map((f) => basename(f)).join("  ")}`)
     if (saved.length > 12) console.log(`  另有 ${saved.length - 12} 组`)
