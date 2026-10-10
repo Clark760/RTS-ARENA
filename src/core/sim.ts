@@ -229,6 +229,7 @@ function combat(w: World): void {
     t.lastCombat = w.tick
     t.lastHitBy = a.owner
     t.lastHitNeutral = a.owner < 0
+    t.lastHitType = a.type
     w.shots.push(a.id, t.id)
     if (t.owner >= 0) w.pushEvent(t.owner, { kind: "damaged", tick: w.tick, id: t.id, by: a.id, damage: dmg })
   }

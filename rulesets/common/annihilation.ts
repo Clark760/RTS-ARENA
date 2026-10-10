@@ -60,9 +60,10 @@ export function annihilationSetup(ctx: SetupContext, types: Record<string, TypeS
 const BUILDING_VALUE: Record<string, number> = { base: 1000, barracks: 400 }
 
 /** 打死对方的东西得击杀价值，状态栏显示比分 */
-export function scoreAnnihilationKills(ctx: RuleContext, types: Record<string, TypeSpec>): void {
+/** 打死对方的东西加击杀价值；ignore 里的类型打死的不算（D-203：弑君歼灭的主基地会开火，它打死的不算，免得守家白拿分） */
+export function scoreAnnihilationKills(ctx: RuleContext, types: Record<string, TypeSpec>, ignore: string[] = []): void {
   for (const ev of ctx.events) {
-    if (ev.kind === "died" && ev.killer >= 0 && ev.owner >= 0 && ev.killer !== ev.owner) ctx.addScore(ev.killer, BUILDING_VALUE[ev.type] ?? types[ev.type].cost?.gold ?? 0)
+    if (ev.kind === "died" && ev.killer >= 0 && ev.owner >= 0 && ev.killer !== ev.owner && !(ev.killerType && ignore.includes(ev.killerType))) ctx.addScore(ev.killer, BUILDING_VALUE[ev.type] ?? types[ev.type].cost?.gold ?? 0)
   }
   ctx.setStatus(`击杀价值 ${ctx.players.map((p) => p.score).join(" : ")}`)
 }

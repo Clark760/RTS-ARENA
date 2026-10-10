@@ -349,6 +349,7 @@ export class World implements SetupContext, RuleContext {
       gatherCd: 0,
       lastHitBy: -1,
       lastHitNeutral: false,
+      lastHitType: "",
       path: [],
       pathKey: "",
       planX: 0,
@@ -410,7 +411,8 @@ export class World implements SetupContext, RuleContext {
     this.ruleBuffs.delete(e.id)
     if (removed) this.removed.add(e.id)
     const flags = { ...(e.construction ? { unfinished: true as const } : {}), ...(removed ? { removed: true as const } : {}) }
-    this.events.push({ kind: "died", id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, killer, ...flags, ...(byNeutral ? { byNeutral: true as const } : {}) })
+    const by = (killer >= 0 || byNeutral) && e.lastHitType ? { killerType: e.lastHitType } : {}
+    this.events.push({ kind: "died", id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, killer, ...by, ...flags, ...(byNeutral ? { byNeutral: true as const } : {}) })
     for (const p of this.players) {
       if (p.id === e.owner || this.visibleTo(p.id, e)) this.pushEvent(p.id, { kind: "died", tick: this.tick, id: e.id, type: e.type, owner: e.owner, x: e.x, y: e.y, ...flags })
     }

@@ -143,9 +143,10 @@ export type RuleEvent =
   /** killer 是最后一击的玩家，-1 表示没有（如资源采完、规则移除、拆掉自己的地基）；unfinished 表示死的是没建好的建筑 */
   /**
    * removed 为 true 表示是规则包用 remove 移除的（不是打死的），killer 是 -1；
-   * byNeutral 为 true 表示最后一击是中立实体（killer 也是 -1，用它和"没有凶手"区分）
+   * byNeutral 为 true 表示最后一击是中立实体（killer 也是 -1，用它和"没有凶手"区分）；
+   * killerType 是最后一击的实体类型（被打死的才有，D-203：比如主基地打死的不算击杀价值）
    */
-  | { kind: "died"; id: number; type: string; owner: number; x: number; y: number; killer: number; unfinished?: true; removed?: true; byNeutral?: true }
+  | { kind: "died"; id: number; type: string; owner: number; x: number; y: number; killer: number; killerType?: string; unfinished?: true; removed?: true; byNeutral?: true }
   | { kind: "created"; id: number; type: string; owner: number }
   | { kind: "deposit"; player: number; resource: string; amount: number; by: number }
   /** 工人建造的建筑建好了（放下地基时是 created） */
@@ -375,6 +376,8 @@ export interface EntityState extends RuleEntity {
   lastHitBy: number
   /** 最后一击是中立实体 */
   lastHitNeutral: boolean
+  /** 最后一击的实体类型（D-203） */
+  lastHitType: string
   /** 追会动的目标时的 A* 路径：倒序存格子下标，末尾是下一步 */
   path: number[]
   pathKey: string

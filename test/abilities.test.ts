@@ -467,6 +467,28 @@ test("中央宝箱（D-202）：第 900 tick 在正中刷出，打掉它的玩�
   assert.deepEqual([b.x, b.y], [W - 2 - a.x, H - 2 - a.y])
 })
 
+test("死亡事件带 killerType（D-203）：最后一击的实体类型，规则包据此可以让某些实体打死的不算分", () => {
+  const died: RuleEvent[] = []
+  const turret: TypeSpec = { kind: "building", w: 1, h: 1, maxHp: 500, attack: { damage: 50, range: 3, cooldown: 2 }, look }
+  play(
+    mini([["grunt", 1, 4, 2]], {
+      maxTicks: 20,
+      types: { ...TYPES, turret },
+      setup(ctx) {
+        ctx.setTerrain(Array(6).fill(".".repeat(12)))
+        ctx.spawn("turret", 0, 2, 2)
+        ctx.spawn("grunt", 1, 4, 2)
+      },
+      onTick(ctx) {
+        died.push(...ctx.events.filter((e) => e.kind === "died"))
+      },
+    }),
+    () => {},
+  )
+  assert.equal(died.length, 1)
+  assert.deepEqual([died[0].kind === "died" && died[0].killer, died[0].kind === "died" && died[0].killerType], [0, "turret"])
+})
+
 test("attackMove 写 { neutral: true } 也打中立单位，射程里有对手的先打对手的；不写就不打中立的（D-191）", () => {
   const hpOf = (v: View, owner: number) => v.entities.find((e) => e.owner === owner && e.type === "grunt")?.hp
   // 不写 neutral：从中立的旁边走过去，一下都不打它

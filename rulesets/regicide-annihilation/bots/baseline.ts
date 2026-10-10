@@ -1,4 +1,4 @@
-// 基准（均衡）：领主待在家里，身边 6 格内来了 3 个以上敌兵就放击退；兵战士弓手交替出，6～9 个兵时家里没事就去清最近的野怪营地（先在营地外聚齐，再集火血最少的那只），凑够 10 个兵出击，家里或领主附近来敌人全军回防。
+// 基准（均衡）：领主待在家里，身边 6 格内来了 3 个以上敌兵就放击退；兵战士弓手交替出，6～9 个兵时家里没事就去清最近的野怪营地（先在营地外聚齐，再集火血最少的那只），凑够 10 个兵出击，家里或领主附近来敌人全军回防；家里没事、兵够 10 个先去抢中央宝箱（在旁边聚齐再点名打），野怪咬过来附近的兵一起集火还手。
 // 用来衡量新 bot 的标准对手。
 // - 领主：平时站在开局的角落，回防时跟着守军；6 格内有 3 个以上敌兵、击退冷却好了就放；
 //   7 格内出现敌方的兵就跑回开局的角落，等敌人走了再回去。出击时领主不跟。
@@ -165,9 +165,9 @@ function mainTick(view: View, cmd: Commands): void {
       defenders.add(w.id)
     }
   }
-  // 离活着的野怪营地 8 格内（野怪追击的范围）的矿不去（D-202：营地一打起来，矿边的工人整批被野怪打死，经济就崩了）
-  // 对面那一侧的矿也不去：走过去要横穿地图、路过营地
-  const risky = (m: Entity) => dist(m, base) > dist(m, eb) || view.objectives.creepCamps.some((c) => c.alive > 0 && c.cells.some((p) => dist(m, p) <= 8))
+  // 对面那一侧的矿不去（走过去要横穿地图、路过营地）；野怪营地正在出手时，营地 8 格内（野怪追击的范围）的矿先别去，
+  // 营地安静了再回去采（D-202/203：营地一打起来，矿边的工人整批被野怪打死；可一直躲着中间矿，家门口采完就没钱了）
+  const risky = (m: Entity) => dist(m, base) > dist(m, eb) || view.objectives.creepCamps.some((c) => c.angry && c.alive > 0 && c.cells.some((p) => dist(m, p) <= 8))
   const load = new Map<number, number>()
   for (const w of workers) if (w.order?.kind === "gather") load.set(w.order.target, (load.get(w.order.target) ?? 0) + 1)
   for (const w of workers) {
@@ -218,14 +218,27 @@ function mainTick(view: View, cmd: Commands): void {
 
   if (mode === "defend") {
     // 清野（D-189）：兵够 6 个、家里没事时去打离家最近的野怪营地，一只 150 金赏金
-    // 中央宝箱（D-202）：兵够 6 个、家里没事就先去打离家近的那个宝箱，打掉得 600 金（路上碰到对手的兵先打兵）
-    const chest = army.length >= 6 ? [...view.objectives.treasure.chests].sort((a, b) => dist(a, base) - dist(b, base))[0] : undefined
+    // 中央宝箱（D-202）：兵够 10 个、家里没事就先去打离家近的那个宝箱，打掉得 600 金
+    const chest = army.length >= 10 ? [...view.objectives.treasure.chests].sort((a, b) => dist(a, base) - dist(b, base))[0] : undefined
     if (chest) {
-      // 路上用普通 attackMove（只打对手，不惹路边的野怪），到了宝箱 6 格内再点名打宝箱
-      const box = view.entities.find((e) => e.type === "treasure" && e.x === chest.x && e.y === chest.y)
-      for (const u of army) {
-        if (box && dist(u, box) <= 6) attack(cmd, u, box)
-        else attackMove(cmd, u, { x: chest.x, y: chest.y })
+      // D-203：和清野一样先在宝箱外 6 步聚齐（八成到了，或者等了 250 tick），再一起点名打宝箱。
+      // 不用 attackMove 加 neutral：它会去追视野里的野怪，宝箱 5～7 格外就是营地，整个营地被惹出来；野怪咬过来由 retaliate 集火还手
+      const key = `宝箱${chest.x},${chest.y}`
+      if (farmCamp !== key) {
+        farmCamp = key
+        farmSince = view.tick
+      }
+      const spot = { x: chest.x, y: chest.y }
+      const stage = pointToward(spot, base, 6)
+      const near = army.some((u) => dist(u, spot) <= 4)
+      const ready = army.filter((u) => dist(u, stage) <= 3).length >= army.length * 0.8
+      if (!near && !ready && view.tick - farmSince < 250) for (const u of army) attackMove(cmd, u, stage)
+      else {
+        const box = view.entities.find((e) => e.type === "treasure" && e.x === chest.x && e.y === chest.y)
+        for (const u of army) {
+          if (box) attack(cmd, u, box)
+          else attackMove(cmd, u, spot)
+        }
       }
       return
     }
@@ -290,15 +303,19 @@ function repel(view: View, cmd: Commands): void {
   if (near.length >= 3) cmd.cast(lord, "repel")
 }
 
-/** 贴身的野怪咬过来就还手 */
+/**
+ * 野怪咬过来就还手（D-203 改成集火）：贴着我方兵（3 格内）的野怪里，每个兵挑自己 8 格内血最少的那只打，
+ * 附近的兵就会一起打同一只（原来各打离自己最近的，打宝箱、清野时零零散散被野怪吃掉）
+ */
 function retaliate(view: View, cmd: Commands): void {
   const creeps = view.entities.filter((e) => e.type === "creep")
   if (creeps.length === 0) return
-  for (const u of view.entities) {
-    if (u.owner !== view.me || (u.type !== "soldier" && u.type !== "archer")) continue
-    const reach = Math.max(2, game.types[u.type].attack!.range)
+  const army = view.entities.filter((u) => u.owner === view.me && (u.type === "soldier" || u.type === "archer"))
+  const biting = creeps.filter((k) => army.some((u) => dist(k, u) <= 3))
+  if (biting.length === 0) return
+  for (const u of army) {
     let c: Entity | undefined
-    for (const k of creeps) if (dist(k, u) <= reach && (!c || dist(k, u) < dist(c, u))) c = k
+    for (const k of biting) if (dist(k, u) <= 8 && (!c || k.hp < c.hp)) c = k
     if (c && !(u.order?.kind === "attack" && u.order.target === c.id)) cmd.attack(u, c)
   }
 }

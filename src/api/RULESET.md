@@ -110,7 +110,7 @@ export default ruleset
 - **中立实体**（owner -1，比如野怪）：能攻击的闲着时会自动打射程内的玩家实体。玩家的单位不会自动打它们：不管是 idle、普通的 attackMove，还是正挨着中立实体的打，都不会还手，只有 bot 下 `attack` 命令、或者 `attackMove` 写了 `{ neutral: true }`（对手的东西优先）才打（RULES.md 里要提醒 bot 作者）。中立实体之间不会互相打。平时不动，用 `orderNeutral(id, order)` 指挥（只能指挥中立实体，对玩家的实体用会抛错）：`{ kind: "move", x, y }`、`{ kind: "attack", target }`、`{ kind: "attackMove", x, y }`、`{ kind: "stop" }`，命令会一直执行到完成或失效（和 bot 的同名命令一样）。被打死时 `died` 事件的 `killer` 是最后一击的玩家，可以据此给赏金。在 RULES.md 里把中立实体会做什么写清楚。
 - **视野**：`isVisible(player, x, y)` 查某一格现在在不在 player 那一队的视野里（没开迷雾时总是 true）。
 - **自己的事件**：`note(text, player?)` 往回放和战报的关键事件里写一条（比如 "P0 扛起了 P1 的旗"），player 是这条主要关于谁（不写是所有人）；每 tick 最多 20 条、每条 100 字，整局 2000 条。关键事件里会标"（规则包）"。
-- **死亡事件**：`died` 的 `killer` 是最后一击的玩家，-1 表示没有；最后一击是中立实体时 killer 也是 -1，但多一个 `byNeutral: true`。
+- **死亡事件**：`died` 的 `killer` 是最后一击的玩家，-1 表示没有；最后一击是中立实体时 killer 也是 -1，但多一个 `byNeutral: true`。被打死的还带 `killerType`（最后一击的实体类型，比如 `"base"`），可以据此让某些实体打死的不算分。
 - **放置限制**：规则包可以导出 `buildCheck(ctx, player, type, x, y)`，玩家放地基时（平台检查完位置之后、扣钱之前；钱够不够在它之后才查）调用：返回 null 允许，返回字符串就拒绝、原样告诉 bot（比如 "烽火台只能建在台址里"）。bot 的 canBuild 不知道这条规则，要在 RULES.md 里写清楚；最好把能放的地方也放进 objectives（比如列出允许的格子或区域），bot 才能自己判断，不然每个 bot 都得把你的规则抄一遍。开了迷雾时注意：平台先要求占地每格都在玩家视野里，不在就直接拒绝（"不在你方视野里"），根本不会问 buildCheck；所以列给 bot 的位置要在玩家一定看得见的地方，或者说明要先派人过去（可以用 `isVisible` 在 objectives 里标出现在能不能建）。
 - 随机数用 `ctx.rng`（`next()`、`int(n)`、`shuffle(arr)`），同一个种子结果完全一样。`Math.random` 也按种子确定，但在 setup 之前（规则包的顶层代码里）每局都一样，推荐只用 `ctx.rng`。
 - 分数 `players[i].score` 的含义由你定，在 RULES.md 里写清楚；bot 能在 `view.players` 里看到每个人的分数。

@@ -48,7 +48,8 @@ const ruleset: Ruleset = {
   },
 
   onTick(ctx) {
-    scoreAnnihilationKills(ctx, types)
+    // D-203（用户）：主基地打死的不算击杀价值（一个兵不出的 bot 靠主基地点掉来拆家的兵，时间到时击杀价值领先，守家白拿分）
+    scoreAnnihilationKills(ctx, types, ["base"])
     creepTick(ctx)
     treasureTick(ctx)
   },
