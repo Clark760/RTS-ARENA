@@ -254,12 +254,13 @@ test("技能造价（D-192）：放成功才扣，不够被拒，规则包拒绝
   assert.ok(rejected.some((r) => /gold 不够：花钱要 20，现有 10/.test(r)), rejected.join("\n"))
 })
 
-test("击退（D-197、D-206）：领主视野内的敌方单位各自往外推 3 格，建筑和中立的不推；视野里没敌人被拒", async () => {
+test("击退（D-197、D-206、D-207）：领主视野内的敌方单位各自往外推 3 格、眩晕 20 tick，建筑和中立的不推；视野里没敌人被拒", async () => {
   const { lordType, regicideCast } = await import("../rulesets/common/regicide.ts")
   const events: GameEvent[] = []
   const before: Entity[] = []
   let after: Entity[] = []
   const types = { ...TYPES, lord: lordType(["grunt"], "repel"), hut: { kind: "building" as const, w: 1, h: 1, maxHp: 100, look } }
+  let stunned: (number | undefined)[] = []
   play(
     mini([], {
       maxTicks: 3,
@@ -287,8 +288,11 @@ test("击退（D-197、D-206）：领主视野内的敌方单位各自往外推 
       events.push(...v.events)
       // 视野里没有敌人：被拒
       if (v.tick === 0) cmd.cast(mine(v, "lord")[0], "repel")
+      stunned = mine(v, "grunt").map((e) => e.stunned)
     },
   )
+  // 被推的两个都在眩晕（第 1 tick 放的，挡住第 1～20 tick 的结算，第 2 tick 结束时还剩 18 tick）
+  assert.deepEqual(stunned, [18, 18])
   const far = (e: Entity) => Math.abs(e.x - 6) + Math.abs(e.y - 4)
   const grunts = after.filter((e) => e.type === "grunt" && e.owner === 1)
   assert.equal(grunts.length, 2)
@@ -469,7 +473,7 @@ test("中央宝箱（D-202、D-206）：第 900 tick 在正中两格各刷一个
   assert.deepEqual(a, { x: 9, y: 3 })
 })
 
-test("中央宝箱（D-205、D-206）：刷新那一刻站在宝箱格子上的一方直接捡到这个宝箱（放特效）；站着野怪就等它走开", async () => {
+test("中央宝箱（D-205～D-207）：刷新那一刻站在宝箱格子上的一方直接捡到（放特效），每方每轮最多捡一个、每格只结算一次；站着野怪就等它走开", async () => {
   const { setupTreasure, treasureTick, treasureType, TREASURE_EVERY, TREASURE_GOLD } = await import("../rulesets/common/treasure.ts")
   // 在 20×10 的空地上，两个宝箱的格子是 (9, 4)、(10, 5)；放好 P0、P1、中立的兵，看第 900 tick 之后的结果
   const half = TREASURE_GOLD / 2
@@ -478,7 +482,7 @@ test("中央宝箱（D-205、D-206）：刷新那一刻站在宝箱格子上的�
     let boxes: [number, number][] = []
     const replay = play(
       mini([], {
-        maxTicks: TREASURE_EVERY + 2,
+        maxTicks: TREASURE_EVERY + 10,
         types: { ...TYPES, treasure: treasureType() },
         setup(ctx) {
           ctx.setTerrain(Array(10).fill(".".repeat(20)))
@@ -498,15 +502,12 @@ test("中央宝箱（D-205、D-206）：刷新那一刻站在宝箱格子上的�
       },
     )
     const fx = replay.frames.flatMap((f) => f.fx ?? [])
-    return { g0: gold[0][TREASURE_EVERY + 1], g1: gold[1][TREASURE_EVERY + 1], boxes, fx }
+    return { g0: gold[0][TREASURE_EVERY + 9], g1: gold[1][TREASURE_EVERY + 9], boxes, fx }
   }
-  // P0 两格都占：两个都捡到，一个都不刷出来，放两个特效
+  // P0 两格都占：只捡格子顺序在前的那个（放一个特效），另一格等它走开，也不再重复给钱（D-207）
   const both = run([[0, 9, 4], [0, 10, 5]])
-  assert.deepEqual([both.g0, both.g1, both.boxes], [TREASURE_GOLD, 0, []])
-  assert.deepEqual(both.fx, [
-    { x: 9, y: 4, w: 1, h: 1, text: `P0 +${half}`, color: "#f2c14e" },
-    { x: 10, y: 5, w: 1, h: 1, text: `P0 +${half}`, color: "#f2c14e" },
-  ])
+  assert.deepEqual([both.g0, both.g1, both.boxes], [half, 0, []])
+  assert.deepEqual(both.fx, [{ x: 9, y: 4, w: 1, h: 1, text: `P0 +${half}`, color: "#f2c14e" }])
   // 一人一格：各捡一个
   const split = run([[0, 9, 4], [1, 10, 5]])
   assert.deepEqual([split.g0, split.g1, split.boxes], [half, half, []])
@@ -516,6 +517,43 @@ test("中央宝箱（D-205、D-206）：刷新那一刻站在宝箱格子上的�
   // 中立的单位站着：那一格等着不刷，另一格照常刷出
   const neutral = run([[-1, 9, 4]])
   assert.deepEqual([neutral.g0, neutral.g1, neutral.boxes], [0, 0, [[10, 5]]])
+  // 一格站着野怪在等、另一格站着 P0：P0 只拿一次（第八轮试写：原来每 tick 给一次）
+  const once = run([[-1, 9, 4], [0, 10, 5]])
+  assert.deepEqual([once.g0, once.g1, once.boxes, once.fx.length], [half, 0, [], 1])
+})
+
+test("眩晕（D-207）：ctx.stun 的单位这些 tick 不走、不打，命令不变、过后接着做；bot 看得到 stunned；damaged 事件带攻击者的主人和类型", () => {
+  const pos: [number, number][] = []
+  const stunned: (number | undefined)[] = []
+  const damaged: GameEvent[] = []
+  play(
+    mini([["grunt", 0, 1, 2], ["grunt", 1, 3, 4], ["grunt", -1, 6, 4]], {
+      maxTicks: 16,
+      onTick(ctx) {
+        if (ctx.tick === 1) {
+          const [me] = ctx.entities({ type: "grunt", owner: 0 })
+          ctx.stun(me.id, 5)
+          assert.throws(() => ctx.stun(me.id, 0), /1～600/)
+        }
+      },
+    }),
+    (v, cmd) => {
+      const me = mine(v, "grunt")[0]
+      if (v.tick === 0) cmd.move(me, 8, 2)
+      pos.push([me.x, me.y])
+      stunned.push(me.stunned)
+    },
+    (v, cmd) => {
+      damaged.push(...v.events.filter((e) => e.kind === "damaged"))
+      // P1 的兵走到中立的旁边，被它还手
+      if (v.tick === 0) cmd.attack(mine(v, "grunt")[0], v.entities.find((e) => e.owner === -1)!)
+    },
+  )
+  // 第 1 tick 走了一步，结算完（onTick）眩晕 5 tick：第 2～6 tick 不动，第 7 tick 接着走；bot 看到还剩几 tick
+  assert.deepEqual(pos.slice(0, 9), [[1, 2], [2, 2], [2, 2], [2, 2], [2, 2], [2, 2], [2, 2], [3, 2], [4, 2]])
+  assert.deepEqual(stunned.slice(0, 8), [undefined, 5, 4, 3, 2, 1, undefined, undefined])
+  const hit = damaged.find((e) => e.kind === "damaged")
+  assert.ok(hit && hit.kind === "damaged" && hit.byOwner === -1 && hit.byType === "grunt", JSON.stringify(hit))
 })
 
 test("死亡事件带 killerType（D-203）：最后一击的实体类型，规则包据此可以让某些实体打死的不算分", () => {

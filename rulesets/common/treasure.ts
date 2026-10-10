@@ -8,6 +8,9 @@
 // - 上一个宝箱还在（没被打掉）就不刷新，不叠加
 // - 刷新那一刻宝箱的格子被玩家的单位（或者建筑）占着：这一方直接捡到宝箱、马上得金子，宝箱不刷出来（D-205，用户：占位的直接给
 //   占位的一方，方便写抢箱子的打法）；一格只站得下一个，不会有两方同时占着。站着野怪就等它走开再刷
+// - D-207（第八轮试写）：每个格子每轮只结算一次（原来一格站着野怪在等、另一格站着玩家的单位时，每 tick 都给一次 300 金）；
+//   每一方每轮最多直接捡一个（先到的一方两个通吃，188 次刷新里 55% 被一方包圆）：同一方两格都站着，捡格子顺序在前的那个，
+//   另一格等它走开再刷出来，要打
 // - 打掉和捡到都放一个画面特效（ctx.effect）
 import type { RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
 import { STANDARD_TERRAIN } from "./standard.ts"
@@ -29,7 +32,10 @@ export function treasureType(): TypeSpec {
 
 // 一局的状态（setup 时重置）
 let spots: { x: number; y: number }[] = []
-let pending = false
+/** 这一轮还没结算的格子（下标）；捡到或者刷出来就去掉 */
+let todo: number[] = []
+/** 这一轮已经直接捡过的玩家 */
+let took = new Set<number>()
 let opened: number[] = []
 let gold: number[] = []
 
@@ -41,7 +47,8 @@ function each(): number {
 /** 摆宝箱的位置：正中 2×2 里斜对着的两格（中心对称）；被挡住就找离正中最近、中心对称的一对格子 */
 export function setupTreasure(ctx: SetupContext, W: number, H: number): void {
   spots = []
-  pending = false
+  todo = []
+  took = new Set()
   opened = []
   gold = []
   const ents = ctx.entities()
@@ -70,28 +77,36 @@ export function setupTreasure(ctx: SetupContext, W: number, H: number): void {
       }
 }
 
-/** 每 tick：发宝箱的金子；到了刷新时刻把空着的位置补上宝箱（被玩家占着就直接归它，站着野怪就等下一 tick） */
+/** 每 tick：发宝箱的金子；到了刷新时刻把空着的位置补上宝箱（被这一轮还没捡过的玩家占着就直接归它，不然等下一 tick） */
 export function treasureTick(ctx: RuleContext): void {
   for (const ev of ctx.events) {
     if (ev.kind !== "died" || ev.type !== "treasure" || ev.killer < 0) continue
     const n = give(ctx, ev.killer, { x: ev.x, y: ev.y })
     ctx.note(`P${ev.killer} 打开了中央宝箱，得 ${n} 金`)
   }
-  if (ctx.tick > 0 && ctx.tick % TREASURE_EVERY === 0) pending = true
-  if (!pending) return
-  let waiting = false
-  let spawned = 0
-  for (const s of spots) {
-    const here = ctx.entitiesIn(s.x, s.y, 1, 1)
-    if (here.some((e) => e.type === "treasure")) continue
-    const who = here.find((e) => e.owner >= 0)
-    if (who) {
-      const n = give(ctx, who.owner, s)
-      ctx.note(`P${who.owner} 占住了宝箱的位置，直接捡到宝箱，得 ${n} 金`)
-    } else if (here.length) waiting = true
-    else if (ctx.spawnNear("treasure", -1, s.x, s.y) !== null) spawned++
+  if (ctx.tick > 0 && ctx.tick % TREASURE_EVERY === 0) {
+    // 新的一轮：宝箱还在的格子不刷
+    todo = spots.map((_, i) => i).filter((i) => !ctx.entitiesIn(spots[i].x, spots[i].y, 1, 1).some((e) => e.type === "treasure"))
+    took = new Set()
   }
-  if (!waiting) pending = false
+  if (todo.length === 0) return
+  let spawned = 0
+  todo = todo.filter((i) => {
+    const s = spots[i]
+    const here = ctx.entitiesIn(s.x, s.y, 1, 1)
+    const who = here.find((e) => e.owner >= 0)
+    if (who && !took.has(who.owner)) {
+      took.add(who.owner)
+      const n = give(ctx, who.owner, s)
+      ctx.note(`P${who.owner} 的 ${who.type} #${who.id} 占住了 (${s.x}, ${s.y}) 的宝箱格子，直接捡到宝箱，得 ${n} 金`)
+      return false
+    }
+    // 站着野怪、或者这一轮已经捡过一个的玩家：等它走开
+    if (here.length) return true
+    if (ctx.spawnNear("treasure", -1, s.x, s.y) === null) return true
+    spawned++
+    return false
+  })
   if (spawned) ctx.note("地图正中刷出了宝箱")
 }
 

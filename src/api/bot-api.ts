@@ -176,6 +176,8 @@ export interface Entity {
    * 打出的伤害 = 原伤害 ×（1 + 攻击方各项 damagePct 之和 / 100）×（1 − 挨打方各项 defensePct 之和 / 100），四舍五入，原伤害大于 0 时至少 1
    */
   buffs?: Buff[]
+  /** 眩晕还剩几个 tick（规则包的效果，比如弑君歼灭的击退，D-207）：眩晕时不能走、不能打、不能采集、不能建造，命令不变，过后接着做；技能照样能放。没眩晕就没有这个字段 */
+  stunned?: number
   /**
    * 没建好的建筑才有（谁都看得到）：done 是已完成的工作量，total 是总工作量（就是 buildTicks）。
    * 没建好的建筑不能生产、不能当交货点、不能攻击，但会挡路、能被打。建好后没有这个字段
@@ -218,8 +220,8 @@ export type GameEvent =
   /** 你的实体、或你看得到的实体死了（资源点采完也算） */
   /** unfinished 为 true 表示死的是没建好的建筑（地基）；removed 为 true 表示是规则包移除的（不是被打死的，玩法说明里会写什么时候移除） */
   | { kind: "died"; tick: number; id: number; type: TypeName; owner: number; x: number; y: number; unfinished?: true; removed?: true }
-  /** 你的实体挨打了；by 是攻击者 id，攻击者不一定在你视野里 */
-  | { kind: "damaged"; tick: number; id: number; by: number; damage: number }
+  /** 你的实体挨打了；by 是攻击者 id，攻击者不一定在你视野里；byOwner 是攻击者的主人（-1 是中立的，比如野怪），byType 是攻击者的类型 */
+  | { kind: "damaged"; tick: number; id: number; by: number; byOwner: number; byType: TypeName; damage: number }
   /** 你上次的 onTick 抛错或燃料耗尽，那一次的命令全部作废 */
   | { kind: "botError"; tick: number; message: string }
 

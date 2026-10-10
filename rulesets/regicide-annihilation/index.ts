@@ -45,7 +45,8 @@ const ruleset: Ruleset = {
     spawnLords(ctx, ANNIHILATION_W, ANNIHILATION_H, types)
     // 野怪营地（D-189）：内圈、外圈各一对，都在离两家主基地一样远的斜线上
     // D-193（用户）：赏金 150，死了的野怪每 900 tick 定时补满（拓荒是 100、营地清空后才刷新）
-    setupCamps(ctx, ANNIHILATION_W, ANNIHILATION_H, { x: 20, y: 19 }, { x: 14, y: 25 }, { bounty: 150, respawn: "periodic" })
+    // D-207（第八轮试写：中间矿挨着营地采不了）：营地离金矿至少 5 格，在矿边上采矿的工人惹不醒野怪
+    setupCamps(ctx, ANNIHILATION_W, ANNIHILATION_H, { x: 20, y: 19 }, { x: 14, y: 25 }, { bounty: 150, respawn: "periodic", mineGap: 5 })
     setupTreasure(ctx, ANNIHILATION_W, ANNIHILATION_H)
   },
 

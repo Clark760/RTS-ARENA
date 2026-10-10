@@ -61,7 +61,7 @@ export function onTick(view: View, cmd: Commands): void {
 | `created` | 你的新单位造出来了，或者地基放下了 |
 | `built` | 你的建筑建好了 |
 | `died` | 你的、或你看得见的实体死了（资源点采完也算） |
-| `damaged` | 你的实体挨打了，`by` 是谁打的 |
+| `damaged` | 你的实体挨打了，`by` 是谁打的（id），`byOwner` 是它的主人（-1 是中立的，比如野怪），`byType` 是它的类型 |
 | `botError` | 你上次的 `onTick` 抛错或燃料耗尽，那次的命令全部作废 |
 
 ## 3. 下命令

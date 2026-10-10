@@ -171,6 +171,8 @@ export class World implements SetupContext, RuleContext {
   /** 内核用的随机数（移动先后顺序） */
   readonly simRng: Rng
   tick = 0
+  /** 最近一次结算（sim.step）是第几 tick：等于 tick 说明这一 tick 已经结算过（在 onTick 里），下一次结算是 tick + 1 */
+  lastStep = 0
   width = 0
   height = 0
   terrain: string[] = []
@@ -365,6 +367,7 @@ export class World implements SetupContext, RuleContext {
       dmgPct: 0,
       defPct: 0,
       lastCombat: -1_000_000,
+      stunUntil: 0,
     }
     this.ents.set(e.id, e)
     this.occupy(e, e.id)
@@ -714,6 +717,23 @@ export class World implements SetupContext, RuleContext {
     e.pathKey = ""
     e.stuck = 0
     e.want = -1
+  }
+
+  stun(id: number, ticks: number): void {
+    const e = this.mustGet(id, "stun")
+    if (e.def.kind !== "unit") throw new Error(`stun：#${id}（${e.type}）不是单位，只能眩晕单位`)
+    if (!Number.isInteger(ticks) || ticks < 1 || ticks > 600) throw new Error(`stun：ticks 要是 1～600 的整数（现在是 ${JSON.stringify(ticks)}）`)
+    e.stunUntil = Math.max(e.stunUntil, this.nextStep() + ticks)
+  }
+
+  /** 下一次结算是第几 tick */
+  nextStep(): number {
+    return this.lastStep === this.tick ? this.tick + 1 : this.tick
+  }
+
+  /** 眩晕还挡得住接下来几次结算（0 是没眩晕） */
+  stunLeft(e: EntityState): number {
+    return Math.max(0, e.stunUntil - this.nextStep())
   }
 
   setOwner(id: number, owner: number): void {

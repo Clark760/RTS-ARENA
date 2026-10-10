@@ -1,4 +1,5 @@
 // 每 tick 的结算：技能冷却和光环 → 生产 → 战斗（同时结算）→ 死亡 → 被动（回血）→ 移动（随机先后）→ 建造 → 采集
+// 眩晕中的单位（ctx.stun，D-207）不打、不走、不建造、不采集
 import { flowStep, UNREACHABLE } from "./nav.ts"
 import { attackable, buffedDamage, rectDist, type World } from "./world.ts"
 import type { EntityState, Rect } from "./types.ts"
@@ -16,6 +17,7 @@ const DETOUR_EXPAND = 300
 const SPAWN_RING = 4
 
 export function step(w: World): void {
+  w.lastStep = w.tick
   // 这一 tick 执行命令时放成功的技能（D-186），规则包在 onTick 里从 events 看得到
   w.events = w.casts.map((c) => ({ kind: "cast" as const, ...c }))
   w.shots = []
@@ -212,7 +214,7 @@ function combat(w: World): void {
     const atk = e.def.attack
     if (!atk || e.construction) continue
     if (e.attackCd > 0) e.attackCd--
-    if (e.attackCd > 0) continue
+    if (e.attackCd > 0 || e.stunUntil > w.tick) continue
     const t = attackTarget(w, e)
     if (!t) continue
     hits.push(e, t)
@@ -231,7 +233,7 @@ function combat(w: World): void {
     t.lastHitNeutral = a.owner < 0
     t.lastHitType = a.type
     w.shots.push(a.id, t.id)
-    if (t.owner >= 0) w.pushEvent(t.owner, { kind: "damaged", tick: w.tick, id: t.id, by: a.id, damage: dmg })
+    if (t.owner >= 0) w.pushEvent(t.owner, { kind: "damaged", tick: w.tick, id: t.id, by: a.id, byOwner: a.owner, byType: a.type, damage: dmg })
   }
   for (let i = 1; i < hits.length; i += 2) {
     const t = hits[i]
@@ -497,7 +499,7 @@ function movement(w: World): void {
   for (const e of w.ents.values()) {
     if (e.def.moveTicks <= 0) continue
     if (e.moveCd > 0) e.moveCd--
-    if (e.moveCd > 0 || e.order.kind === "idle") continue
+    if (e.moveCd > 0 || e.order.kind === "idle" || e.stunUntil > w.tick) continue
     movers.push(e)
   }
   w.simRng.shuffle(movers)
@@ -517,7 +519,7 @@ function movement(w: World): void {
 function construction(w: World): void {
   for (const e of w.ents.values()) {
     const o = e.order
-    if (o.kind !== "build") continue
+    if (o.kind !== "build" || e.stunUntil > w.tick) continue
     const site = w.ents.get(o.target)
     if (!site || !site.construction || site.owner !== e.owner) {
       setIdle(e)
@@ -542,7 +544,7 @@ function construction(w: World): void {
 function gathering(w: World): void {
   for (const e of w.ents.values()) {
     const o = e.order
-    if (o.kind !== "gather") continue
+    if (o.kind !== "gather" || e.stunUntil > w.tick) continue
     const g = e.def.gather!
     if (!o.returning) {
       const node = w.ents.get(o.target)

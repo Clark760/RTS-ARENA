@@ -4,7 +4,8 @@
 // - 被动「休养生息」：100 tick 没出手、没挨打以后，每 10 tick 回 10 生命
 // - 技能「点金」（goldmine，弑君拓荒）：在领主 3 格内的空地上造一座 300 金的中立金矿，冷却 600 tick（落点见 mineSpot）
 // - 技能「击退」（repel，弑君歼灭，D-197）：把领主视野内的敌方单位推到视野外，纯冷却 600 tick、不要钱（用户：想让两边打得更焦灼、时间更长）。
-//   D-206（用户）：改成各自往外推 3 格（原来推到视野外，近身的兵一下被推出七八格）
+//   D-206（用户）：改成各自往外推 3 格（原来推到视野外，近身的兵一下被推出七八格）。
+//   D-207（第八轮试写：推出视野、推 3 格都改变不了任何一局的胜负，对手 9 tick 就走回来）：视野内的敌方单位再眩晕 20 tick
 //   D-198 冷却 600 → 300。之前是召唤箭塔（D-192～196：500 金基本没用，降到 250 不亏不赚，兵营同时造 5 个以后没人放）
 // 领主的移速、视野、攻击和克制规则包的侦察兵一样（走一格 1 tick、视野 8、攻击 1），生命 500（主基地 1500 的三分之一）
 import type { CastInfo, MatchResult, RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
@@ -24,6 +25,8 @@ const REPEL_COLOR = "#8fd0ff"
 export const REPEL_PUSH = 3
 /** 击退往外推的时候，最多沿路走几步去找落脚的空格（找不到就不推） */
 const REPEL_SEARCH = 9
+/** 击退让视野内的敌方单位眩晕几 tick（不能走、不能打，D-207） */
+export const REPEL_STUN = 20
 
 /** 领主的技能：点金（弑君拓荒）或者击退（弑君歼灭） */
 export type LordSkill = "goldmine" | "repel"
@@ -44,7 +47,7 @@ export function lordType(troops: string[], skill: LordSkill = "goldmine"): TypeS
             name: "击退",
             cooldown: LORD_REPEL_COOLDOWN,
             situational: true,
-            desc: `把领主视野（8 格）内的敌方单位各自往外推 ${REPEL_PUSH} 格（沿能走的路推到离领主远 ${REPEL_PUSH} 格的最近空格，建筑和野怪不推）`,
+            desc: `把领主视野（8 格）内的敌方单位各自往外推 ${REPEL_PUSH} 格（沿能走的路推到离领主远 ${REPEL_PUSH} 格的最近空格，建筑和野怪不推），并眩晕 ${REPEL_STUN} tick（不能走、不能打）`,
           },
     ],
     auras: [{ name: "领主光环", radius: -1, affects: "own", types: troops, damagePct: 20, defensePct: 20 }],
@@ -166,6 +169,7 @@ export function regicideCast(ctx: RuleContext, c: CastInfo): string | null {
  * 击退（D-197）：领主视野内（曼哈顿距离不超过视野）的敌方单位一个个往外推，先推离领主远的（免得挡住后面的）：
  * 从它站的格子沿能走的路（地形、建筑、资源点挡路，单位不挡）往外找，离它最近的、离领主比原来远 3 格以上（REPEL_PUSH，D-206）的空格
  * （没有任何实体，也没被这次推过去的占着）；同样近的选离领主远的，再一样随机挑。走 9 步（REPEL_SEARCH）都找不到（被墙堵死）就不推。
+ * 推不推得动，都眩晕 20 tick（REPEL_STUN，D-207）。
  * 返回推走了几个；视野里一个敌方单位都没有返回 -1
  */
 export function repel(ctx: RuleContext, lord: { x: number; y: number; def: { sight: number } }, player: number): number {
@@ -222,6 +226,7 @@ export function repel(ctx: RuleContext, lord: { x: number; y: number; def: { sig
       spot = best
       level = next
     }
+    ctx.stun(f.id, REPEL_STUN)
     if (spot < 0) continue
     free[f.y * W + f.x] = 1
     free[spot] = 0

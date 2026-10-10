@@ -26,7 +26,9 @@ function snapOf(e: EntityState, w: World): EntSnap {
   if (e.construction) s.bp = Math.floor((100 * e.construction.done) / e.construction.total)
   const st = statDiff(e.def, w.types[e.type])
   if (st) s.st = st
-  if (e.buffs.length) s.bf = e.buffs.map((b) => b.name)
+  // 眩晕（D-207）跟增益记在一起，播放器显示成「眩晕」
+  const stun = w.stunLeft(e) > 0
+  if (e.buffs.length || stun) s.bf = [...e.buffs.map((b) => b.name), ...(stun ? ["眩晕"] : [])]
   return s
 }
 

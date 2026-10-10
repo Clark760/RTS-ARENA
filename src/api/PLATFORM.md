@@ -67,6 +67,7 @@ export function onTick(view: View, cmd: Commands): void {
 - **光环** `auras`：带光环的实体周围 `radius` 格（-1 是它的视野）内、符合 `affects`（own 自己的、allies 自己和盟友的、enemies 敌人的）和 `types`（空是所有单位和建筑）的实体，打出的伤害加 `damagePct`%、受到的伤害减 `defensePct`%。每 tick 重新算，出了范围马上就没有；同名的光环不叠加（几个同类实体的光环只算一份），不同名的相加。
 - **被动** `passives`：现在只有脱战回血 `{ kind: "regen", delay, every, amount }`：`delay` 个 tick 没出手、也没挨打以后，每 `every` 个 tick 回 `amount` 生命，一出手或挨打就重新计时。
 - **增益** `buffs`：实体身上现在生效的加成（光环给的、技能给的），`{ name, damagePct, defensePct, ticksLeft? }`，看得见这个实体就看得见（对手的也是）；没有就没有这个字段。打出的伤害 = 原伤害 ×（1 + 攻击方各项 `damagePct` 之和 / 100）×（1 − 挨打方各项 `defensePct` 之和 / 100），四舍五入；减伤合计最多 90%。
+- **眩晕** `stunned`：规则包的效果（比如弑君歼灭的击退）让单位眩晕时才有，是还剩几个 tick；眩晕时不能走、不能打、不能采集、不能建造，命令不变，过后接着做，技能照样能放。看得见这个实体就看得见。
 
 ## 建造（规则包里有能建造的单位时）
 
@@ -98,7 +99,7 @@ export function onTick(view: View, cmd: Commands): void {
 - 资源点的 `hp`、`maxHp` 都是 0，剩余量看 `amount`。
 - 单位数值可能在局中改变（有的规则包有科技、增益，看规则说明）：`game.types` 一直是原值，实体的 `stats` 字段列出它现在和原值不一样的项（射程、视野、伤害、走多快、采集），没改过就没有这个字段；生命上限直接看实体的 `maxHp`。算射程、视野时先看 `stats`，没有再看 `game.types`。看得见的对手单位也带 `stats`。
 - 实体 id 是随机分配的正整数，不重复使用，大小不代表先后。
-- `damaged` 事件里的 `by` 是攻击者的 id，攻击者不一定在你视野里。两次调用之间的 `damaged` 事件最多保留约 200 条，再多的丢弃（其他事件不丢）。
+- `damaged` 事件里的 `by` 是攻击者的 id，攻击者不一定在你视野里；`byOwner` 是攻击者的主人（-1 是中立的，比如野怪），`byType` 是攻击者的类型。两次调用之间的 `damaged` 事件最多保留约 200 条，再多的丢弃（其他事件不丢）。
 
 ## 队伍（规则包支持分队时）
 

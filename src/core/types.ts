@@ -249,6 +249,11 @@ export interface RuleContext {
    * 命令不变（走路、追人的会从新位置重新找路）；回放里记成一次移动
    */
   teleport(id: number, x: number, y: number): void
+  /**
+   * 眩晕（D-207，击退之类的效果）：单位接下来 ticks 个 tick（1～600）不能走、不能打、不能采集、不能建造，命令不变，过后接着做；
+   * 技能照样能放、bot 照样能下命令。已经在眩晕的取剩得多的那个。只能对单位用。bot 看得到 entity.stunned（还剩几 tick）
+   */
+  stun(id: number, ticks: number): void
   /** 改归属（占领、招降、变成中立）。实体的命令变成 idle，生产队列清空（不退钱）。换主人的那一刻不检查单位上限，
    * 之后照常算进新主人的单位数（满了的话新主人就造不了兵）。没建好的建筑换了主人，原来去建它的工人会停下
    */
@@ -411,6 +416,8 @@ export interface EntityState extends RuleEntity {
   defPct: number
   /** 上一次出手或挨打的 tick（脱战回血用） */
   lastCombat: number
+  /** 眩晕到第几 tick（不含；D-207），没眩晕是 0 */
+  stunUntil: number
 }
 
 export interface PlayerState extends RulePlayer {

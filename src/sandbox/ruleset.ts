@@ -482,6 +482,10 @@ class RulesBox {
         w().teleport(int(id, "id"), int(x, "x"), int(y, "y"))
         return undefined
       },
+      stun: (id, ticks) => {
+        w().stun(int(id, "id"), int(ticks, "ticks"))
+        return undefined
+      },
       setOwner: (id, owner) => {
         w().setOwner(int(id, "id"), int(owner, "owner"))
         return undefined

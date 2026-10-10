@@ -166,6 +166,7 @@ export function rulesPreludeSource(maxLines: number, maxLine: number): string {
     setHp: function (id, hp) { H.setHp(id, hp); entsChanged(); },
     setOwner: function (id, owner) { H.setOwner(id, owner); entsChanged(); },
     teleport: function (id, x, y) { H.teleport(id, x, y); entsChanged(); },
+    stun: function (id, ticks) { H.stun(id, ticks); },
     effect: function (o) { H.effect(stringify(o === undefined ? null : o)); },
     setTypeStats: function (p, type, patch) { H.setTypeStats(p, type, stringify(patch === undefined ? null : patch)); entsChanged(); },
     setStats: function (id, patch) { H.setStats(id, stringify(patch === undefined ? null : patch)); entsChanged(); },

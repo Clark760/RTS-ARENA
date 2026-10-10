@@ -21,6 +21,9 @@ export function buildView(w: World, p: number): View {
     if (e.construction) v.construction = { ...e.construction }
     // 增益、减益（D-186）：看得到实体就看得到
     if (e.buffs.length) v.buffs = e.buffs.map((b) => (b.ticksLeft === null ? { name: b.name, damagePct: b.damagePct, defensePct: b.defensePct } : { name: b.name, damagePct: b.damagePct, defensePct: b.defensePct, ticksLeft: b.ticksLeft }))
+    // 眩晕（D-207）：看得到实体就看得到还剩几 tick
+    const stun = w.stunLeft(e)
+    if (stun > 0) v.stunned = stun
     if (e.owner === p) {
       v.order = copyOrder(e.order)
       if (e.carrying) v.carrying = { ...e.carrying }

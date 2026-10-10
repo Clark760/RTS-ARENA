@@ -20,6 +20,8 @@ export const CREEP_RESPAWN = 900
 export interface CampOptions {
   bounty?: number
   respawn?: "cleared" | "periodic"
+  /** 营地的格子离资源点至少几格（默认 3；D-207 弑君歼灭用 5：在矿边上采矿的工人离营地 4 格以上，不会惹醒野怪） */
+  mineGap?: number
 }
 /** 追打范围：离营地这么多格以内 */
 const LEASH = 8
@@ -54,7 +56,7 @@ const homeOf = new Map<number, { x: number; y: number; camp: number }>()
 const lastHp = new Map<number, number>()
 let kills: number[] = []
 let bounty: number[] = []
-let opts: Required<CampOptions> = { bounty: CREEP_BOUNTY, respawn: "cleared" }
+let opts: Required<Omit<CampOptions, "mineGap">> = { bounty: CREEP_BOUNTY, respawn: "cleared" }
 
 /** 给 bot 看的营地信息（位置公开，和金矿一样） */
 export interface CampInfo {
@@ -110,7 +112,7 @@ export function creepTimeUp(ctx: RuleContext, r: MatchResult): MatchResult {
 
 /**
  * 摆营地。inner / outer 是内圈、外圈那一对里左下那个营地的目标位置（另一个是中心对称的）：在目标附近找一块空地，
- * 营地的格子能走、没有实体，2 格内没有建筑和资源点（别挡矿、别贴着家）。只找一边，另一边取镜像，两边保证一样
+ * 营地的格子能走、没有实体，2 格内没有建筑、离资源点至少 mineGap 格（别挡矿、别贴着家）。只找一边，另一边取镜像，两边保证一样
  */
 export function setupCamps(ctx: SetupContext, W: number, H: number, inner: { x: number; y: number }, outer: { x: number; y: number }, options: CampOptions = {}): void {
   opts = { bounty: options.bounty ?? CREEP_BOUNTY, respawn: options.respawn ?? "cleared" }
@@ -122,7 +124,9 @@ export function setupCamps(ctx: SetupContext, W: number, H: number, inner: { x: 
   const walk = (x: number, y: number) => x >= 0 && y >= 0 && x < W && y < H && STANDARD_TERRAIN[ctx.terrain[y][x]]?.walkable === true
   const ents = ctx.entities()
   const blocked = (x: number, y: number) => !walk(x, y) || ents.some((e) => ctx.dist(e, { x, y, w: 1, h: 1 }) === 0)
-  const nearStatic = (x: number, y: number) => ents.some((e) => e.def.kind !== "unit" && ctx.dist(e, { x, y, w: 1, h: 1 }) <= 2)
+  const mineGap = options.mineGap ?? 3
+  const nearStatic = (x: number, y: number) =>
+    ents.some((e) => e.def.kind !== "unit" && ctx.dist(e, { x, y, w: 1, h: 1 }) < (e.def.kind === "resource" ? mineGap : 3))
   const mirror = (p: { x: number; y: number }) => ({ x: W - 1 - p.x, y: H - 1 - p.y })
   // 营地的格子：中心、右边、下边（3 只）或者中心、右边（2 只）
   const shape = (size: number) => (size === 3 ? [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }] : [{ x: 0, y: 0 }, { x: 1, y: 0 }])
