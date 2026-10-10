@@ -478,6 +478,8 @@ export interface Frame {
   bp?: number[]
   /** [id, 身上增益的名字（null 是没有了）]：增益有变化的实体（D-186） */
   bf?: [number, string[] | null][]
+  /** 这一 tick 被动回血的 [id, 回了多少, ...]（D-190） */
+  heal?: number[]
   /** 这一 tick 放的技能（D-186）：u 是释放者、s 是技能 id，x、y、t 是目标 */
   casts?: { u: number; s: string; x?: number; y?: number; t?: number }[]
   players?: PlayerSnap[]

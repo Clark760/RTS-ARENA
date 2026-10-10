@@ -27,7 +27,7 @@ const D4 = [
   [0, -1],
 ]
 
-export function onTick(view: View, cmd: Commands): void {
+function mainTick(view: View, cmd: Commands): void {
   // 单位数（含生产队列）到上限就不再排生产，排了也会被拒
   const own = view.entities.filter((e) => e.owner === view.me)
   let room = game.unitCap > 0 ? game.unitCap - own.filter((e) => game.types[e.type].kind === "unit").length - own.reduce((a, e) => a + (e.queue?.length ?? 0), 0) : Infinity
@@ -524,4 +524,21 @@ function computeRouteCost(goal: Pos, towers: Pos[]): number[] {
     }
   }
   return cost
+}
+
+/**
+ * 野怪（D-189）：玩家的兵不会自动打中立实体，贴上来打我的野怪要自己还手。
+ * 先跑上面的主逻辑，再把身边 2 格内（弓兵是射程内）有野怪的兵改成打它（同一个兵后下的命令覆盖前面的）
+ */
+export function onTick(view: View, cmd: Commands): void {
+  mainTick(view, cmd)
+  const creeps = view.entities.filter((e) => e.type === "creep")
+  if (creeps.length === 0) return
+  for (const u of view.entities) {
+    if (u.owner !== view.me || (u.type !== "soldier" && u.type !== "archer")) continue
+    const reach = Math.max(2, game.types[u.type].attack!.range)
+    let c: Entity | undefined
+    for (const k of creeps) if (dist(k, u) <= reach && (!c || dist(k, u) < dist(c, u))) c = k
+    if (c && !(u.order?.kind === "attack" && u.order.target === c.id)) cmd.attack(u, c)
+  }
 }

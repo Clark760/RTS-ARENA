@@ -170,8 +170,17 @@ function updateUI(force = false): void {
         <span class="muted">生命</span><span>${hp}</span><span class="muted">命令</span><span>${e.ord}</span>${
           e.bp === undefined ? "" : html`<span class="muted">建造</span><span>${e.bp}%（还没建好）</span>`
         }${e.bf?.length ? html`<span class="muted">增益</span><span>${e.bf.join("、")}</span>` : ""}${
-          info?.skills?.length ? html`<span class="muted">技能</span><span>${info.skills.map((k) => `${k.name}（冷却 ${k.cooldown}）`).join("、")}</span>` : ""
-        }${info?.auras?.length ? html`<span class="muted">光环</span><span>${info.auras.map((a) => a.name).join("、")}</span>` : ""}</div>`.s
+          info?.skills?.length
+            ? html`<span class="muted">技能</span><span>${renderer
+                .cooldownsAt(e.id, e.type, state.tick)
+                .map((k) => (k.left === 0 ? `${k.name}：可以放了` : `${k.name}：冷却还要 ${k.left} tick（共 ${k.cooldown}）`))
+                .join("；")}</span>`
+            : ""
+        }${info?.auras?.length ? html`<span class="muted">光环</span><span>${info.auras.map((a) => `${a.name}（${a.radius < 0 ? "视野" : `${a.radius} 格`}内）`).join("、")}</span>` : ""}${
+          info?.passives?.some((x) => x.kind === "regen")
+            ? html`<span class="muted">回血</span><span>${renderer.healingAt(e.id, e.type, state.tick) ? "正在回血" : e.hp >= (e.st?.maxHp ?? info.maxHp) ? "满血" : "没在回血（出手或挨打后要歇一会儿）"}</span>`
+            : ""
+        }</div>`.s
     }
   }
 

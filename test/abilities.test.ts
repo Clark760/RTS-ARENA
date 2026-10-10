@@ -264,3 +264,48 @@ test("格式检查：技能、光环、被动写错会报出来；有技能没�
     assert.match(errs, want)
   assert.doesNotMatch(checkRulesetData({ ...base, types }, [...fns, "onCast"]).join("\n"), /要导出 onCast/)
 })
+
+test("野怪营地（D-189）：两两中心对称；打死一只给最后一击的玩家 150 金，清空后记下 900 tick 后刷新", async () => {
+  const { campInfo, creepTick, creepType, setupCamps, CREEP_BOUNTY, CREEP_RESPAWN } = await import("../rulesets/common/creeps.ts")
+  const W = 30
+  const H = 20
+  const rules = mini([], {
+    maxTicks: 60,
+    types: { ...TYPES, creep: creepType(), brute: { kind: "unit", maxHp: 5000, moveTicks: 1, sight: 6, attack: { damage: 200, range: 1, cooldown: 2 }, look } },
+    setup(ctx) {
+      ctx.setTerrain(Array(H).fill(".".repeat(W)))
+      setupCamps(ctx, W, H, { x: 12, y: 11 }, { x: 6, y: 15 })
+      const c = campInfo()[0]
+      // 贴着第一个营地放两个打手
+      ctx.spawnNear("brute", 0, c.x, c.y - 1)
+      ctx.spawnNear("brute", 0, c.x + 1, c.y - 1)
+    },
+    onTick: (ctx) => creepTick(ctx),
+    objectives: () => campInfo(),
+  })
+  let last: View | null = null
+  let gold0 = 0
+  play(rules, (v, cmd) => {
+    if (v.tick === 0) gold0 = v.resources.gold
+    last = v
+    // 只打第一个营地的
+    const c0 = (v.objectives as ReturnType<typeof campInfo>)[0]
+    const creeps = v.entities.filter((e) => e.type === "creep" && Math.abs(e.x - c0.x) + Math.abs(e.y - c0.y) <= 3)
+    for (const u of mine(v, "brute")) {
+      let best: Entity | undefined
+      for (const c of creeps) if (!best || Math.abs(c.x - u.x) + Math.abs(c.y - u.y) < Math.abs(best.x - u.x) + Math.abs(best.y - u.y)) best = c
+      if (best) cmd.attack(u, best)
+    }
+  })
+  const camps = last!.objectives as ReturnType<typeof campInfo>
+  // 4 个营地：两对，每对中心对称
+  assert.equal(camps.length, 4)
+  assert.deepEqual([camps[1].x, camps[1].y], [W - 1 - camps[0].x, H - 1 - camps[0].y])
+  assert.deepEqual([camps[3].x, camps[3].y], [W - 1 - camps[2].x, H - 1 - camps[2].y])
+  assert.deepEqual(camps.map((c) => c.size), [3, 3, 2, 2])
+  // 第一个营地被打光：3 只的赏金，记下刷新时间
+  assert.equal(camps[0].alive, 0)
+  assert.equal(last!.resources.gold - gold0, 3 * CREEP_BOUNTY)
+  assert.ok(camps[0].respawnAt !== null && camps[0].respawnAt > CREEP_RESPAWN && camps[0].respawnAt <= 60 + CREEP_RESPAWN)
+  assert.ok(camps.slice(1).every((c) => c.alive === c.size && c.respawnAt === null))
+})

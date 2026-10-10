@@ -98,6 +98,14 @@ export interface ReplayFrame {
   auras?: number[]
   /** 身上有增益的单位：[x, y] 一组 2 个，外面描一圈金色 */
   buffed?: number[]
+  /** 放技能（D-190）：[释放者 x, y, 目标 x, y（没有是 -1）, 放了几帧] 一组 5 个 */
+  castFx?: number[]
+  /** 回血：[x, y, 回了多少, 几帧前] 一组 4 个 */
+  healFx?: number[]
+  /** 技能冷却环：[x, y, w, h, 冷却好了的比例（1 是能放了）] 一组 5 个 */
+  cds?: number[]
+  /** 正在回血的：[x, y, w, h] 一组 4 个 */
+  healing?: number[]
 }
 
 export function installVideoPage(): void {
@@ -911,7 +919,16 @@ export function installVideoPage(): void {
     void i
   }
   /** 地图（D-181 抽出来，横屏回放和竖屏回放共用）：地形（按输出像素画一次缓存）、规则包标记、单位和建筑（主基地画成头像）、攻击线、刚死的红圈；(ox, oy) 是左上角 */
-  function drawField(s: Any, f: Any, ox: number, oy: number): void {
+  function drawField(s: Any, f: Any, ox: number, oy: number, i = 0): void {
+    // 光环菱形、特效画在地图范围里，不压到旁边的面板上（D-190）
+    g.save()
+    g.beginPath()
+    g.rect(ox, oy, s.width * TILE, s.height * TILE)
+    g.clip()
+    drawFieldInner(s, f, ox, oy, i)
+    g.restore()
+  }
+  function drawFieldInner(s: Any, f: Any, ox: number, oy: number, i: number): void {
     // 地形按现在画布的实际放大倍数画（竖屏回放直接画在竖屏画布上）
     const rs = VERT ? VS : SCALE
     // 地图
@@ -971,13 +988,36 @@ export function installVideoPage(): void {
       g.lineTo(cx, cy + R)
       g.lineTo(cx - R, cy)
       g.closePath()
-      g.globalAlpha = 0.08
+      g.globalAlpha = 0.07
       g.fillStyle = colorOf(seat)
       g.fill()
       g.globalAlpha = 0.45
       g.strokeStyle = colorOf(seat)
       g.lineWidth = 1.2
       g.stroke()
+      // 从光环的主人往外扩散到边缘的金色波纹，两道错开半拍（D-190）
+      for (const k of [0, 0.5]) {
+        const ph = (i / 45 + k) % 1
+        const rr = Math.max(2, R * ph)
+        g.beginPath()
+        g.moveTo(cx, cy - rr)
+        g.lineTo(cx + rr, cy)
+        g.lineTo(cx, cy + rr)
+        g.lineTo(cx - rr, cy)
+        g.closePath()
+        g.globalAlpha = 0.08 * (1 - ph)
+        g.fillStyle = "#f2c14e"
+        g.fill()
+        g.globalAlpha = 0.65 * (1 - ph)
+        g.strokeStyle = "#f2c14e"
+        g.lineWidth = 2
+        g.stroke()
+      }
+      g.globalAlpha = 0.2
+      g.fillStyle = "#f2c14e"
+      g.beginPath()
+      g.arc(cx, cy, TILE * (0.9 + 0.12 * Math.sin(i / 5)), 0, Math.PI * 2)
+      g.fill()
       g.globalAlpha = 1
     }
     const e = f.ents as number[]
@@ -1069,11 +1109,11 @@ export function installVideoPage(): void {
         g.fillRect(px + 1, py - 4, ((pw - 2) * hp) / 100, 3)
       }
     }
-    // 身上有增益的单位：外面一圈金色（D-186）
+    // 身上有增益的单位：外面一圈金色，一呼一吸（D-186、D-190）
     const bf = (f.buffed ?? []) as number[]
     g.strokeStyle = "#f2c14e"
-    g.lineWidth = 1.3
-    g.globalAlpha = 0.9
+    g.lineWidth = 1.5
+    g.globalAlpha = 0.55 + 0.45 * Math.sin(i / 4)
     for (let k = 0; k < bf.length; k += 2) {
       g.beginPath()
       g.arc(ox + (bf[k] + 0.5) * TILE, oy + (bf[k + 1] + 0.5) * TILE, TILE / 2 + 1, 0, Math.PI * 2)
@@ -1091,6 +1131,122 @@ export function installVideoPage(): void {
       g.lineTo(ox + (sh[k + 2] + 0.5) * TILE, oy + (sh[k + 3] + 0.5) * TILE)
       g.stroke()
       g.globalAlpha = 1
+    }
+    // 技能冷却环（D-190）：金色是冷却好了的部分，好了整圈发光；正在回血的外面再一圈绿色
+    const cd = (f.cds ?? []) as number[]
+    for (let k = 0; k < cd.length; k += 5) {
+      const [x, y, ew, eh, frac] = cd.slice(k, k + 5)
+      const cx = ox + (x + ew / 2) * TILE
+      const cy = oy + (y + eh / 2) * TILE
+      const rr = (Math.max(ew, eh) * TILE) / 2 + 3.5
+      g.lineWidth = 1.6
+      g.strokeStyle = "rgba(0,0,0,0.45)"
+      g.beginPath()
+      g.arc(cx, cy, rr, 0, Math.PI * 2)
+      g.stroke()
+      g.lineWidth = 2
+      g.strokeStyle = "#f2c14e"
+      g.globalAlpha = frac >= 1 ? 0.6 + 0.4 * Math.sin(i / 3) : 0.9
+      g.beginPath()
+      g.arc(cx, cy, rr, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2)
+      g.stroke()
+      g.globalAlpha = 1
+    }
+    const hg = (f.healing ?? []) as number[]
+    for (let k = 0; k < hg.length; k += 4) {
+      const [x, y, ew, eh] = hg.slice(k, k + 4)
+      g.strokeStyle = "#6ee36e"
+      g.lineWidth = 1.5
+      g.globalAlpha = 0.55 + 0.3 * Math.sin(i / 2)
+      g.beginPath()
+      g.arc(ox + (x + ew / 2) * TILE, oy + (y + eh / 2) * TILE, (Math.max(ew, eh) * TILE) / 2 + 6.5, 0, Math.PI * 2)
+      g.stroke()
+      g.globalAlpha = 1
+    }
+    // 放技能（D-190）：释放者身上金色冲击波和放射光线，一道金光射向目标（点金的新金矿），目标处闪一颗星
+    const cf = (f.castFx ?? []) as number[]
+    for (let k = 0; k < cf.length; k += 5) {
+      const [x, y, tx, ty, age] = cf.slice(k, k + 5)
+      const fr = age / 18
+      const a = 1 - fr
+      const px = ox + (x + 0.5) * TILE
+      const py = oy + (y + 0.5) * TILE
+      g.globalAlpha = a
+      g.strokeStyle = "#f2c14e"
+      g.lineWidth = 3 * a + 0.5
+      g.beginPath()
+      g.arc(px, py, TILE * (0.6 + fr * 3.2), 0, Math.PI * 2)
+      g.stroke()
+      g.fillStyle = "rgba(255,241,184,0.35)"
+      g.beginPath()
+      g.arc(px, py, TILE * (0.3 + fr * 1.2), 0, Math.PI * 2)
+      g.fill()
+      g.lineWidth = 1.5
+      for (let r = 0; r < 8; r++) {
+        const ang = (Math.PI / 4) * r + age * 0.15
+        const r0 = TILE * (0.6 + fr * 1.5)
+        g.beginPath()
+        g.moveTo(px + Math.cos(ang) * r0, py + Math.sin(ang) * r0)
+        g.lineTo(px + Math.cos(ang) * (r0 + TILE * 0.7), py + Math.sin(ang) * (r0 + TILE * 0.7))
+        g.stroke()
+      }
+      if (tx >= 0) {
+        const qx = ox + (tx + 0.5) * TILE
+        const qy = oy + (ty + 0.5) * TILE
+        const reach = Math.min(1, age / 6)
+        g.lineWidth = 3 * a + 0.5
+        g.beginPath()
+        g.moveTo(px, py)
+        g.lineTo(px + (qx - px) * reach, py + (qy - py) * reach)
+        g.stroke()
+        if (age >= 4) {
+          const gr = Math.min(1, (age - 4) / 6)
+          const sr = TILE * (0.5 + gr * 1.2)
+          g.fillStyle = "rgba(255,241,184,0.95)"
+          g.beginPath()
+          for (let r = 0; r < 8; r++) {
+            const ang = (Math.PI / 4) * r - Math.PI / 2
+            const rad = r % 2 === 0 ? sr : sr * 0.3
+            if (r === 0) g.moveTo(qx + Math.cos(ang) * rad, qy + Math.sin(ang) * rad)
+            else g.lineTo(qx + Math.cos(ang) * rad, qy + Math.sin(ang) * rad)
+          }
+          g.closePath()
+          g.fill()
+          g.beginPath()
+          g.arc(qx, qy, TILE * (0.5 + gr), 0, Math.PI * 2)
+          g.stroke()
+        }
+      }
+      g.globalAlpha = 1
+    }
+    // 回血（D-190）：绿色光圈往外扩、几颗绿色十字往上飘、头顶飘 +N
+    const hf = (f.healFx ?? []) as number[]
+    for (let k = 0; k < hf.length; k += 4) {
+      const [x, y, amount, age] = hf.slice(k, k + 4)
+      const fr = age / 14
+      const a = 1 - fr
+      const px = ox + (x + 0.5) * TILE
+      const py = oy + (y + 0.5) * TILE
+      g.globalAlpha = a
+      g.strokeStyle = "#6ee36e"
+      g.lineWidth = 2
+      g.beginPath()
+      g.lineWidth = 2.5
+      g.arc(px, py, TILE * (0.6 + fr * 1.4), 0, Math.PI * 2)
+      g.stroke()
+      g.fillStyle = "rgba(110,227,110,0.18)"
+      g.beginPath()
+      g.arc(px, py, TILE * (0.6 + fr * 1.4), 0, Math.PI * 2)
+      g.fill()
+      g.fillStyle = "#6ee36e"
+      for (const [dx, dy] of [[-8, 3], [8, -2], [0, 8], [-3, -7]]) {
+        const cx = px + dx
+        const cy = py + dy - fr * TILE * 1.6
+        g.fillRect(cx - 3, cy - 1, 6, 2)
+        g.fillRect(cx - 1, cy - 3, 2, 6)
+      }
+      g.globalAlpha = 1
+      text(`+${amount}`, px + TILE * 0.9, py - TILE * (0.8 + fr * 1.4), 15, `rgba(110,227,110,${a})`, { bold: true, align: "left" })
     }
     // 刚死的：一圈扩散的红圈
     const d = f.deaths as number[]
@@ -1119,7 +1275,7 @@ export function installVideoPage(): void {
       if (ls.length === 1) text(ls[0], 24, 70, px, C.muted)
       else ls.slice(0, 2).forEach((l, k) => text(l, 24, 62 + k * 18, px, C.muted))
     }
-    drawField(s, f, MX, MY)
+    drawField(s, f, MX, MY, i)
     // 右边面板
     const x0 = MX + s.width * TILE + 20
     const pw = W - x0 - 20
@@ -1220,7 +1376,7 @@ export function installVideoPage(): void {
     const top = sy + 92
     // 地图放在画面正中（D-182，用户要求）；上面的字太多放不下时才往下挪
     const oy = Math.max((VH - mapH) / 2, top)
-    drawField(s, f, ox, oy)
+    drawField(s, f, ox, oy, i)
     if (f.final) {
       g.globalAlpha = 0.85
       roundRect(40, oy + mapH / 2 - 60, VW - 80, 120, 16, "#0b1220", C.accent)

@@ -195,7 +195,7 @@ function fleeTile(lord: Entity, threats: Entity[], view: View, anchor: P): P | n
   return best
 }
 
-export function onTick(view: View, cmd: Commands): void {
+function mainTick(view: View, cmd: Commands): void {
   // 单位数（含生产队列）到上限就不再排生产，排了也会被拒
   const own = view.entities.filter((e) => e.owner === view.me)
   let room = game.unitCap > 0 ? game.unitCap - own.filter((e) => game.types[e.type].kind === "unit").length - own.reduce((a, e) => a + (e.queue?.length ?? 0), 0) : Infinity
@@ -324,8 +324,8 @@ export function onTick(view: View, cmd: Commands): void {
   }
   if (phase === "build") {
     const strong = army.length >= 8 && army.length >= STRONG_RATIO * Math.max(estEnemy, 6)
-    // 收进参考 bot 时改了一处：快到时间上限时不领先就孤注一掷（原来只在落后时，碰上不出门的对手会拖成平局）
-    const lateAllIn = tick >= 4800 && myScore <= enemyScore && army.length >= 10
+    // 收进参考 bot 时改了：快到时间上限时不领先就孤注一掷（原来只在落后时，碰上不出门的对手会拖成平局）；加了野怪以后路上要清怪，从 4800 提前到 3800
+    const lateAllIn = tick >= 3800 && myScore <= enemyScore && army.length >= 10
     if ((strong || lateAllIn || army.length >= ATTACK_BIG) && raiders.length === 0) {
       phase = "attack"
       launchArmy = army.length
@@ -411,5 +411,22 @@ export function onTick(view: View, cmd: Commands): void {
     } else if (dist(lord, c) > 2) {
       cmd.move(lord, c.x, c.y)
     }
+  }
+}
+
+/**
+ * 野怪（D-189）：玩家的兵不会自动打中立实体，贴上来打我的野怪要自己还手。
+ * 先跑上面的主逻辑，再把身边 2 格内（弓兵是射程内）有野怪的兵改成打它（同一个兵后下的命令覆盖前面的）
+ */
+export function onTick(view: View, cmd: Commands): void {
+  mainTick(view, cmd)
+  const creeps = view.entities.filter((e) => e.type === "creep")
+  if (creeps.length === 0) return
+  for (const u of view.entities) {
+    if (u.owner !== view.me || (u.type !== "soldier" && u.type !== "archer")) continue
+    const reach = Math.max(2, game.types[u.type].attack!.range)
+    let c: Entity | undefined
+    for (const k of creeps) if (dist(k, u) <= reach && (!c || dist(k, u) < dist(c, u))) c = k
+    if (c && !(u.order?.kind === "attack" && u.order.target === c.id)) cmd.attack(u, c)
   }
 }

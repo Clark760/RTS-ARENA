@@ -104,6 +104,7 @@ export default ruleset
   - `auras: [{ name: "领主光环", damagePct: 25, defensePct: 25, types: ["soldier", "archer"] }]`：周围 `radius` 格（默认 -1，等于视野）内、`affects`（默认 own，可以是 allies、enemies）、`types`（默认所有单位和建筑）的实体，打出的伤害 +damagePct%、受到的伤害 −defensePct%（负数是减益；`self: true` 自己也吃）。平台每 tick 算，同名的不叠加。
   - `passives: [{ kind: "regen", name: "休养生息", delay: 100, every: 10, amount: 10 }]`：脱战回血，delay 个 tick 没出手、没挨打以后每 every 个 tick 回 amount。
   - `ctx.addBuff(id, { name, damagePct?, defensePct?, ticks? })` 给实体加增益或减益（不写 ticks 是一直有效，同名替换），`removeBuff(id, name)` 去掉，`setSkillCooldown(id, skill, ticks)` 改冷却。实体的 `buffs`、`skillCooldowns` 能读到现在的状态。
+  - 播放器和联赛视频会自动画出来：光环范围和扩散的波纹、吃到增益的金环、技能冷却环、放技能（冲击波、射向目标或者同一 tick 刷出来的资源点的光束）和被动回血（绿圈、+N）的特效，不用规则包操心。
   - 打出的伤害 = 原伤害（含克制倍数）×（1 + 攻击方伤害加成合计）×（1 − 挨打方减伤合计），四舍五入，原伤害大于 0 时至少 1；减伤合计最多 90%。例子：自带的「弑君歼灭」「弑君拓荒」规则包的领主（rulesets/common/regicide.ts）。
 - **中立实体**（owner -1，比如野怪）：能攻击的闲着时会自动打射程内的玩家实体。玩家的单位不会自动打它们：不管是 idle、attackMove，还是正挨着中立实体的打，都不会还手，只有 bot 下 `attack` 命令才打（RULES.md 里要提醒 bot 作者）。中立实体之间不会互相打。平时不动，用 `orderNeutral(id, order)` 指挥（只能指挥中立实体，对玩家的实体用会抛错）：`{ kind: "move", x, y }`、`{ kind: "attack", target }`、`{ kind: "attackMove", x, y }`、`{ kind: "stop" }`，命令会一直执行到完成或失效（和 bot 的同名命令一样）。被打死时 `died` 事件的 `killer` 是最后一击的玩家，可以据此给赏金。在 RULES.md 里把中立实体会做什么写清楚。
 - **视野**：`isVisible(player, x, y)` 查某一格现在在不在 player 那一队的视野里（没开迷雾时总是 true）。

@@ -85,7 +85,12 @@ function passives(w: World): void {
     for (const p of e.def.passives) {
       if (p.kind !== "regen") continue
       const idle = w.tick - e.lastCombat - p.delay
-      if (idle >= 0 && idle % p.every === 0) e.hp = Math.min(e.def.maxHp, e.hp + p.amount)
+      if (idle >= 0 && idle % p.every === 0) {
+        const before = e.hp
+        e.hp = Math.min(e.def.maxHp, e.hp + p.amount)
+        // 回放记下这次回血（播放器、视频画回血特效）
+        w.heals.push(e.id, e.hp - before)
+      }
     }
   }
 }

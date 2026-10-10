@@ -223,6 +223,8 @@ export class World implements SetupContext, RuleContext {
   readonly hasPassives: boolean
   /** 这一 tick 放成功的技能（回放、规则包的 cast 事件用；记下回放后清空） */
   casts: CastInfo[] = []
+  /** 这一 tick 被动回血的 [id, 回了多少, ...]（回放用；记下后清空） */
+  heals: number[] = []
   /** 上一 tick 身上有增益的实体（这一 tick 没有了要清掉） */
   buffed = new Set<number>()
 

@@ -6,6 +6,7 @@
 // 领主的移速、视野、攻击和克制规则包的侦察兵一样（走一格 1 tick、视野 8、攻击 1），生命 500（主基地 1500 的三分之一）
 import type { CastInfo, MatchResult, RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
 import { spawnMirrored, STANDARD_TERRAIN } from "./standard.ts"
+import { creepStats } from "./creeps.ts"
 
 /** 点金造出来的金矿储量 */
 export const LORD_MINE_AMOUNT = 300
@@ -126,7 +127,7 @@ export function regicideResult(ctx: RuleContext): MatchResult | null {
     why[p.id] = noLord && noBase ? "击杀了对方的领主、摧毁了主基地" : noLord ? "击杀了对方的领主" : "摧毁了对方的主基地"
   }
   const alive = ctx.players.filter((p) => p.alive)
-  if (alive.length === 1) return { winner: alive[0].id, reason: why.find((x) => x) ?? "对方出局" }
-  if (alive.length === 0) return { winner: null, reason: "双方同一 tick 出局（领主阵亡或主基地被毁），平局" }
+  if (alive.length === 1) return { winner: alive[0].id, reason: why.find((x) => x) ?? "对方出局", stats: creepStats(ctx.playerCount) }
+  if (alive.length === 0) return { winner: null, reason: "双方同一 tick 出局（领主阵亡或主基地被毁），平局", stats: creepStats(ctx.playerCount) }
   return null
 }

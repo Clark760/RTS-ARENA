@@ -516,6 +516,20 @@ function replayScene(
   let state: State = model.initialState()
   const tickOf = (i: number) => (i >= playFrames ? T : pace.tickOf(i))
   let deaths: { x: number; y: number; frame: number }[] = []
+  // 特效（D-190）：最近放的技能（释放者、目标）、最近的回血、每个实体放技能和出现的 tick（算冷却环）、最近一次回血的 tick
+  let casts: { x: number; y: number; targets: { x: number; y: number }[]; frame: number }[] = []
+  let heals: { x: number; y: number; amount: number; frame: number }[] = []
+  let castAt = new Map<string, number>()
+  let bornAt = new Map<number, number>()
+  let healedAt = new Map<number, number>()
+  const resetFx = () => {
+    casts = []
+    heals = []
+    castAt = new Map()
+    bornAt = new Map(replay.initial.entities.map((e) => [e.id, 0]))
+    healedAt = new Map()
+  }
+  resetFx()
   let lastTick = 0
   let lastFrame = -1
   /** 第 i 帧的局面：局面只能往前推，往回要的话从头再来（预览时会这样） */
@@ -523,6 +537,7 @@ function replayScene(
     if (i <= lastFrame) {
       state = model.initialState()
       deaths = []
+      resetFx()
       lastTick = 0
     }
     lastFrame = i
@@ -534,6 +549,25 @@ function replayScene(
       for (const id of f.die ?? []) {
         const e = state.ents.get(id)
         if (e && !removed.has(id) && replay.types[e.type]?.kind !== "resource") deaths.push({ x: e.x, y: e.y, frame: i })
+      }
+      for (const e of f.spawn ?? []) bornAt.set(e.id, f.t)
+      for (const c of f.casts ?? []) {
+        castAt.set(`${c.u}|${c.s}`, f.t)
+        const caster = state.ents.get(c.u)
+        if (!caster) continue
+        const targets: { x: number; y: number }[] = []
+        if (c.x !== undefined && c.y !== undefined) targets.push({ x: c.x, y: c.y })
+        const tg = c.t !== undefined ? state.ents.get(c.t) : undefined
+        if (tg) targets.push({ x: tg.x, y: tg.y })
+        // 同一 tick 在释放者 4 格内刷出来的资源点（点金的金矿）
+        for (const e of f.spawn ?? []) if (replay.types[e.type]?.kind === "resource" && Math.abs(e.x - caster.x) + Math.abs(e.y - caster.y) <= 4) targets.push({ x: e.x, y: e.y })
+        casts.push({ x: caster.x, y: caster.y, targets, frame: i })
+      }
+      const hl = f.heal ?? []
+      for (let j = 0; j < hl.length; j += 2) {
+        healedAt.set(hl[j], f.t)
+        const e = state.ents.get(hl[j])
+        if (e) heals.push({ x: e.x, y: e.y, amount: hl[j + 1], frame: i })
       }
       // 攻击线只画这一帧最后几 tick 的
       if (t - k < 3) {
@@ -550,6 +584,9 @@ function replayScene(
     const ents: number[] = []
     const auras: number[] = []
     const buffed: number[] = []
+    // 技能冷却环 [x, y, w, h, 冷却好了的比例]、正在回血的 [x, y, w, h]（D-190）
+    const cds: number[] = []
+    const healing: number[] = []
     for (const e of state.ents.values()) {
       const ty = replay.types[e.type]
       if (!ty) continue
@@ -559,7 +596,19 @@ function replayScene(
       // 光环范围、身上有增益的单位（D-186）
       if (e.bp === undefined) for (const a of ty.auras ?? []) auras.push(e.x, e.y, ty.w, ty.h, a.radius < 0 ? (e.st?.sight ?? ty.sight ?? 0) : a.radius, e.owner)
       if (e.bf?.length && ty.kind === "unit") buffed.push(e.x, e.y)
+      for (const k of ty.skills ?? []) {
+        const last = castAt.get(`${e.id}|${k.id}`)
+        const left = last !== undefined ? Math.max(0, last + k.cooldown - 1 - t) : Math.max(0, k.initialCooldown - (t - (bornAt.get(e.id) ?? 0)))
+        cds.push(e.x, e.y, ty.w, ty.h, left === 0 ? 1 : 1 - left / Math.max(1, k.cooldown))
+      }
+      const regen = ty.passives?.find((x) => x.kind === "regen")
+      const lh = healedAt.get(e.id)
+      if (regen && lh !== undefined && t - lh <= regen.every + 1) healing.push(e.x, e.y, ty.w, ty.h)
     }
+    casts = casts.filter((c) => i - c.frame < 18)
+    heals = heals.filter((h) => i - h.frame < 14)
+    const castFx = casts.flatMap((c) => (c.targets.length ? c.targets.flatMap((tg) => [c.x, c.y, tg.x, tg.y, i - c.frame]) : [c.x, c.y, -1, -1, i - c.frame]))
+    const healFx = heals.flatMap((h) => [h.x, h.y, h.amount, i - h.frame])
     const counts = seats.map((_, p) => {
       let army = 0
       let workers = 0
@@ -587,6 +636,10 @@ function replayScene(
       status: relabelSeats(state.status, seats, false),
       ...(auras.length ? { auras } : {}),
       ...(buffed.length ? { buffed } : {}),
+      ...(castFx.length ? { castFx } : {}),
+      ...(healFx.length ? { healFx } : {}),
+      ...(cds.length ? { cds } : {}),
+      ...(healing.length ? { healing } : {}),
     }
   }
   return {

@@ -175,7 +175,7 @@ function naturalMines(base: Entity, enemyBase: Pos, mines: Entity[]): Entity[] {
   return first ? far.filter((m) => dist(m, first) <= 5) : []
 }
 
-export function onTick(view: View, cmd: Commands): void {
+function mainTick(view: View, cmd: Commands): void {
   // 单位数（含生产队列）到上限就不再排生产，排了也会被拒
   const own = view.entities.filter((e) => e.owner === view.me)
   let room = game.unitCap > 0 ? game.unitCap - own.filter((e) => game.types[e.type].kind === "unit").length - own.reduce((a, e) => a + (e.queue?.length ?? 0), 0) : Infinity
@@ -394,6 +394,18 @@ export function onTick(view: View, cmd: Commands): void {
   }
 
   if (mode === "defend") {
+    // 清野（D-189）：兵够 8 个、家里没事时去打离家最近的野怪营地，一只 150 金赏金
+    const camp = army.length >= 8 ? view.objectives.creepCamps.filter((c) => c.alive > 0).sort((a, b) => dist(a, base) - dist(b, base))[0] : undefined
+    if (camp) {
+      const creeps = view.entities.filter((e) => e.type === "creep")
+      for (const u of army) {
+        let c: Entity | undefined
+        for (const k of creeps) if (dist(k, u) <= 8 && (!c || dist(k, u) < dist(c, u))) c = k
+        if (c) attack(cmd, u, c)
+        else attackMove(cmd, u, camp)
+      }
+      return
+    }
     for (const u of army) if (dist(u, rallyPoint) > 3) attackMove(cmd, u, rallyPoint)
     return
   }
@@ -411,5 +423,22 @@ export function onTick(view: View, cmd: Commands): void {
     if (fighters.length > 0) attack(cmd, u, pickTarget(u, fighters)!)
     else if (goal && dist(u, goal) <= 12) attack(cmd, u, goal)
     else attackMove(cmd, u, enemyBaseCenter)
+  }
+}
+
+/**
+ * 野怪（D-189）：玩家的兵不会自动打中立实体，贴上来打我的野怪要自己还手。
+ * 先跑上面的主逻辑，再把身边 2 格内（弓兵是射程内）有野怪的兵改成打它（同一个兵后下的命令覆盖前面的）
+ */
+export function onTick(view: View, cmd: Commands): void {
+  mainTick(view, cmd)
+  const creeps = view.entities.filter((e) => e.type === "creep")
+  if (creeps.length === 0) return
+  for (const u of view.entities) {
+    if (u.owner !== view.me || (u.type !== "soldier" && u.type !== "archer")) continue
+    const reach = Math.max(2, game.types[u.type].attack!.range)
+    let c: Entity | undefined
+    for (const k of creeps) if (dist(k, u) <= reach && (!c || dist(k, u) < dist(c, u))) c = k
+    if (c && !(u.order?.kind === "attack" && u.order.target === c.id)) cmd.attack(u, c)
   }
 }
