@@ -254,45 +254,50 @@ test("技能造价（D-192）：放成功才扣，不够被拒，规则包拒绝
   assert.ok(rejected.some((r) => /gold 不够：花钱要 20，现有 10/.test(r)), rejected.join("\n"))
 })
 
-test("召唤箭塔（D-192）：花钱在目标格放一座造好的箭塔，目标格被占就放在旁边，钱不够被拒", async () => {
-  const { LORD_TOWER_COST, lordType, regicideCast, summonedTowerType } = await import("../rulesets/common/regicide.ts")
+test("击退（D-197）：领主视野内的敌方单位推到视野外，建筑和中立的不推；视野里没敌人被拒", async () => {
+  const { lordType, regicideCast } = await import("../rulesets/common/regicide.ts")
   const events: GameEvent[] = []
-  const gold: number[] = []
-  let towers: Entity[] = []
-  const types = { ...TYPES, lord: lordType(["grunt"], "tower"), tower: summonedTowerType(), base: { kind: "building" as const, w: 2, h: 2, maxHp: 500, look } }
+  const before: Entity[] = []
+  let after: Entity[] = []
+  const types = { ...TYPES, lord: lordType(["grunt"], "repel"), hut: { kind: "building" as const, w: 1, h: 1, maxHp: 100, look } }
   play(
     mini([], {
-      maxTicks: 4,
+      maxTicks: 3,
       types,
       setup(ctx) {
-        ctx.setTerrain(Array(6).fill(".".repeat(12)))
-        ctx.spawn("base", 0, 0, 0)
-        ctx.spawn("lord", 0, 4, 2)
-        ctx.spawn("grunt", 0, 6, 2)
-        ctx.spawn("lord", 1, 10, 4)
-        ctx.setResources(0, { gold: 600 })
-        ctx.setResources(1, { gold: 200 })
+        ctx.setTerrain(Array(9).fill(".".repeat(26)))
+        ctx.spawn("lord", 0, 6, 4)
+        ctx.spawn("grunt", 1, 8, 4)
+        ctx.spawn("grunt", 1, 6, 6)
+        ctx.spawn("hut", 1, 9, 5)
+        ctx.spawn("grunt", -1, 5, 4)
+        ctx.spawn("lord", 1, 24, 4)
       },
       onCast: regicideCast,
     }),
     (v, cmd) => {
       events.push(...v.events)
-      gold[v.tick] = v.resources.gold
-      towers = v.entities.filter((e) => e.type === "tower")
-      // 目标格 (6, 2) 站着自己的兵：放在离它最近的空格
-      if (v.tick === 0) cmd.cast(mine(v, "lord")[0], "tower", { x: 6, y: 2 })
+      if (v.tick === 0) {
+        before.push(...v.entities)
+        cmd.cast(mine(v, "lord")[0], "repel")
+      }
+      after = v.entities
     },
     (v, cmd) => {
       events.push(...v.events)
-      if (v.tick === 0) cmd.cast(mine(v, "lord")[0], "tower", { x: 9, y: 4 })
+      // 视野里没有敌人：被拒
+      if (v.tick === 0) cmd.cast(mine(v, "lord")[0], "repel")
     },
   )
-  assert.equal(gold[1], 600 - LORD_TOWER_COST)
-  assert.equal(towers.length, 1)
-  assert.equal(towers[0].owner, 0)
-  assert.equal(Math.abs(towers[0].x - 6) + Math.abs(towers[0].y - 2), 1)
-  assert.equal(towers[0].construction, undefined)
-  assert.ok(events.some((e) => e.kind === "rejected" && new RegExp(`gold 不够：召唤箭塔要 ${LORD_TOWER_COST}，现有 200`).test(e.reason)))
+  const far = (e: Entity) => Math.abs(e.x - 6) + Math.abs(e.y - 4)
+  const grunts = after.filter((e) => e.type === "grunt" && e.owner === 1)
+  assert.equal(grunts.length, 2)
+  assert.ok(grunts.every((e) => far(e) === 9), JSON.stringify(grunts.map((e) => [e.x, e.y])))
+  // 建筑、中立的不动
+  const at = (list: Entity[], type: string, owner: number) => list.find((e) => e.type === type && e.owner === owner)!
+  assert.deepEqual([at(after, "hut", 1).x, at(after, "hut", 1).y], [9, 5])
+  assert.deepEqual([at(after, "grunt", -1).x, at(after, "grunt", -1).y], [5, 4])
+  assert.ok(events.some((e) => e.kind === "rejected" && /视野（8 格）里没有敌方单位/.test(e.reason)))
 })
 
 test("技能：规则包没导出 onCast 时都被拒", () => {

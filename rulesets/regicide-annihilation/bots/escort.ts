@@ -1,21 +1,14 @@
-// 领主随军：领主跟在军队后面 3 格，团战时兵吃满光环（伤害 +20%、减伤 20%）；6、7 个兵时去清最近的野怪营地（先聚齐再集火），8 个兵就出击，手上有 350 金就召唤箭塔（在家放在集结点，出击时放在军队旁边，最多 3 座）。
-// - 领主：出击时站在军队中心往自家方向退 3 格的地方，身边 4 格内有敌兵就往家撤；在家时和基准一样，钱够就在集结点召唤箭塔。
+// 领主随军：领主跟在军队后面 3 格，团战时兵吃满光环（伤害 +20%、减伤 20%）；6、7 个兵时去清最近的野怪营地（先聚齐再集火），8 个兵就出击；领主 6 格内有 3 个以上敌兵就放击退。
+// - 领主：出击时站在军队中心往自家方向退 3 格的地方，身边 4 格内有敌兵就往家撤；在家时和基准一样。
 // - 其余（经济、生产、回防、挑目标）和基准一样，看得见对方领主就先打领主。
 const ATTACK_AT = 8
 const REINFORCE_AT = 3
 const RETREAT_BELOW = 4
 const MAX_WORKERS = 12
 const MAX_PER_MINE = 3
-/** 召唤箭塔（D-192；D-194 降到 250 金）：一座多少金，最多放几座，放完手上至少还留多少钱 */
-const TOWER_COST = 250
-const MAX_TOWERS = 3
-const TOWER_RESERVE = 100
 const ECO_FIRST = 10
 const PLAN: TypeName[] = ["soldier", "archer"]
 const enemySeen = new Map<number, number>()
-/** 见过的对手箭塔（id → 位置），被拆了删掉；每座塔要多 TOWER_ARMY 个兵才进攻（D-195，第五轮试写：参考 bot 一波波冲进塔群送人头，只放塔不出兵的 bot 都能赢它们） */
-const enemyTowers = new Map<number, Pos>()
-const TOWER_ARMY = 4
 const SEEN_FOR = 600
 
 let mode: "defend" | "attack" = "defend"
@@ -77,19 +70,6 @@ function attackMove(cmd: Commands, u: Entity, p: Pos): void {
   if (u.order?.kind !== "attackMove" || u.order.x !== p.x || u.order.y !== p.y) cmd.attackMove(u, p.x, p.y)
 }
 
-/** 领主 3 格内有没有空格能放塔（地形能走、没有任何实体）；集结点挤满兵时没有，放了会被拒（D-196） */
-function towerRoom(view: View, lord: Entity): boolean {
-  const taken = new Set<number>()
-  for (const e of view.entities) for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) taken.add(y * game.width + x)
-  for (let dy = -3; dy <= 3; dy++)
-    for (let dx = -3; dx <= 3; dx++) {
-      const x = lord.x + dx
-      const y = lord.y + dy
-      if (Math.abs(dx) + Math.abs(dy) <= 3 && (dx || dy) && walkable(x, y) && !taken.has(y * game.width + x)) return true
-    }
-  return false
-}
-
 /** attackMove 加 neutral：野怪也打，射程里有敌人先打敌人（D-191） */
 function attackMoveNeutral(cmd: Commands, u: Entity, p: Pos): void {
   if (u.order?.kind !== "attackMove" || u.order.x !== p.x || u.order.y !== p.y || u.order.neutral !== true) cmd.attackMove(u, p.x, p.y, { neutral: true })
@@ -117,8 +97,6 @@ function mainTick(view: View, cmd: Commands): void {
   for (const ev of view.events) if (ev.kind === "died") enemySeen.delete(ev.id)
   for (const [id, t] of enemySeen) if (view.tick - t > SEEN_FOR) enemySeen.delete(id)
   const enemyArmy = enemySeen.size
-  for (const e of enemyBuildings) if (e.type === "tower") enemyTowers.set(e.id, { x: e.x, y: e.y })
-  for (const ev of view.events) if (ev.kind === "died") enemyTowers.delete(ev.id)
 
   const base = mine.find((e) => e.type === "base")
   if (!base) return
@@ -131,31 +109,16 @@ function mainTick(view: View, cmd: Commands): void {
   rally ??= pointToward(barracks ?? base, enemyBaseCenter, 5)
 
   // ---------- 领主 ----------
-  let towerGold = 0
-  const wantTower = lord !== undefined && mine.filter((e) => e.type === "tower").length < MAX_TOWERS && (lord.skillCooldowns?.tower ?? 1) === 0
   if (lord) {
     lordHome ??= { x: lord.x, y: lord.y }
-    const towerReady = wantTower && view.resources.gold >= TOWER_COST + TOWER_RESERVE && towerRoom(view, lord)
     const outArmy = army.filter((u) => dist(u, base) > 12)
     const close = enemyUnits.some((e) => game.types[e.type].attack !== null && e.type !== "worker" && dist(e, lord) <= 4)
     const danger = enemyUnits.some((e) => game.types[e.type].attack !== null && e.type !== "worker" && dist(e, lord) <= 7)
     if (mode === "attack" && outArmy.length >= 3 && !close) {
       // 跟着军队：站在军队中心往家退 3 格，兵在光环范围里
       moveTo(cmd, lord, pointToward(centroid(outArmy), base, 3))
-      // 团战时召唤箭塔（D-192）：军队 10 格内有敌兵、钱够，就在领主往军队方向 2 格的地方放一座
-      const spot = pointToward(lord, centroid(outArmy), 2)
-      if (towerReady && enemyUnits.some((e) => isCombat(e) && dist(e, centroid(outArmy)) <= 10) && Math.abs(spot.x - lord.x) + Math.abs(spot.y - lord.y) <= 3) {
-        cmd.cast(lord, "tower", spot)
-        towerGold = TOWER_COST
-      }
     } else if (danger) {
       moveTo(cmd, lord, lordHome)
-    } else if (towerReady) {
-      // 召唤箭塔（D-192）：走到集结点 3 格内，在集结点放一座（那格被占就放在旁边最近的空地）
-      if (Math.abs(lord.x - rally.x) + Math.abs(lord.y - rally.y) <= 3) {
-        cmd.cast(lord, "tower", rally)
-        towerGold = TOWER_COST
-      } else moveTo(cmd, lord, rally)
     } else moveTo(cmd, lord, lordHome)
   }
 
@@ -169,7 +132,7 @@ function mainTick(view: View, cmd: Commands): void {
   )
 
   // ---------- 生产 ----------
-  let gold = view.resources.gold - towerGold
+  let gold = view.resources.gold
   const baseIdle = (base.queue?.length ?? 0) === 0
   if (baseIdle && workers.length < ECO_FIRST && gold >= 50) {
     room-- > 0 && cmd.produce(base, "worker")
@@ -237,13 +200,7 @@ function mainTick(view: View, cmd: Commands): void {
   const out = army.filter((u) => dist(u, base) > 15)
   const gathered = home.every((u) => dist(u, rally!) <= 6)
   const enemyWeak = view.tick > 1500 && army.length >= 4 && army.length >= enemyArmy * 2
-  // 对手有塔：兵要比塔数 × TOWER_ARMY 多才进攻；打到一半发现塔不够打就撤回来清野
-  const towerOk = army.length >= enemyTowers.size * TOWER_ARMY
-  if (mode === "attack" && !towerOk) {
-    mode = "defend"
-    console.log(`第 ${view.tick} tick 看到对手 ${enemyTowers.size} 座箭塔，兵只有 ${army.length} 个，撤回来`)
-  }
-  if (mode === "defend" && gathered && towerOk && (army.length >= ATTACK_AT || enemyWeak)) {
+  if (mode === "defend" && gathered && (army.length >= ATTACK_AT || enemyWeak)) {
     mode = "attack"
     console.log(`第 ${view.tick} tick 进攻，兵力 ${army.length}，估计对方 ${enemyArmy}`)
   }
@@ -303,6 +260,23 @@ function mainTick(view: View, cmd: Commands): void {
  */
 export function onTick(view: View, cmd: Commands): void {
   mainTick(view, cmd)
+  retaliate(view, cmd)
+  repel(view, cmd)
+}
+
+/**
+ * 击退（D-197）：领主 6 格内有 3 个以上敌兵就放，把领主视野里的敌方单位推到视野外。
+ * 放在每次决策的最后：击退当场生效，先放的话，后面对被推走的敌人下 attack 会被拒（看不到目标）
+ */
+function repel(view: View, cmd: Commands): void {
+  const lord = view.entities.find((e) => e.owner === view.me && e.type === "lord")
+  if (!lord || (lord.skillCooldowns?.repel ?? 1) !== 0) return
+  const near = view.entities.filter((e) => e.owner >= 0 && e.owner !== view.me && isCombat(e) && dist(e, lord) <= 6)
+  if (near.length >= 3) cmd.cast(lord, "repel")
+}
+
+/** 贴身的野怪咬过来就还手 */
+function retaliate(view: View, cmd: Commands): void {
   const creeps = view.entities.filter((e) => e.type === "creep")
   if (creeps.length === 0) return
   for (const u of view.entities) {

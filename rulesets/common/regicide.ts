@@ -3,27 +3,25 @@
 // - 光环「领主光环」：视野（8 格）内自己的战士、弓手打出的伤害 +20%、受到的伤害 −20%（D-188：试写反馈光环太强，25% 降到 20%）
 // - 被动「休养生息」：100 tick 没出手、没挨打以后，每 10 tick 回 10 生命
 // - 技能「点金」（goldmine，弑君拓荒）：在领主 3 格内的空地上造一座 300 金的中立金矿，冷却 600 tick（落点见 mineSpot）
-// - 技能「召唤箭塔」（tower，弑君歼灭，D-192）：花 250 金，在领主 3 格内指定的空地上立刻造好一座拓荒的箭塔，冷却 600 tick
-//   （用户：歼灭的点金换成召唤箭塔；为了防止克制拓荒里 GPT 那种只造箭塔的打法成了最优解，要额外花钱。
-//   原来 500 金，第四轮试写测出来塔基本没用、略亏，按用户交代降到 250，D-194）
+// - 技能「击退」（repel，弑君歼灭，D-197）：把领主视野内的敌方单位推到视野外，纯冷却 600 tick、不要钱（用户：想让两边打得更焦灼、时间更长）。
+//   之前是召唤箭塔（D-192～196：500 金基本没用，降到 250 不亏不赚，兵营同时造 5 个以后没人放）
 // 领主的移速、视野、攻击和克制规则包的侦察兵一样（走一格 1 tick、视野 8、攻击 1），生命 500（主基地 1500 的三分之一）
 import type { CastInfo, MatchResult, RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
 import { spawnMirrored, STANDARD_TERRAIN } from "./standard.ts"
 import { creepStats } from "./creeps.ts"
-import { frontierTypes } from "./frontier.ts"
 
 /** 点金造出来的金矿储量 */
 export const LORD_MINE_AMOUNT = 300
 /** 点金的金矿最远放在离领主几格 */
 export const LORD_MINE_RANGE = 3
 
-/** 召唤箭塔要花多少金 */
-export const LORD_TOWER_COST = 250
-/** 召唤箭塔：目标格离领主最远几格 */
-export const LORD_TOWER_RANGE = 3
+/** 击退的冷却（tick） */
+export const LORD_REPEL_COOLDOWN = 600
+/** 击退往外推的时候，最多沿路走几步去找落脚的空格（找不到就不推） */
+const REPEL_SEARCH = 24
 
-/** 领主的技能：点金（弑君拓荒）或者召唤箭塔（弑君歼灭） */
-export type LordSkill = "goldmine" | "tower"
+/** 领主的技能：点金（弑君拓荒）或者击退（弑君歼灭） */
+export type LordSkill = "goldmine" | "repel"
 
 /** 领主：troops 是光环加成的兵种，skill 是它的技能 */
 export function lordType(troops: string[], skill: LordSkill = "goldmine"): TypeSpec {
@@ -37,13 +35,11 @@ export function lordType(troops: string[], skill: LordSkill = "goldmine"): TypeS
       skill === "goldmine"
         ? { id: "goldmine", name: "点金", cooldown: 600, desc: `在领主 ${LORD_MINE_RANGE} 格内最近的空地上造一座 ${LORD_MINE_AMOUNT} 金的中立金矿（谁都能采）` }
         : {
-            id: "tower",
-            name: "召唤箭塔",
-            cooldown: 600,
-            target: "point",
-            range: LORD_TOWER_RANGE,
-            cost: { gold: LORD_TOWER_COST },
-            desc: `在领主 ${LORD_TOWER_RANGE} 格内指定的格子上立刻造好一座箭塔（那格被占就放在离它最近的空地）`,
+            id: "repel",
+            name: "击退",
+            cooldown: LORD_REPEL_COOLDOWN,
+            situational: true,
+            desc: "把领主视野（8 格）内的敌方单位推到视野外（各自沿能走的路推到最近的空格，建筑和野怪不推）",
           },
     ],
     auras: [{ name: "领主光环", radius: -1, affects: "own", types: troops, damagePct: 20, defensePct: 20 }],
@@ -52,27 +48,20 @@ export function lordType(troops: string[], skill: LordSkill = "goldmine"): TypeS
   }
 }
 
-/** 在单位表里加上领主（放在工人后面，单位表、图例按这个顺序列）；技能是召唤箭塔时再加上箭塔 */
+/** 在单位表里加上领主（放在工人后面，单位表、图例按这个顺序列） */
 export function withLord(types: Record<string, TypeSpec>, troops: string[], skill: LordSkill = "goldmine"): Record<string, TypeSpec> {
   const out: Record<string, TypeSpec> = {}
   for (const [k, v] of Object.entries(types)) {
     out[k] = v
     if (k === "worker") out.lord = lordType(troops, skill)
   }
-  if (skill === "tower" && !out.tower) out.tower = summonedTowerType()
   return out
-}
-
-/** 领主召唤的箭塔：数值和拓荒的箭塔一样（生命 450、射程 5、一下 12），造价写召唤花的钱（被拆时对手拿这么多击杀价值），工人建不了 */
-export function summonedTowerType(): TypeSpec {
-  const { buildTicks: _, ...t } = frontierTypes().tower
-  return { ...t, cost: { gold: LORD_TOWER_COST } }
 }
 
 /** 每家领主放成功几次技能（结果的 stats 用）；setup 时清零（规则包不进沙箱直接跑时顶层变量不会每局重新加载） */
 let casts: Record<string, number[]> = {}
 
-/** 结果的统计：野怪的击杀、赏金，加上领主放技能的次数（召唤箭塔或点金） */
+/** 结果的统计：野怪的击杀、赏金，加上领主放技能的次数（击退或点金） */
 export function regicideStats(n: number): Record<string, number[]> {
   const out = creepStats(n)
   for (const [name, list] of Object.entries(casts)) out[name] = Array.from({ length: n }, (_, i) => list[i] ?? 0)
@@ -110,28 +99,7 @@ export function mineSpot(ctx: RuleContext, lord: { x: number; y: number }, playe
   return null
 }
 
-/**
- * 召唤箭塔的落点（D-192）：目标格空着（地形能走、没有任何实体）、放了不会把领主到自家主基地的路堵死就放在那里；
- * 不然在离领主 3 格内的空格里挑离目标最近的（曼哈顿距离），一样近的随机挑；都不行返回 null
- */
-export function towerSpot(ctx: RuleContext, lord: { x: number; y: number }, player: number, target: { x: number; y: number }): { x: number; y: number } | null {
-  const W = ctx.width
-  const H = ctx.height
-  const { free, reachable } = placeCheck(ctx, lord, player)
-  const cells: { x: number; y: number; d: number; r: number }[] = []
-  for (let dy = -LORD_TOWER_RANGE; dy <= LORD_TOWER_RANGE; dy++)
-    for (let dx = -LORD_TOWER_RANGE; dx <= LORD_TOWER_RANGE; dx++) {
-      const x = lord.x + dx
-      const y = lord.y + dy
-      if (Math.abs(dx) + Math.abs(dy) > LORD_TOWER_RANGE || (dx === 0 && dy === 0) || x < 0 || y < 0 || x >= W || y >= H || !free[y * W + x]) continue
-      cells.push({ x, y, d: Math.abs(x - target.x) + Math.abs(y - target.y), r: ctx.rng.next() })
-    }
-  cells.sort((a, b) => a.d - b.d || a.r - b.r)
-  for (const s of cells) if (reachable(s.y * W + s.x)) return { x: s.x, y: s.y }
-  return null
-}
-
-/** 放金矿、箭塔用的格子检查：free 是空着的格子（地形能走、没有任何实体）；reachable(格子) 是放上去以后领主还能走到自家主基地旁边 */
+/** 放金矿用的格子检查：free 是空着的格子（地形能走、没有任何实体）；reachable(格子) 是放上去以后领主还能走到自家主基地旁边 */
 function placeCheck(ctx: RuleContext, lord: { x: number; y: number }, player: number): { free: Uint8Array; reachable: (cell: number) => boolean } {
   const W = ctx.width
   const H = ctx.height
@@ -169,16 +137,15 @@ function placeCheck(ctx: RuleContext, lord: { x: number; y: number }, player: nu
   return { free, reachable }
 }
 
-/** 点金：在领主 3 格内找空地放一座中立金矿；召唤箭塔：在目标格（或离它最近的空地）放一座造好的箭塔（250 金是技能的造价，平台查、平台扣）。放不下就拒绝（不扣钱、不进冷却） */
+/** 点金：在领主 3 格内找空地放一座中立金矿，放不下就拒绝；击退：把视野里的敌方单位推出去，视野里没有敌方单位就拒绝（拒绝的不进冷却） */
 export function regicideCast(ctx: RuleContext, c: CastInfo): string | null {
   const lord = ctx.get(c.unit)
   if (!lord) return "领主不在了"
-  if (c.skill === "tower") {
-    const spot = towerSpot(ctx, lord, c.player, { x: c.x!, y: c.y! })
-    if (!spot) return `领主 ${LORD_TOWER_RANGE} 格内没有能放箭塔的空地（单位站着的格子不算空，也不能把领主到主基地的路堵死），换个地方再放`
-    ctx.spawnNear("tower", c.player, spot.x, spot.y)
-    ctx.note(`P${c.player} 的领主花 ${LORD_TOWER_COST} 金在 (${spot.x}, ${spot.y}) 召唤了一座箭塔`, c.player)
-    count("召唤箭塔", c.player)
+  if (c.skill === "repel") {
+    const pushed = repel(ctx, lord, c.player)
+    if (pushed < 0) return `领主视野（${lord.def.sight} 格）里没有敌方单位，不用击退`
+    ctx.note(`P${c.player} 的领主在 (${lord.x}, ${lord.y}) 击退了 ${pushed} 个敌方单位`, c.player)
+    count("击退", c.player)
     return null
   }
   if (c.skill !== "goldmine") return `没有技能 ${c.skill}`
@@ -188,6 +155,74 @@ export function regicideCast(ctx: RuleContext, c: CastInfo): string | null {
   ctx.note(`P${c.player} 的领主在 (${spot.x}, ${spot.y}) 点出一座金矿`, c.player)
   count("点金", c.player)
   return null
+}
+
+/**
+ * 击退（D-197）：领主视野内（曼哈顿距离不超过视野）的敌方单位一个个往外推，先推离领主远的（免得挡住后面的）：
+ * 从它站的格子沿能走的路（地形、建筑、资源点挡路，单位不挡）往外找，离它最近的、离领主超过视野的空格（没有任何实体，
+ * 也没被这次推过去的占着）；同样近的选离领主远的，再一样随机挑。走 24 步（REPEL_SEARCH）都找不到（被墙堵死）就不推。
+ * 返回推走了几个；视野里一个敌方单位都没有返回 -1
+ */
+export function repel(ctx: RuleContext, lord: { x: number; y: number; def: { sight: number } }, player: number): number {
+  const W = ctx.width
+  const H = ctx.height
+  const R = lord.def.sight
+  const foes = ctx
+    .entities({ kind: "unit" })
+    .filter((e) => e.owner >= 0 && e.owner !== player && !ctx.isAlly(e.owner, player) && Math.abs(e.x - lord.x) + Math.abs(e.y - lord.y) <= R)
+  if (foes.length === 0) return -1
+  const open = new Uint8Array(W * H) // 地形能走、没有建筑和资源点（推的路线）
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) open[y * W + x] = STANDARD_TERRAIN[ctx.terrain[y][x]]?.walkable ? 1 : 0
+  const free = open.slice() // 再去掉单位站着的（落脚点）
+  for (const e of ctx.entities())
+    for (let y = e.y; y < e.y + e.h; y++)
+      for (let x = e.x; x < e.x + e.w; x++) {
+        if (e.def.kind !== "unit") open[y * W + x] = 0
+        free[y * W + x] = 0
+      }
+  const far = (i: number) => Math.abs((i % W) - lord.x) + Math.abs(Math.floor(i / W) - lord.y)
+  foes.sort((a, b) => far(b.y * W + b.x) - far(a.y * W + a.x))
+  let moved = 0
+  const seen = new Int32Array(W * H)
+  let mark = 0
+  for (const f of foes) {
+    mark++
+    let level = [f.y * W + f.x]
+    seen[level[0]] = mark
+    let spot = -1
+    for (let step = 0; step < REPEL_SEARCH && level.length && spot < 0; step++) {
+      const next: number[] = []
+      for (const c of level) {
+        const x = c % W
+        for (const n of [x > 0 ? c - 1 : -1, x < W - 1 ? c + 1 : -1, c >= W ? c - W : -1, c < W * (H - 1) ? c + W : -1]) {
+          if (n < 0 || seen[n] === mark || !open[n]) continue
+          seen[n] = mark
+          next.push(n)
+        }
+      }
+      // 这一圈里能落脚的：离领主超过视野、空着；挑离领主最远的，一样远随机
+      let best = -1
+      let bestFar = -1
+      let bestR = 0
+      for (const n of next) {
+        if (!free[n] || far(n) <= R) continue
+        const r = ctx.rng.next()
+        if (far(n) > bestFar || (far(n) === bestFar && r < bestR)) {
+          best = n
+          bestFar = far(n)
+          bestR = r
+        }
+      }
+      spot = best
+      level = next
+    }
+    if (spot < 0) continue
+    free[f.y * W + f.x] = 1
+    free[spot] = 0
+    ctx.teleport(f.id, spot % W, Math.floor(spot / W))
+    moved++
+  }
+  return moved
 }
 
 function count(name: string, p: number): void {

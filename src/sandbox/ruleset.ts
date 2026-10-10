@@ -472,6 +472,10 @@ class RulesBox {
         w().setHp(int(id, "id"), num(hp, "生命"))
         return undefined
       },
+      teleport: (id, x, y) => {
+        w().teleport(int(id, "id"), int(x, "x"), int(y, "y"))
+        return undefined
+      },
       setOwner: (id, owner) => {
         w().setOwner(int(id, "id"), int(owner, "owner"))
         return undefined

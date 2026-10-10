@@ -147,6 +147,7 @@ function checkAbilities(s: Obj, at: string, names: Set<string>, kind: string, re
         if (k.target !== undefined && !["none", "point", "unit"].includes(k.target as string)) bad(`${w}.target 要是 none、point、unit 之一`)
         if (k.range !== undefined && !isInt(k.range, 0, 64)) bad(`${w}.range 要是 0～64 的整数`)
         if ((k.target === "point" || k.target === "unit") && !isInt(k.range, 1, 64)) bad(`${w}：target 是 ${k.target} 时要写 range（1～64）`)
+        if (k.situational !== undefined && typeof k.situational !== "boolean") bad(`${w}.situational 要是 true / false`)
         if (k.cost !== undefined) {
           if (!isObj(k.cost)) bad(`${w}.cost 要写成 { 资源名: 数量 }`)
           else for (const [r, n] of Object.entries(k.cost)) if (!resSet.has(r) || !isInt(n, 0)) bad(`${w}.cost.${r}：资源要在 resources 里，数量是非负整数`)

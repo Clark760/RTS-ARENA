@@ -46,7 +46,7 @@ export function resolveType(name: string, s: TypeSpec): TypeDef {
     parallel: s.parallel ?? 1,
     builds: s.kind === "unit" ? (s.builds ?? []) : [],
     resource: s.resource ?? null,
-    skills: (s.skills ?? []).map((k) => ({ id: k.id, name: k.name, cooldown: k.cooldown, initialCooldown: k.initialCooldown ?? 0, target: k.target ?? "none", range: k.range ?? 0, cost: { ...(k.cost ?? {}) }, desc: k.desc })),
+    skills: (s.skills ?? []).map((k) => ({ id: k.id, name: k.name, cooldown: k.cooldown, initialCooldown: k.initialCooldown ?? 0, target: k.target ?? "none", range: k.range ?? 0, cost: { ...(k.cost ?? {}) }, situational: k.situational ?? false, desc: k.desc })),
     auras: (s.auras ?? []).map((a) => ({
       name: a.name,
       radius: a.radius ?? -1,
@@ -682,6 +682,21 @@ export class World implements SetupContext, RuleContext {
     if (!Number.isFinite(hp)) throw new Error("setHp：生命要是数字")
     if (hp <= 0) this.destroy(e, -1)
     else e.hp = Math.min(e.def.maxHp, Math.round(hp))
+  }
+
+  teleport(id: number, x: number, y: number): void {
+    const e = this.mustGet(id, "teleport")
+    if (e.def.kind !== "unit") throw new Error(`teleport：#${id}（${e.type}）不是单位，只能挪单位`)
+    if (!Number.isInteger(x) || !Number.isInteger(y) || !this.inBounds(x, y)) throw new Error(`teleport：坐标 (${x}, ${y}) 不对`)
+    if (e.x === x && e.y === y) return
+    const i = y * this.width + x
+    if (!this.staticFree(i) || this.unitOcc[i] !== 0) throw new Error(`teleport：(${x}, ${y}) 站不了（地形不能走或者有实体）`)
+    this.moveUnit(e, i)
+    // 原来的路线作废，下一 tick 从新位置重新找
+    e.path = []
+    e.pathKey = ""
+    e.stuck = 0
+    e.want = -1
   }
 
   setOwner(id: number, owner: number): void {

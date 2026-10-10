@@ -65,7 +65,7 @@ export interface TypeSpec {
 }
 
 /** 规则包写的技能：id、name、cooldown、desc 必写，其余有默认值（见 SkillDef） */
-export type SkillSpec = Pick<SkillDef, "id" | "name" | "cooldown" | "desc"> & Partial<Pick<SkillDef, "initialCooldown" | "target" | "range" | "cost">>
+export type SkillSpec = Pick<SkillDef, "id" | "name" | "cooldown" | "desc"> & Partial<Pick<SkillDef, "initialCooldown" | "target" | "range" | "cost" | "situational">>
 
 /** 规则包写的光环：name 必写；radius 默认 -1（等于视野）、affects 默认 own、types 默认全部、self 默认 false、两项加成默认 0 */
 export type AuraSpec = Pick<AuraDef, "name"> & Partial<Omit<AuraDef, "name">>
@@ -231,6 +231,11 @@ export interface RuleContext {
   orderNeutral(id: number, order: NeutralOrder): void
   /** 改生命（不超过最大生命）；改到 0 或以下就死掉（击杀者算 -1）。资源点不能用（储量用不了这个改） */
   setHp(id: number, hp: number): void
+  /**
+   * 把单位瞬间挪到 (x, y)（D-197，击退、传送这类效果）：只能挪单位；目标格要在地图里、地形能走、没有任何实体，不然抛错。
+   * 命令不变（走路、追人的会从新位置重新找路）；回放里记成一次移动
+   */
+  teleport(id: number, x: number, y: number): void
   /** 改归属（占领、招降、变成中立）。实体的命令变成 idle，生产队列清空（不退钱）。换主人的那一刻不检查单位上限，
    * 之后照常算进新主人的单位数（满了的话新主人就造不了兵）。没建好的建筑换了主人，原来去建它的工人会停下
    */

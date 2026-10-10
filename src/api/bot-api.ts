@@ -80,6 +80,8 @@ export interface SkillDef {
   range: number
   /** 每放一次要花的资源（比如 { gold: 500 }）；放成功才扣，不够被拒。空对象是不要钱 */
   cost: Partial<Record<ResourceName, number>>
+  /** 要看时机才放的技能（比如击退，敌人来了才放）；false 是冷却一好就该放的（比如点金） */
+  situational: boolean
   /** 效果说明 */
   desc: string
 }

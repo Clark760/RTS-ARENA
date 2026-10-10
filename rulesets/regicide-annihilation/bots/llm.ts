@@ -1,4 +1,4 @@
-// 大模型试写（Sonnet 测试员第二轮 60 分钟交的 v7，偏强）：兵在家门口吃光环守住，领主在家时用造完兵剩下的钱在集结点召唤箭塔（钱够 350、最多 4 座；收录时把原来的点金换成了这个）；600～2600 tick 兵够 16 个就带着领主去清最近的野怪营地（集火，附近来了敌兵马上转去迎战）；击杀价值领先 600、兵够 20 个就反推。
+// 大模型试写（Sonnet 测试员第二轮 60 分钟交的 v7，偏强）：兵在家门口吃光环守住，领主 6 格内有 3 个以上敌兵就放击退（收录时把原来的点金换成了这个）；600～2600 tick 兵够 16 个就带着领主去清最近的野怪营地（集火，附近来了敌兵马上转去迎战）；击杀价值领先 600、兵够 20 个就反推。
 // 参数集中在顶部，方便每版改
 
 const WORKERS_WANT = 9
@@ -257,17 +257,7 @@ export function onTick(view: View, cmd: Commands): void {
 
   // ---------- 领主 ----------
   if (lord) {
-    const cd = lord.skillCooldowns?.tower ?? 1
     let lordTarget: Pos | null = null
-    // 召唤箭塔（D-192 收录时改）：在家、没威胁、造完兵还剩 350 以上就走到步兵集结点 3 格内，在集结点放一座，最多 4 座
-    const towers = my.filter((e) => e.type === "tower").length
-    if (mode === "home" && cd === 0 && t - lastCast > 20 && !homeThreat && gold >= 350 && towers < 4) {
-      if (Math.abs(lord.x - rally.x) + Math.abs(lord.y - rally.y) <= 3) {
-        cmd.cast(lord, "tower", rally)
-        gold -= 250
-        lastCast = t
-      } else lordTarget = rally
-    }
     if (!lordTarget) {
       if (mode === "home") {
         lordTarget = lordHome
@@ -374,7 +364,10 @@ export function onTick(view: View, cmd: Commands): void {
     }
   }
 
+  // 击退（D-197 收录时改，原来是点金、召唤箭塔）：领主 6 格内有 3 个以上敌兵就放；放在最后，免得前面对被推走的敌人下的 attack 被拒
+  if (lord && (lord.skillCooldowns?.repel ?? 1) === 0 && enemies.filter((e) => (e.type === "soldier" || e.type === "archer") && dist(e, lord) <= 6).length >= 3) cmd.cast(lord, "repel")
+
   if (t % 500 === 0) {
-    console.log(`t=${t} mode=${mode} army=${army.length} workers=${workers.length} gold=${view.resources.gold} lordCD=${lord?.skillCooldowns?.tower} score=${view.players[me].score}`)
+    console.log(`t=${t} mode=${mode} army=${army.length} workers=${workers.length} gold=${view.resources.gold} lordCD=${lord?.skillCooldowns?.repel} score=${view.players[me].score}`)
   }
 }
