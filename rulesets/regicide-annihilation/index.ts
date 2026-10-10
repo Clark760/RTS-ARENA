@@ -15,6 +15,8 @@ types.barracks.parallel = 5
 // 主基地像拓荒的箭塔一样能打射程 5 内的敌人（一波推平变难）；领主 500 → 800 血（不那么容易被秒）
 types.soldier.maxHp = 180
 types.base.attack = { damage: 12, range: 5, cooldown: 10 }
+// D-199（用户）：主基地 1500 → 3000 血（D-198 后拆家结束的局从 35 涨到 48：领主难杀就去拆家，180 血的战士扛得住主基地的炮火）
+types.base.maxHp = 3000
 types.lord.maxHp = 800
 
 const ruleset: Ruleset = {
