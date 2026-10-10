@@ -13,6 +13,9 @@ const TOWER_RESERVE = 100
 const ECO_FIRST = 10
 const PLAN: TypeName[] = ["soldier", "archer"]
 const enemySeen = new Map<number, number>()
+/** 见过的对手箭塔（id → 位置），被拆了删掉；每座塔要多 TOWER_ARMY 个兵才进攻（D-195，第五轮试写：参考 bot 一波波冲进塔群送人头，只放塔不出兵的 bot 都能赢它们） */
+const enemyTowers = new Map<number, Pos>()
+const TOWER_ARMY = 4
 const SEEN_FOR = 600
 
 let mode: "defend" | "attack" = "defend"
@@ -105,6 +108,8 @@ function mainTick(view: View, cmd: Commands): void {
   for (const ev of view.events) if (ev.kind === "died") enemySeen.delete(ev.id)
   for (const [id, t] of enemySeen) if (view.tick - t > SEEN_FOR) enemySeen.delete(id)
   const enemyArmy = enemySeen.size
+  for (const e of enemyBuildings) if (e.type === "tower") enemyTowers.set(e.id, { x: e.x, y: e.y })
+  for (const ev of view.events) if (ev.kind === "died") enemyTowers.delete(ev.id)
 
   const base = mine.find((e) => e.type === "base")
   if (!base) return
@@ -221,7 +226,13 @@ function mainTick(view: View, cmd: Commands): void {
   // 不领先（落后或者打平）：打平也出击，免得两个守家的拖成平局
   const behind = kv[view.me] <= Math.max(...kv.filter((_, i) => i !== view.me))
   const enemyWeak = (view.tick - repelledAt < 100 && army.length >= 6) || (view.tick > game.maxTicks - 1500 && behind && army.length >= 6)
-  if (mode === "defend" && gathered && (army.length >= ATTACK_AT || enemyWeak)) {
+  // 对手有塔：兵要比塔数 × TOWER_ARMY 多才进攻；打到一半发现塔不够打就撤回来清野
+  const towerOk = army.length >= enemyTowers.size * TOWER_ARMY
+  if (mode === "attack" && !towerOk) {
+    mode = "defend"
+    console.log(`第 ${view.tick} tick 看到对手 ${enemyTowers.size} 座箭塔，兵只有 ${army.length} 个，撤回来`)
+  }
+  if (mode === "defend" && gathered && towerOk && (army.length >= ATTACK_AT || enemyWeak)) {
     mode = "attack"
     console.log(`第 ${view.tick} tick 进攻，兵力 ${army.length}，估计对方 ${enemyArmy}`)
   }

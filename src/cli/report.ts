@@ -99,6 +99,8 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   const enemies = (a: number, b: number) => a >= 0 && b >= 0 && team(a) !== team(b)
   const me = opts.player
   const who0 = (p: number) => (me === undefined ? `P${p}` : p === me ? "你" : team(p) === team(me) ? `盟友 P${p}` : `对手 P${p}`)
+  /** 各节按这个顺序列玩家：写了 --player（或在 bot 目录里）时「你」排第一，其余按座位（D-195，试写反馈：先后随座位变，不好找） */
+  const seatOrder = me === undefined ? [...Array(n).keys()] : [me, ...[...Array(n).keys()].filter((q) => q !== me)]
   /** 当主语用：P0 后面接汉字时补一个空格 */
   const who = (p: number) => (p === me ? "你" : who0(p) + " ")
   const kind = (type: string) => types[type]?.kind
@@ -186,11 +188,13 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   }
   for (const e of s.ents.values()) trackSkills(e, 0)
   // 玩家的能攻击的建筑（箭塔这类）：开火几次、打死几个、被拆没有（D-194，试写反馈：塔的账要自己解析回放才算得出来）
-  const armed = new Map<number, { owner: number; type: string; shots: number; kills: number; died: boolean }>()
-  const trackArmed = (e: EntSnap) => {
-    if (e.owner >= 0 && e.owner < n && kind(e.type) === "building" && types[e.type]?.attack && !armed.has(e.id)) armed.set(e.id, { owner: e.owner, type: e.type, shots: 0, kills: 0, died: false })
+  // D-195（第五轮试写：看不出塔是被谁拆的、放在哪）：每座记下位置、出现和被拆的 tick、最后一击是谁
+  const armed = new Map<number, { owner: number; type: string; x: number; y: number; born: number; shots: number; kills: number; died: boolean; diedAt: number; by: number }>()
+  const trackArmed = (e: EntSnap, t: number) => {
+    if (e.owner >= 0 && e.owner < n && kind(e.type) === "building" && types[e.type]?.attack && !armed.has(e.id))
+      armed.set(e.id, { owner: e.owner, type: e.type, x: e.x, y: e.y, born: t, shots: 0, kills: 0, died: false, diedAt: -1, by: -1 })
   }
-  for (const e of s.ents.values()) trackArmed(e)
+  for (const e of s.ents.values()) trackArmed(e, 0)
   /** 工人闲着的开始时间 */
   const idleFrom = new Map<number, number>()
   const idleSpans: IdleSpan[] = []
@@ -334,7 +338,11 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       const killer = hitter ? armed.get(hitter.id) : undefined
       if (killer) killer.kills++
       const dead = armed.get(id)
-      if (dead) dead.died = true
+      if (dead) {
+        dead.died = true
+        dead.diedAt = f.t
+        dead.by = by
+      }
       const so = skillOwners.get(id)
       if (so) so.died = f.t
       const ng = groupOf.get(id)
@@ -383,7 +391,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     for (const e of f.spawn ?? []) {
       addNeutral(e)
       trackSkills(e, f.t)
-      trackArmed(e)
+      trackArmed(e, f.t)
       if (initialIds.has(e.id) || e.owner < 0 || e.owner >= n) continue
       // 玩家放的地基一出来就有建造进度；直接是建好的建筑，是规则包放的
       if (kind(e.type) === "building" && e.bp === undefined) {
@@ -472,13 +480,13 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     `## 局势（每 ${every} tick；收入是这一段采到的，估算：生产队列里还没造出来的已经扣了钱、还没算进花费，所以偶尔是负数；单位后面括号里是闲着的个数，建筑括号里是没建好的个数）`,
   )
   samples.forEach((smp, i) => {
-    for (let p = 0; p < n; p++) {
+    for (const p of seatOrder) {
       const ps = smp.players[p]
       const prev = i > 0 ? samples[i - 1].players[p] : null
       const income = prev ? sum(ps.res) - sum(prev.res) + ps.spentSoFar - prev.spentSoFar : 0
       const units = [...ps.units].map(([k, u]) => `${k}×${u.n}${u.idle ? `（闲 ${u.idle}）` : ""}`).join(" ") || "无"
       const blds = [...ps.buildings].map(([k, b]) => `${k}×${b.n}${b.building ? `（${b.building}）` : ""}`).join(" ") || "无"
-      const head = p === 0 ? `t${smp.t}`.padEnd(7) : "".padEnd(7)
+      const head = p === seatOrder[0] ? `t${smp.t}`.padEnd(7) : "".padEnd(7)
       out.push(`${head} ${who0(p)}${ps.alive ? "" : "（已出局）"}：${fmtRes(ps.res)}${prev ? `（收入 ${income < 0 ? "−" : "+"}${Math.abs(Math.round(income))}）` : ""}，分 ${Math.round(ps.score)} | 单位 ${units} | 建筑 ${blds}`)
     }
   })
@@ -694,7 +702,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
   const after = samples.slice(1)
   const incomeOf: number[] = []
   for (let p = 0; p < n; p++) incomeOf[p] = sum(samples[samples.length - 1].players[p].res) - sum(initialRes[p]) + spentTotal[p]
-  for (let p = 0; p < n; p++) {
+  for (const p of seatOrder) {
     if (me !== undefined && p !== me && !enemies(p, me) && team(p) !== team(me)) continue
     const lost = new Map<string, number>()
     const killed = new Map<string, number>()
@@ -726,6 +734,10 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
       out.push(
         `  能攻击的建筑：${countList(m)}，被拆 ${towers.filter((b) => b.died).length} 座；一共开火 ${shots} 次、最后一击打死 ${kills} 个（平均每座开火 ${(shots / towers.length).toFixed(1)} 次）${idle ? `；${idle} 座一次都没开火` : ""}`,
       )
+      const byText = (b: (typeof towers)[number]) =>
+        !b.died ? "留到最后" : `t${b.diedAt} 被${b.by >= 0 ? (b.by === me ? "你" : ` ${who0(b.by)} `) : b.by === -2 ? "中立单位" : "规则包"}拆掉${b.by === -2 ? "（对手不得分）" : ""}`
+      for (const b of towers.slice(0, 10)) out.push(`    ${b.type} (${b.x}, ${b.y}) t${b.born} 出现，${byText(b)}：开火 ${b.shots} 次、打死 ${b.kills} 个`)
+      if (towers.length > 10) out.push(`    另有 ${towers.length - 10} 座`)
     }
     // 出兵顺序（连着出同一种的合成一个，比如 spearman×2）：看对手按什么规律出兵
     if (armyOrder[p].length) {
@@ -758,7 +770,7 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     out.push(
       "## 采矿（每个矿：交了几次货；采一次来回平均几 tick，交货点离矿越近越短；最多同时派了几个工人 / 矿旁边站得下几个；排队是工人站在矿附近等空位的总时间，站满了不会自己换矿）",
     )
-    for (let p = 0; p < n; p++) {
+    for (const p of seatOrder) {
       if (me !== undefined && p !== me && !enemies(p, me) && team(p) !== team(me)) continue
       const rows = [...mining.values()].filter((r) => r.owner === p && (r.deliveries > 0 || r.max > 0)).sort((a, b) => b.deliveries - a.deliveries)
       if (!rows.length) continue

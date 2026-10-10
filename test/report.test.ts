@@ -28,7 +28,8 @@ test("战报：输家视角有局势抽样、建造事件、战斗、经济对�
   assert.deepEqual(replay.result.winners, [0])
   const text = buildReport(replay, { player: 1, every: 500 })
   assert.match(text, /你是 P1/)
-  assert.match(text, /^t500 +对手 P0：gold \d+/m)
+  // 你排第一（D-195）
+  assert.match(text, /^t500 +你：gold \d+[^\n]*\n +对手 P0：gold \d+/m)
   assert.match(text, /对手 P0 放下 barracks 的地基/)
   assert.match(text, /你的 barracks 建好了/)
   assert.match(text, /第一次交火/)

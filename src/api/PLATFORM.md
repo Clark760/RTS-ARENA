@@ -4,7 +4,7 @@
 
 ```ts
 export function onStart(game: Game): void {
-  // 可选，开局调用一次
+  // 可选，开局调用一次。只有 game（地图、地形、单位类型这些），没有 view：自己的主基地、单位在哪要等第一次 onTick 的 view
 }
 
 export function onTick(view: View, cmd: Commands): void {

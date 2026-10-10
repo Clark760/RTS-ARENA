@@ -867,6 +867,8 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
     `对比：${la} → ${lb}，对手 ${foes.length} 个（${foes.map(label).join("、")}），每个对手 ${perPair} 组（${Math.ceil(perPair / 2)} 个种子 × 换边），` +
       `一组是两个版本用同一个种子、坐同一个位置各打一局；共 ${total} 局，种子从 ${baseSeed} 起`,
   )
+  // D-195（第五轮试写：不写 --seed 时每次换一批种子，两次 compare 的同一个版本成绩差很多，误把噪声当成差距）
+  if (typeof opt.seed !== "string") say(`（这次的种子是随机的。和别的 compare 结果对着比，要加 --seed ${baseSeed} 用同一批种子，不然同一个版本两次的成绩也会差很多）`)
   /** 两人局里坐 seat 的那方得几分：赢 1、平 0.5、输 0 */
   const scoreOf = (replay: Replay, seat: number) => {
     const won = replay.result.winners ?? []
@@ -897,6 +899,8 @@ async function cmdCompare(rules: Ruleset, src: RulesetRef, a: string, b: string,
       diffs.push(sb - sa)
       if (sb > sa) row.better++
       if (sb < sa) row.worse++
+      // 进度：一个对手要打好几分钟，每 5 组报一次（D-195）
+      if ((g + 1) % 5 === 0 && g + 1 < perPair) say(`  对 ${row.name}：已打 ${g + 1}/${perPair} 组（${la} ${wdl(row.a)}，${lb} ${wdl(row.b)}）`)
       // --all-replays（D-194，试写反馈：只存胜负不同的组，没法汇总塔这类全局统计）：每组都存
       if ((sa !== sb || allReplays) && !noReplays) {
         const stem = join(outDir, `${rules.id}-${startStamp}-${runId}-cmp-s${seed}-P${seat}-${safeName(row.name)}`)
