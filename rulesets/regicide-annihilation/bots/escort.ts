@@ -1,4 +1,4 @@
-// 领主随军：领主跟在军队后面 3 格，团战时兵吃满光环（伤害 +20%、减伤 20%）；6、7 个兵时去清最近的野怪营地（先聚齐再集火），8 个兵就出击；领主 6 格内有 3 个以上敌兵就放击退；家里没事、兵够 10 个先去抢中央宝箱（在旁边聚齐再点名打），野怪咬过来附近的兵一起集火还手。
+// 领主随军：领主跟在军队后面 3 格，团战时兵吃满光环（伤害 +20%、减伤 20%）；6、7 个兵时去清最近的野怪营地（先聚齐再集火），8 个兵就出击；领主 6 格内有 3 个以上敌兵就放击退；家里没事、兵够 10 个先去抢中央宝箱（快刷新时先开到宝箱的位置上占位，刷出来了就在旁边聚齐再点名打），野怪咬过来附近的兵一起集火还手。
 // - 领主：出击时站在军队中心往自家方向退 3 格的地方，身边 4 格内有敌兵就往家撤；在家时和基准一样。
 // - 其余（经济、生产、回防、挑目标）和基准一样，看得见对方领主就先打领主。
 const ATTACK_AT = 8
@@ -220,6 +220,13 @@ function mainTick(view: View, cmd: Commands): void {
     // 清野（D-189）：兵够 6 个、家里没事时去打离家最近的野怪营地，一只 150 金赏金
     // 中央宝箱（D-202）：兵够 10 个、家里没事就先去打离家近的那个宝箱，打掉得 600 金
     const chest = army.length >= 10 ? [...view.objectives.treasure.chests].sort((a, b) => dist(a, base) - dist(b, base))[0] : undefined
+    // 宝箱快刷新了（D-205）：兵够 10 个、家里没事就先开到宝箱的位置上等着，刷新那一刻占着位置（人比对手多）就直接捡到
+    const tr = view.objectives.treasure
+    const soon = !chest && army.length >= 10 && tr.nextAt - view.tick <= 150 ? [...tr.spots].sort((a, b) => dist(a, base) - dist(b, base))[0] : undefined
+    if (soon) {
+      for (const u of army) attackMove(cmd, u, { x: soon.x, y: soon.y })
+      return
+    }
     if (chest) {
       // D-203：和清野一样先在宝箱外 6 步聚齐（八成到了，或者等了 250 tick），再一起点名打宝箱。
       // 不用 attackMove 加 neutral：它会去追视野里的野怪，宝箱 5～7 格外就是营地，整个营地被惹出来；野怪咬过来由 retaliate 集火还手

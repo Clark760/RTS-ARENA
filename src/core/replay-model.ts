@@ -23,6 +23,8 @@ export interface Delta {
   casts: NonNullable<Frame["casts"]>
   /** 这一 tick 被动回血的 [id, 回了多少, ...]（D-190） */
   heals: number[]
+  /** 这一 tick 规则包放的画面特效（D-205） */
+  fx: NonNullable<Frame["fx"]>
 }
 
 function clone(s: State): State {
@@ -70,7 +72,7 @@ export class ReplayModel {
 
 /** 把一帧应用到局面上（原地修改），返回变化 */
 export function applyFrame(s: State, f: Frame): Delta {
-  const d: Delta = { moved: [], spawned: [], died: [], shots: f.shots ?? [], owned: [], casts: f.casts ?? [], heals: f.heal ?? [] }
+  const d: Delta = { moved: [], spawned: [], died: [], shots: f.shots ?? [], owned: [], casts: f.casts ?? [], heals: f.heal ?? [], fx: f.fx ?? [] }
   for (const e of f.spawn ?? []) {
     s.ents.set(e.id, { ...e })
     d.spawned.push(e.id)

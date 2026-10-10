@@ -519,12 +519,15 @@ function replayScene(
   // 特效（D-190）：最近放的技能（释放者、目标）、最近的回血、每个实体放技能和出现的 tick（算冷却环）、最近一次回血的 tick
   let casts: { x: number; y: number; targets: { x: number; y: number }[]; frame: number }[] = []
   let heals: { x: number; y: number; amount: number; frame: number }[] = []
+  // 规则包放的画面特效（D-205，比如捡到宝箱）
+  let ruleFxs: { x: number; y: number; w: number; h: number; text?: string; color?: string; radius?: number; frame: number }[] = []
   let castAt = new Map<string, number>()
   let bornAt = new Map<number, number>()
   let healedAt = new Map<number, number>()
   const resetFx = () => {
     casts = []
     heals = []
+    ruleFxs = []
     castAt = new Map()
     bornAt = new Map(replay.initial.entities.map((e) => [e.id, 0]))
     healedAt = new Map()
@@ -563,6 +566,7 @@ function replayScene(
         for (const e of f.spawn ?? []) if (replay.types[e.type]?.kind === "resource" && Math.abs(e.x - caster.x) + Math.abs(e.y - caster.y) <= 4) targets.push({ x: e.x, y: e.y })
         casts.push({ x: caster.x, y: caster.y, targets, frame: i })
       }
+      for (const fx of f.fx ?? []) ruleFxs.push({ ...fx, frame: i })
       const hl = f.heal ?? []
       for (let j = 0; j < hl.length; j += 2) {
         healedAt.set(hl[j], f.t)
@@ -607,6 +611,8 @@ function replayScene(
     }
     casts = casts.filter((c) => i - c.frame < 18)
     heals = heals.filter((h) => i - h.frame < 14)
+    ruleFxs = ruleFxs.filter((r) => i - r.frame < 24)
+    const ruleFx = ruleFxs.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h, age: i - r.frame, ...(r.text ? { text: r.text } : {}), ...(r.color ? { color: r.color } : {}), ...(r.radius ? { radius: r.radius } : {}) }))
     const castFx = casts.flatMap((c) => (c.targets.length ? c.targets.flatMap((tg) => [c.x, c.y, tg.x, tg.y, i - c.frame]) : [c.x, c.y, -1, -1, i - c.frame]))
     const healFx = heals.flatMap((h) => [h.x, h.y, h.amount, i - h.frame])
     const counts = seats.map((_, p) => {
@@ -638,6 +644,7 @@ function replayScene(
       ...(buffed.length ? { buffed } : {}),
       ...(castFx.length ? { castFx } : {}),
       ...(healFx.length ? { healFx } : {}),
+      ...(ruleFx.length ? { ruleFx } : {}),
       ...(cds.length ? { cds } : {}),
       ...(healing.length ? { healing } : {}),
     }

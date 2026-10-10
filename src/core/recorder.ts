@@ -98,6 +98,7 @@ export class Recorder {
     if (st.length) f.st = st
     if (bf.length) f.bf = bf
     if (w.heals.length) f.heal = w.heals.splice(0)
+    if (w.fx.length) f.fx = w.fx.splice(0)
     if (w.casts.length) f.casts = w.casts.splice(0).map((c) => ({ u: c.unit, s: c.skill, ...(c.x !== undefined ? { x: c.x, y: c.y } : {}), ...(c.target !== undefined ? { t: c.target } : {}) }))
     const players = playerSnaps(w)
     const pj = JSON.stringify(players)

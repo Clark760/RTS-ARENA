@@ -472,6 +472,12 @@ class RulesBox {
         w().setHp(int(id, "id"), num(hp, "生命"))
         return undefined
       },
+      effect: (h) => {
+        const o = json(h, "特效", 1000) as Record<string, unknown> | null
+        if (o === null || typeof o !== "object") throw new Error("effect 要写成 { x, y, w?, h?, text?, color? }")
+        w().effect(o as never)
+        return undefined
+      },
       teleport: (id, x, y) => {
         w().teleport(int(id, "id"), int(x, "x"), int(y, "y"))
         return undefined

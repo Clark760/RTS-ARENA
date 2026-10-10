@@ -154,6 +154,18 @@ export type RuleEvent =
   /** 玩家放了技能（onCast 返回 null 之后，D-186） */
   | ({ kind: "cast" } & CastInfo)
 
+/** 规则包放的画面特效（D-205）：区域、飘的字、颜色 */
+export interface RuleFx {
+  x: number
+  y: number
+  w: number
+  h: number
+  text?: string
+  color?: string
+  /** 光圈从区域边上往外扩散多少格（不写是 2～3 格） */
+  radius?: number
+}
+
 /** setup 阶段能用的接口 */
 export interface SetupContext {
   readonly seed: number
@@ -241,6 +253,12 @@ export interface RuleContext {
    * 之后照常算进新主人的单位数（满了的话新主人就造不了兵）。没建好的建筑换了主人，原来去建它的工人会停下
    */
   setOwner(id: number, owner: number): void
+  /**
+   * 画面特效（D-205）：在左上角 (x, y)、w×h 的区域爆开一圈光、飘一行字（比如捡到宝箱「+600」），播放器和联赛视频会画，
+   * bot 看不到。w、h 不写是 1；text 最多 12 个字；color 写 "#rrggbb"，不写是金色；radius 是光圈往外扩散多少格（1～24，不写是 2～3 格，
+   * 比如击退写视野的格数，冲击波就扩散到视野边上）
+   */
+  effect(fx: { x: number; y: number; w?: number; h?: number; text?: string; color?: string; radius?: number }): void
   /**
    * 局中改数值（科技、增益、光环、地形效果……，D-153）：改某个玩家（-1 是中立）的某类实体，他已有的和以后造出来的都按新数值，
    * 换了主人的实体按新主人的算。和这个玩家这类实体之前改过的合并；值是改成多少，写原值就是改回去，patch 写 null 全部改回原值。
@@ -490,6 +508,8 @@ export interface Frame {
   bf?: [number, string[] | null][]
   /** 这一 tick 被动回血的 [id, 回了多少, ...]（D-190） */
   heal?: number[]
+  /** 这一 tick 规则包放的画面特效（D-205，ctx.effect） */
+  fx?: RuleFx[]
   /** 这一 tick 放的技能（D-186）：u 是释放者、s 是技能 id，x、y、t 是目标 */
   casts?: { u: number; s: string; x?: number; y?: number; t?: number }[]
   players?: PlayerSnap[]

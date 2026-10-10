@@ -17,6 +17,8 @@ export const LORD_MINE_RANGE = 3
 
 /** 击退的冷却（tick）；D-198 用户：600 → 300；D-202 第六轮试写说偏弱（推走 30 tick 就回来），用户：300 → 150 */
 export const LORD_REPEL_COOLDOWN = 150
+/** 击退的特效颜色（浅蓝） */
+const REPEL_COLOR = "#8fd0ff"
 /** 击退往外推的时候，最多沿路走几步去找落脚的空格（找不到就不推） */
 const REPEL_SEARCH = 24
 
@@ -220,8 +222,12 @@ export function repel(ctx: RuleContext, lord: { x: number; y: number; def: { sig
     free[f.y * W + f.x] = 1
     free[spot] = 0
     ctx.teleport(f.id, spot % W, Math.floor(spot / W))
+    // 落脚的地方冒一团浅蓝色的光（D-205）
+    ctx.effect({ x: spot % W, y: Math.floor(spot / W), color: REPEL_COLOR, radius: 1 })
     moved++
   }
+  // 领主身上一圈浅蓝色冲击波，扩散到视野边上（D-205，用户：击退要有特效）
+  ctx.effect({ x: lord.x, y: lord.y, color: REPEL_COLOR, radius: R, text: "击退" })
   return moved
 }
 

@@ -18,6 +18,7 @@ import type {
   Rng,
   RuleContext,
   RuleEvent,
+  RuleFx,
   Ruleset,
   SetupContext,
   StatDiff,
@@ -226,6 +227,8 @@ export class World implements SetupContext, RuleContext {
   casts: CastInfo[] = []
   /** 这一 tick 被动回血的 [id, 回了多少, ...]（回放用；记下后清空） */
   heals: number[] = []
+  /** 这一 tick 规则包放的画面特效（D-205） */
+  fx: RuleFx[] = []
   /** 上一 tick 身上有增益的实体（这一 tick 没有了要清掉） */
   buffed = new Set<number>()
 
@@ -684,6 +687,18 @@ export class World implements SetupContext, RuleContext {
     if (!Number.isFinite(hp)) throw new Error("setHp：生命要是数字")
     if (hp <= 0) this.destroy(e, -1)
     else e.hp = Math.min(e.def.maxHp, Math.round(hp))
+  }
+
+  effect(o: { x: number; y: number; w?: number; h?: number; text?: string; color?: string; radius?: number }): void {
+    const w = o.w ?? 1
+    const h = o.h ?? 1
+    for (const [k, v] of [["x", o.x], ["y", o.y], ["w", w], ["h", h]] as const) if (!Number.isInteger(v)) throw new Error(`effect：${k} 要是整数`)
+    if (w < 1 || h < 1 || w > 16 || h > 16 || !this.inBounds(o.x, o.y) || !this.inBounds(o.x + w - 1, o.y + h - 1)) throw new Error(`effect：区域 (${o.x}, ${o.y}) ${w}×${h} 不对`)
+    if (o.text !== undefined && (typeof o.text !== "string" || [...o.text].length > 12)) throw new Error("effect：text 最多 12 个字")
+    if (o.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(String(o.color))) throw new Error("effect：color 要写成 #rrggbb")
+    if (o.radius !== undefined && (!Number.isInteger(o.radius) || o.radius < 1 || o.radius > 24)) throw new Error("effect：radius 要是 1～24 的整数")
+    if (this.fx.length >= 50) return
+    this.fx.push({ x: o.x, y: o.y, w, h, ...(o.text ? { text: o.text } : {}), ...(o.color ? { color: o.color } : {}), ...(o.radius ? { radius: o.radius } : {}) })
   }
 
   teleport(id: number, x: number, y: number): void {

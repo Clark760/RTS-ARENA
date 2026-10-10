@@ -61,8 +61,10 @@ export class Renderer {
   private castFx: { u: number; x: number; y: number; targets: { x: number; y: number }[]; tick: number }[] = []
   /** 最近的回血：哪个实体、回了多少、哪个 tick */
   private healFx: { id: number; amount: number; tick: number }[] = []
-  /** 飘字：放技能的技能名、回血的 +N */
-  private texts: { t: Text; id: number; tick: number; life: number; dx: number }[] = []
+  /** 规则包放的画面特效（D-205）：区域、颜色、哪个 tick */
+  private ruleFx: { x: number; y: number; w: number; h: number; color: number; radius: number; tick: number }[] = []
+  /** 飘字：放技能的技能名、回血的 +N（跟着实体飘）；规则包特效的字（at：固定在一个位置飘） */
+  private texts: { t: Text; id: number; tick: number; life: number; dx: number; at?: { x: number; y: number } }[] = []
   /** 每个实体放技能的 tick（按技能），算冷却环用 */
   private castLog = new Map<number, Map<string, number[]>>()
   /** 每个实体出现的 tick（算开局冷却 initialCooldown） */
@@ -228,6 +230,7 @@ export class Renderer {
     this.shots = []
     this.castFx = []
     this.healFx = []
+    this.ruleFx = []
     for (const x of this.texts) x.t.destroy()
     this.texts = []
     this.drawMarkers(state.markers)
@@ -291,6 +294,12 @@ export class Renderer {
       this.healFx.push({ id: d.heals[i], amount: d.heals[i + 1], tick: t })
       this.float(`+${d.heals[i + 1]}`, d.heals[i], t, 0x6ee36e, 10)
     }
+    // 规则包的画面特效（D-205，比如捡到宝箱）：区域中心爆开一圈光，飘字
+    for (const fx of d.fx) {
+      const color = fx.color && /^#[0-9a-fA-F]{6}$/.test(fx.color) ? cssColor(fx.color) : 0xf2c14e
+      this.ruleFx.push({ x: fx.x, y: fx.y, w: fx.w, h: fx.h, color, radius: fx.radius ?? 2.6, tick: t })
+      if (fx.text) this.float(fx.text, -1, t, color, 16, { x: (fx.x + fx.w / 2) * TILE, y: (fx.y + fx.h / 2) * TILE })
+    }
     if (this.replay.frames[t - 1]?.markers) this.drawMarkers(state.markers)
     this.refreshVision()
   }
@@ -344,7 +353,7 @@ export class Renderer {
   }
 
   /** 在实体头顶飘一行字（技能名、+回血），life 个 tick 后消失 */
-  private float(text: string, id: number, tick: number, color: number, life: number): void {
+  private float(text: string, id: number, tick: number, color: number, life: number, at?: { x: number; y: number }): void {
     const t = new Text({ text, style: { fontSize: 22, fill: color, fontWeight: "bold", stroke: { color: 0x000000, width: 4 } } })
     t.scale.set(0.5)
     t.anchor.set(0.5)
@@ -352,7 +361,7 @@ export class Renderer {
     this.fxLayer.addChild(t)
     // 同一个实体同时飘好几行时错开一点
     const dx = this.texts.filter((x) => x.id === id && tick - x.tick < 3).length * 10
-    this.texts.push({ t, id, tick, life, dx })
+    this.texts.push({ t, id, tick, life, dx, ...(at ? { at } : {}) })
   }
 
   private drawMarkers(markers: Marker[]): void {
@@ -501,6 +510,25 @@ export class Renderer {
         cg.rect(x - 0.6, y - 1.8, 1.2, 3.6).fill({ color: 0x6ee36e, alpha })
       }
     }
+    // 规则包的画面特效（D-205）：两圈光往外扩、中间一团亮光、八道放射线；持续 16 tick
+    this.ruleFx = this.ruleFx.filter((r) => now - r.tick < 16)
+    for (const r of this.ruleFx) {
+      const f = Math.max(0, now - r.tick) / 16
+      const alpha = 1 - f
+      const cx = (r.x + r.w / 2) * TILE
+      const cy = (r.y + r.h / 2) * TILE
+      const base = (Math.max(r.w, r.h) * TILE) / 2
+      cg.circle(cx, cy, base + TILE * f * r.radius).stroke({ width: 3 * alpha + 0.5, color: r.color, alpha })
+      cg.circle(cx, cy, base + TILE * f * r.radius * 0.55).stroke({ width: 2, color: 0xfff1b8, alpha: 0.8 * alpha })
+      cg.circle(cx, cy, base * (1 - f * 0.5)).fill({ color: 0xfff1b8, alpha: 0.45 * alpha })
+      for (let k = 0; k < 8; k++) {
+        const ang = (Math.PI / 4) * k + f * 0.8
+        const r0 = base + TILE * (0.3 + f * r.radius * 0.6)
+        cg.moveTo(cx + Math.cos(ang) * r0, cy + Math.sin(ang) * r0)
+          .lineTo(cx + Math.cos(ang) * (r0 + TILE * 0.8), cy + Math.sin(ang) * (r0 + TILE * 0.8))
+          .stroke({ width: 2, color: r.color, alpha })
+      }
+    }
     // 飘字：往上飘、慢慢变淡；看不见的实体不飘
     this.texts = this.texts.filter((x) => {
       const age = now - x.tick
@@ -508,7 +536,7 @@ export class Renderer {
         x.t.destroy()
         return false
       }
-      const p = this.centerOf(x.id)
+      const p = x.at ?? this.centerOf(x.id)
       x.t.visible = p !== null
       if (p) {
         x.t.position.set(p.x + x.dx, p.y - TILE * 0.9 - (age / x.life) * TILE * 1.4)

@@ -102,6 +102,8 @@ export interface ReplayFrame {
   castFx?: number[]
   /** 回血：[x, y, 回了多少, 几帧前] 一组 4 个 */
   healFx?: number[]
+  /** 规则包放的画面特效（D-205）：区域、几帧前、飘的字、颜色 */
+  ruleFx?: { x: number; y: number; w: number; h: number; age: number; text?: string; color?: string; radius?: number }[]
   /** 技能冷却环：[x, y, w, h, 冷却好了的比例（1 是能放了）] 一组 5 个 */
   cds?: number[]
   /** 正在回血的：[x, y, w, h] 一组 4 个 */
@@ -1247,6 +1249,43 @@ export function installVideoPage(): void {
       }
       g.globalAlpha = 1
       text(`+${amount}`, px + TILE * 0.9, py - TILE * (0.8 + fr * 1.4), 15, `rgba(110,227,110,${a})`, { bold: true, align: "left" })
+    }
+    // 规则包的画面特效（D-205，比如捡到宝箱）：两圈光往外扩、中间一团亮光、八道放射线，字往上飘
+    for (const r of (f.ruleFx ?? []) as NonNullable<ReplayFrame["ruleFx"]>) {
+      const fr = r.age / 24
+      const a = 1 - fr
+      const hex = r.color && /^#[0-9a-fA-F]{6}$/.test(r.color) ? r.color : "#f2c14e"
+      const rgb = [1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16)).join(",")
+      const cx = ox + (r.x + r.w / 2) * TILE
+      const cy = oy + (r.y + r.h / 2) * TILE
+      const base = (Math.max(r.w, r.h) * TILE) / 2
+      g.globalAlpha = a
+      g.fillStyle = "rgba(255,241,184,0.45)"
+      g.beginPath()
+      g.arc(cx, cy, base * (1 - fr * 0.5), 0, Math.PI * 2)
+      g.fill()
+      g.strokeStyle = `rgb(${rgb})`
+      g.lineWidth = 3.5
+      g.beginPath()
+      g.arc(cx, cy, base + TILE * fr * (r.radius ?? 2.6), 0, Math.PI * 2)
+      g.stroke()
+      g.strokeStyle = "#fff1b8"
+      g.lineWidth = 2
+      g.beginPath()
+      g.arc(cx, cy, base + TILE * fr * (r.radius ?? 2.6) * 0.55, 0, Math.PI * 2)
+      g.stroke()
+      g.strokeStyle = `rgb(${rgb})`
+      g.lineWidth = 2.5
+      for (let k = 0; k < 8; k++) {
+        const ang = (Math.PI / 4) * k + fr * 0.8
+        const r0 = base + TILE * (0.3 + fr * (r.radius ?? 2.6) * 0.6)
+        g.beginPath()
+        g.moveTo(cx + Math.cos(ang) * r0, cy + Math.sin(ang) * r0)
+        g.lineTo(cx + Math.cos(ang) * (r0 + TILE * 0.8), cy + Math.sin(ang) * (r0 + TILE * 0.8))
+        g.stroke()
+      }
+      g.globalAlpha = 1
+      if (r.text) text(r.text, cx, cy - base - TILE * (0.6 + fr * 1.6), 20, `rgba(${rgb},${a})`, { bold: true })
     }
     // 刚死的：一圈扩散的红圈
     const d = f.deaths as number[]

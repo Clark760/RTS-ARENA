@@ -467,29 +467,46 @@ test("中央宝箱（D-202）：第 900 tick 在正中刷出，打掉它的玩�
   assert.deepEqual([b.x, b.y], [W - 2 - a.x, H - 2 - a.y])
 })
 
-test("中央宝箱（D-204）：刷新那一刻站在宝箱位置上的单位被挤到旁边，宝箱按时刷出", async () => {
-  const { setupTreasure, treasureTick, treasureType, TREASURE_EVERY } = await import("../rulesets/common/treasure.ts")
-  const seen: { tick: number; box: boolean; grunt: { x: number; y: number } }[] = []
-  play(
-    mini([], {
-      maxTicks: TREASURE_EVERY + 2,
-      types: { ...TYPES, treasure: treasureType() },
-      setup(ctx) {
-        ctx.setTerrain(Array(10).fill(".".repeat(20)))
-        ctx.spawn("grunt", 0, 9, 4)
-        ctx.spawn("grunt", 1, 19, 9)
-        setupTreasure(ctx, 20, 10)
+test("中央宝箱（D-205）：刷新那一刻占着位置的一方直接捡到（放特效）；双方一样多就挤开照常刷", async () => {
+  const { setupTreasure, treasureTick, treasureType, TREASURE_EVERY, TREASURE_GOLD } = await import("../rulesets/common/treasure.ts")
+  // 在 20×10 的空地上，宝箱位置是 (9, 4)～(10, 5)；spots 里放 P0、P1 的兵，看第 900 tick 之后的结果
+  const run = (units: [number, number, number][]) => {
+    const gold: number[][] = [[], []]
+    let box = false
+    const replay = play(
+      mini([], {
+        maxTicks: TREASURE_EVERY + 2,
+        types: { ...TYPES, treasure: treasureType() },
+        setup(ctx) {
+          ctx.setTerrain(Array(10).fill(".".repeat(20)))
+          for (const [owner, x, y] of units) ctx.spawn("grunt", owner, x, y)
+          if (!units.some((u) => u[0] === 0)) ctx.spawn("grunt", 0, 0, 0)
+          if (!units.some((u) => u[0] === 1)) ctx.spawn("grunt", 1, 19, 9)
+          setupTreasure(ctx, 20, 10)
+        },
+        onTick: (ctx) => treasureTick(ctx),
+      }),
+      (v) => {
+        gold[0][v.tick] = v.resources.gold
+        box = v.entities.some((e) => e.type === "treasure")
       },
-      onTick: (ctx) => treasureTick(ctx),
-    }),
-    (v) => {
-      const g = mine(v, "grunt")[0]
-      seen.push({ tick: v.tick, box: v.entities.some((e) => e.type === "treasure"), grunt: { x: g.x, y: g.y } })
-    },
-  )
-  const after = seen.find((s) => s.tick === TREASURE_EVERY + 1)!
-  assert.equal(after.box, true)
-  assert.ok(!(after.grunt.x >= 9 && after.grunt.x <= 10 && after.grunt.y >= 4 && after.grunt.y <= 5), JSON.stringify(after.grunt))
+      (v) => {
+        gold[1][v.tick] = v.resources.gold
+      },
+    )
+    const fx = replay.frames.flatMap((f) => f.fx ?? [])
+    return { g0: gold[0][TREASURE_EVERY + 1], g1: gold[1][TREASURE_EVERY + 1], box, fx }
+  }
+  // 只有 P0 站着：P0 直接捡到，宝箱不刷出来，放了特效
+  const only = run([[0, 9, 4]])
+  assert.deepEqual([only.g0, only.g1, only.box], [TREASURE_GOLD, 0, false])
+  assert.deepEqual(only.fx, [{ x: 9, y: 4, w: 2, h: 2, text: `P0 +${TREASURE_GOLD}`, color: "#f2c14e" }])
+  // P0 两个、P1 一个：P0 捡到
+  const more = run([[0, 9, 4], [0, 10, 4], [1, 9, 5]])
+  assert.deepEqual([more.g0, more.g1, more.box], [TREASURE_GOLD, 0, false])
+  // 一样多：谁也不给，挤开照常刷出宝箱
+  const tie = run([[0, 9, 4], [1, 10, 5]])
+  assert.deepEqual([tie.g0, tie.g1, tie.box], [0, 0, true])
 })
 
 test("死亡事件带 killerType（D-203）：最后一击的实体类型，规则包据此可以让某些实体打死的不算分", () => {

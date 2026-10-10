@@ -4,8 +4,10 @@
 // （原来打算在正中刷金矿，算下来工人从正中走回主基地交货一趟 200 tick 出头、只带 5 金，10 个工人采完 600 金要 2700 tick，没人会去抢）
 // - 正中那块 2×2（宽高都是偶数的地图，正中 2×2 刚好中心对称）被墙、水、资源点挡住时（约一成的随机地图），
 //   改在离正中最近、中心对称的两处各放一个，各值一半
-// - 上一个宝箱还在（没被打掉）就不刷新，不叠加；刷新那一刻宝箱的位置站着单位，把它们挤到旁边最近的空格，照样按时刷
-//   （D-204，第七轮试写：原来是等单位走开再刷，晚刷了好几十 tick，站几个兵就能一直挡住）
+// - 上一个宝箱还在（没被打掉）就不刷新，不叠加
+// - 刷新那一刻宝箱的位置（2×2）上站着玩家的单位：只有一方的，这一方直接捡到宝箱、马上得金子，宝箱不刷出来；
+//   双方都有，单位多的一方捡到；一样多就把单位挤到旁边，照常刷出宝箱（D-205，用户：占位的直接给占位的一方，方便写抢箱子的打法）。
+//   野怪站在上面就挤开。打掉和捡到都放一个画面特效（ctx.effect）
 import type { RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
 import { STANDARD_TERRAIN } from "./standard.ts"
 
@@ -71,10 +73,7 @@ export function setupTreasure(ctx: SetupContext, W: number, H: number): void {
 export function treasureTick(ctx: RuleContext): void {
   for (const ev of ctx.events) {
     if (ev.kind !== "died" || ev.type !== "treasure" || ev.killer < 0) continue
-    const n = TREASURE_GOLD / Math.max(1, spots.length)
-    ctx.addResource(ev.killer, "gold", n)
-    opened[ev.killer] = (opened[ev.killer] ?? 0) + 1
-    gold[ev.killer] = (gold[ev.killer] ?? 0) + n
+    const n = give(ctx, ev.killer, { x: ev.x, y: ev.y })
     ctx.note(`P${ev.killer} 打开了中央宝箱，得 ${n} 金`)
   }
   if (ctx.tick > 0 && ctx.tick % TREASURE_EVERY === 0) pending = true
@@ -84,7 +83,17 @@ export function treasureTick(ctx: RuleContext): void {
   for (const s of spots) {
     let here = ctx.entitiesIn(s.x, s.y, 2, 2)
     if (here.some((e) => e.type === "treasure")) continue
-    // 站在这儿的单位挤到旁边最近的空格
+    // 占着位置的玩家：只有一方，或者一方单位比另一方多，就直接捡到
+    const count = new Map<number, number>()
+    for (const u of here) if (u.owner >= 0) count.set(u.owner, (count.get(u.owner) ?? 0) + 1)
+    const ranked = [...count].sort((a, b) => b[1] - a[1])
+    if (ranked.length && (ranked.length === 1 || ranked[0][1] > ranked[1][1])) {
+      const p = ranked[0][0]
+      const n = give(ctx, p, s)
+      ctx.note(`P${p} 占住了宝箱的位置，直接捡到宝箱，得 ${n} 金`)
+      continue
+    }
+    // 一样多（或者只有野怪）：挤到旁边最近的空格，照常刷出宝箱
     for (const u of here) if (u.def.kind === "unit") nudge(ctx, u, s)
     here = ctx.entitiesIn(s.x, s.y, 2, 2)
     if (here.length) {
@@ -95,6 +104,16 @@ export function treasureTick(ctx: RuleContext): void {
   }
   if (!waiting) pending = false
   if (spawned) ctx.note("地图正中刷出了宝箱")
+}
+
+/** 把一个宝箱的金子给玩家 p（打掉或者占位捡到），记统计，在宝箱的位置放特效；返回给了多少 */
+function give(ctx: RuleContext, p: number, at: { x: number; y: number }): number {
+  const n = TREASURE_GOLD / Math.max(1, spots.length)
+  ctx.addResource(p, "gold", n)
+  opened[p] = (opened[p] ?? 0) + 1
+  gold[p] = (gold[p] ?? 0) + n
+  ctx.effect({ x: at.x, y: at.y, w: 2, h: 2, text: `P${p} +${n}`, color: "#f2c14e" })
+  return n
 }
 
 /** 把站在宝箱位置上的单位挪到 2×2 外面最近的空格（地形能走、没有实体）；附近都满了就不动（等下一 tick） */
