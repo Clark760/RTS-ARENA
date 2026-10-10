@@ -11,6 +11,11 @@ const types = withLord(standardTypes(), ["soldier", "archer"], "repel")
 types.creep = creepType()
 // D-196（用户：钱没处花，又不想加建造把歼灭弄复杂）：兵营排进队列的 5 个同时造，出兵快慢看钱
 types.barracks.parallel = 5
+// D-198（用户：想让两边打得更焦灼、时间更长）：战士 120 → 180 血（实测势均力敌的团战从 136 tick 打到 228 tick）；
+// 主基地像拓荒的箭塔一样能打射程 5 内的敌人（一波推平变难）；领主 500 → 800 血（不那么容易被秒）
+types.soldier.maxHp = 180
+types.base.attack = { damage: 12, range: 5, cooldown: 10 }
+types.lord.maxHp = 800
 
 const ruleset: Ruleset = {
   id: "regicide-annihilation",

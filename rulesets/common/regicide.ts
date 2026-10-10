@@ -4,7 +4,7 @@
 // - 被动「休养生息」：100 tick 没出手、没挨打以后，每 10 tick 回 10 生命
 // - 技能「点金」（goldmine，弑君拓荒）：在领主 3 格内的空地上造一座 300 金的中立金矿，冷却 600 tick（落点见 mineSpot）
 // - 技能「击退」（repel，弑君歼灭，D-197）：把领主视野内的敌方单位推到视野外，纯冷却 600 tick、不要钱（用户：想让两边打得更焦灼、时间更长）。
-//   之前是召唤箭塔（D-192～196：500 金基本没用，降到 250 不亏不赚，兵营同时造 5 个以后没人放）
+//   D-198 冷却 600 → 300。之前是召唤箭塔（D-192～196：500 金基本没用，降到 250 不亏不赚，兵营同时造 5 个以后没人放）
 // 领主的移速、视野、攻击和克制规则包的侦察兵一样（走一格 1 tick、视野 8、攻击 1），生命 500（主基地 1500 的三分之一）
 import type { CastInfo, MatchResult, RuleContext, SetupContext, TypeSpec } from "../../src/core/types.ts"
 import { spawnMirrored, STANDARD_TERRAIN } from "./standard.ts"
@@ -15,8 +15,8 @@ export const LORD_MINE_AMOUNT = 300
 /** 点金的金矿最远放在离领主几格 */
 export const LORD_MINE_RANGE = 3
 
-/** 击退的冷却（tick） */
-export const LORD_REPEL_COOLDOWN = 600
+/** 击退的冷却（tick）；D-198 用户：600 → 300，团战里能多放一次 */
+export const LORD_REPEL_COOLDOWN = 300
 /** 击退往外推的时候，最多沿路走几步去找落脚的空格（找不到就不推） */
 const REPEL_SEARCH = 24
 
