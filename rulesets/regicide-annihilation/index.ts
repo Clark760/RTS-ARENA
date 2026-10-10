@@ -17,7 +17,8 @@ types.soldier.maxHp = 180
 types.base.attack = { damage: 12, range: 5, cooldown: 10 }
 // D-199（用户）：主基地 1500 → 3000 血（D-198 后拆家结束的局从 35 涨到 48：领主难杀就去拆家，180 血的战士扛得住主基地的炮火）
 types.base.maxHp = 3000
-types.lord.maxHp = 800
+// D-200（用户）：领主 800 → 1500 血（主基地改 3000 以后杀领主成了最主要的结束方式）
+types.lord.maxHp = 1500
 
 const ruleset: Ruleset = {
   id: "regicide-annihilation",
