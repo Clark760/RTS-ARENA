@@ -668,7 +668,12 @@ export function buildReport(replay: Replay, opts: ReportOptions = {}): string {
     }
     // 在战场附近却一下都没打的兵（停着的兵只打射程内的，团战时没给命令就干站着）
     const idle = [...idleInBattle(b)].filter(([, r]) => r.n >= 3).sort((x, y) => x[0] - y[0])
-    if (idle.length) out.push(`  没出手：开打 30 tick 时战场 10 格内，${idle.map(([p, r]) => `${who(p)}有 ${r.n} 个兵（共 ${r.near} 个）一下都没打（${ordText(r.ords)}）`).join("；")}`)
+    if (idle.length)
+      out.push(
+        `  没出手：开打 30 tick 时战场 10 格内，${idle.map(([p, r]) => `${who(p)}有 ${r.n} 个兵（共 ${r.near} 个）一下都没打（${ordText(r.ords)}）`).join("；")}` +
+          // D-201（试写反馈：move 的兵看着像挨打不还手）：move 是还在路上
+          (idle.some(([, r]) => r.ords.has("move")) ? "。move 的是还在路上（move 不还手），idle 的是停着没够着" : ""),
+      )
     // 有克制的规则包：这一仗各方打出的伤害按"谁打谁"列，看兵是不是在打被自己克的
     if (hasCounters) {
       const inFight = battleHits(b)

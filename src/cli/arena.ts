@@ -820,6 +820,11 @@ async function cmdLeague(rules: Ruleset, src: RulesetRef, args: string[], opt: R
         console.log(`  对 ${swept.map((x) => `${x.name}（${x.c!.w} 局）`).join("、")} 全胜：比较版本时这些局分不出高下，看对其余对手的胜负`)
     }
   }
+  // D-201（试写反馈：输出很长，用 tail 看会截掉排名）：最后一行再写一遍你的 bot 的总成绩
+  if (mine && !jsonMode) {
+    const row = st.table.find((r) => r.index === 0)
+    if (row) console.log(`\n你的 bot（${row.name}）：第 ${row.rank} 名，得分率 ${Math.round(row.rate * 100)}% ±${Math.round(row.rateCi * 100)}（${row.wins} 胜 ${row.draws} 平 ${row.losses} 负，${row.games} 局）`)
+  }
   say(
     noReplays
       ? `\n没存回放和日志（--no-replays），做不了联赛视频；排名和统计记在 ${relative(process.cwd(), seriesFile)}`
